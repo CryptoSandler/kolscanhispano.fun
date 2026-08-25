@@ -354,6 +354,61 @@ describe("parseSwap", () => {
     expect(parseSwap(payload, wallet)).toBeNull();
     expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
   });
+
+  it("does not drop a sole 1-raw-unit leg: it can be the entire trade, not a router remainder", () => {
+    // Review round 3: round 2 dropped dropDust's `length <= 1` guard, so a
+    // wallet's ONLY token leg — e.g. one whole unit of a 0-decimal mint —
+    // was itself being filtered out as "dust", turning a real buy/sell into
+    // `no_trade`. Measured against the round-2 code before this fix: a
+    // 0-decimal mint, one token bought for 1.000005 SOL, sole leg, returned
+    // `no_trade` instead of `buy, tokenAmount 1, solAmount 1`.
+    const oneUnitMint = inventAddress();
+    const buy = buildSwapPayload({
+      wallet: wallet.address,
+      mint: oneUnitMint,
+      decimals: 0,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "1",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    const buyTrade = parseSwap(buy, wallet)!;
+    expect(buyTrade).not.toBeNull();
+    expect(buyTrade.side).toBe("buy");
+    expect(buyTrade.tokenAmount).toBeCloseTo(1, 9);
+    expect(buyTrade.solAmount).toBeCloseTo(1, 9);
+
+    const sell = buildSwapPayload({
+      wallet: wallet.address,
+      mint: oneUnitMint,
+      decimals: 0,
+      nativeChangeLamports: 1_999_995_000,
+      tokenChangeRaw: "-1",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    const sellTrade = parseSwap(sell, wallet)!;
+    expect(sellTrade).not.toBeNull();
+    expect(sellTrade.side).toBe("sell");
+    expect(sellTrade.solAmount).toBeCloseTo(2, 9);
+  });
+
+  it("still applies the wrong-direction check to a sole 1-raw-unit leg", () => {
+    // Round 3 finding: the missing guard also pre-empted the direction
+    // check, since a sole dust-eaten leg short-circuited to `no_trade`
+    // before the SOL delta's sign was ever examined.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: inventAddress(),
+      decimals: 0,
+      nativeChangeLamports: -9_005_000, // a tip larger than the sale proceeds
+      tokenChangeRaw: "-1",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    expect(parseSwap(payload, wallet)).toBeNull();
+    expect(evaluateSwap(payload, wallet).outcome).toBe("sol_leg_wrong_direction");
+  });
 });
 
 async function makeKol(handle: string): Promise<string> {
@@ -705,5 +760,193 @@ describe("parsePending", () => {
     );
     expect(raw.parsed_at).toBeNull(); // still eligible for a fix to reprocess, once parse_error clears
     expect(raw.parse_error).toBe("malformed_payload");
+  });
+});
+
+/**
+ * Every review round on this task so far introduced a different bug with
+ * the exact same signature: a tracked wallet's swap ending as neither a
+ * written trade nor a recorded `parse_error` — invisible in the feed and
+ * invisible in the error log. Rather than keep adding one more specific
+ * regression test per incident, this asserts the property directly, driven
+ * over every payload shape the three rounds have touched.
+ *
+ * Deliberately NOT included: a SOL<->USDC rotation and a payload with no
+ * SOL/WSOL leg at all. Both are spec §4.3 exclusions with a non-zero token
+ * balance change that legitimately produce `no_trade` with a null
+ * `parse_error` forever — including them here would assert the invariant is
+ * violated by a case that is correct by design, not a silent drop.
+ */
+describe("invariant: a tracked wallet's swap is never silently dropped", () => {
+  let kolId: string;
+  let walletAddress: string;
+
+  beforeEach(async () => {
+    await query("TRUNCATE kol, kol_wallet, raw_tx, trade, position, sol_price CASCADE");
+    kolId = await makeKol("invariant-kol");
+    walletAddress = inventAddress();
+    await addWallet(kolId, walletAddress);
+  });
+
+  type Shape = {
+    name: string;
+    // What SHOULD happen, per the specific tests above — asserted too, but
+    // the invariant assertion below does not depend on this being right.
+    expectTrade: boolean;
+    build: () => ReturnType<typeof buildSwapPayload>;
+  };
+
+  const shapes: Shape[] = [
+    {
+      name: "clean SOL buy",
+      expectTrade: true,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "clean sell",
+      expectTrade: true,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: 1_999_995_000,
+          tokenChangeRaw: "-2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "wrong-direction SOL leg (a tip exceeding sale proceeds)",
+      expectTrade: false,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -9_005_000,
+          tokenChangeRaw: "-2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "token<->token swap (two comparable real legs)",
+      expectTrade: false,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -5_000,
+          tokenChangeRaw: "-1000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+          extraTokenChanges: [{ mint: inventAddress(), decimals: 6, rawTokenAmount: "2000000" }],
+        }),
+    },
+    {
+      name: "sole 1-raw-unit leg (the whole trade, not a router remainder)",
+      expectTrade: true,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 0,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "1",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "a 1-raw-unit dust remainder alongside a real leg",
+      expectTrade: true,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+          extraTokenChanges: [{ mint: inventAddress(), decimals: 6, rawTokenAmount: "1" }],
+        }),
+    },
+    {
+      name: "two real legs of lopsided count (no dust involved)",
+      expectTrade: false,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 0,
+          nativeChangeLamports: -(5_000 + 2_039_280),
+          tokenChangeRaw: "1000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+          extraTokenChanges: [{ mint: inventAddress(), decimals: 6, rawTokenAmount: "-500000" }],
+        }),
+    },
+    {
+      name: "non-fee-payer sell",
+      expectTrade: true,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: 2_000_000_000,
+          tokenChangeRaw: "-2000000",
+          feeLamports: 5_000,
+          isFeePayer: false,
+        }),
+    },
+    {
+      name: "persistent-WSOL buy",
+      expectTrade: true,
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -5_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+          extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: "-1000000000" }],
+        }),
+    },
+  ];
+
+  it.each(shapes)("$name: a trade is written or parse_error is non-null — never neither", async ({ build, expectTrade }) => {
+    const payload = build();
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    const trades = await query<{ id: string }>("SELECT id FROM trade WHERE kol_id = $1", [kolId]);
+    const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
+
+    const wroteTrade = trades.length > 0;
+    const hasError = raw.parse_error !== null;
+
+    // The invariant under test: never both false.
+    expect(wroteTrade || hasError).toBe(true);
+
+    // The specific expectation, checked too — a stronger assertion than the
+    // invariant alone, and documentation of what each shape is supposed to do.
+    expect(wroteTrade).toBe(expectTrade);
+    expect(hasError).toBe(!expectTrade);
   });
 });

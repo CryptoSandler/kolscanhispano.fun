@@ -131,6 +131,13 @@ function tokenLegsFor(payload: EnhancedTx, address: string): TokenLeg[] {
  * values.
  */
 function dropDust(legs: TokenLeg[]): TokenLeg[] {
+  // A dust floor exists to remove a router's leftover leg *alongside* a
+  // surviving real leg. Applied to a sole leg it would delete the trade
+  // outright: a 1-raw-unit balance change can be the entire, genuine swap
+  // (a 0-decimal mint bought/sold as exactly one whole unit), not a router
+  // remainder. Every directed case for this filter (round 2) has two or
+  // more legs before filtering, so this guard changes none of them.
+  if (legs.length <= 1) return legs;
   return legs.filter((leg) => (leg.raw < 0n ? -leg.raw : leg.raw) > DUST_RAW_UNITS);
 }
 
