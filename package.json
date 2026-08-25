@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "db:migrate": "tsx scripts/migrate.mts",
     "db:migrate:test": "tsx scripts/migrate.mts --test",
-    "db:seed": "tsx scripts/seed-dev.mts"
+    "db:seed": "tsx scripts/seed-dev.ts"
   },
   "repository": {
     "type": "git",

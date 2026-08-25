@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { seedDev } from "../../scripts/seed-dev.mts";
+import { seedDev } from "../../scripts/seed-dev";
 import { query } from "./db";
 import { findWalletByAddress } from "./wallets";
 import { revealAddress } from "./wallets";
