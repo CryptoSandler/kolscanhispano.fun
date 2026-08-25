@@ -13,13 +13,20 @@ const HANDLE = "kolejemplo";
 export async function seedDev() {
   const existing = await query<{ id: string }>("SELECT id FROM kol WHERE x_handle = $1", [HANDLE]);
   if (existing[0]) {
+    const kolId = existing[0].id;
     const [wallet] = await query<{ id: string }>(
-      "SELECT id FROM kol_wallet WHERE kol_id = $1 LIMIT 1", [existing[0].id]);
-    return {
-      kolId: existing[0].id,
-      walletId: wallet.id,
-      address: await revealAddress(wallet.id),
-    };
+      "SELECT id FROM kol_wallet WHERE kol_id = $1 AND status = 'active' LIMIT 1", [kolId]);
+    if (wallet) {
+      return {
+        kolId,
+        walletId: wallet.id,
+        address: await revealAddress(wallet.id),
+      };
+    }
+    // Self-healing: KOL exists but no active wallet, create one
+    const address = inventAddress();
+    const walletId = await addWallet(kolId, address);
+    return { kolId, walletId, address };
   }
 
   const cabalId = crypto.randomUUID();
