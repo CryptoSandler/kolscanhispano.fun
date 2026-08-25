@@ -106,8 +106,8 @@ siws_nonce     nonce pk, address, claim_id nullable, expires_at, consumed_at
 raw_tx         signature_hmac pk, signature_enc, payload_enc, key_version, slot, block_time,
                received_at, parsed_at, parse_error, source enum(webhook, backfill, reconcile)
 
-trade          id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id, mint,
-               side enum(buy, sell), token_amount numeric, sol_amount numeric,
+trade          id, signature_hmac, signature_enc, slot, instruction_index, kol_id, wallet_id,
+               mint, side enum(buy, sell), token_amount numeric, sol_amount numeric,
                usd_amount numeric, sol_usd numeric, price_sol numeric, price_usd numeric,
                fee_sol numeric, block_time, basis enum(known, unknown)
                unique (signature_hmac, instruction_index, wallet_id)
