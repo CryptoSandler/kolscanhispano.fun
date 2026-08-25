@@ -99,8 +99,8 @@
  * unattributable non-zero *balance change* raises whenever the wallet being
  * evaluated has an attributable leg of its own (see `balanceChangesFor`).
  * What stays skipped is only what provably moved nothing: a zero-valued
- * change, an `account` with no lamport movement, and any row where this
- * wallet has no leg at all.
+ * change, an `account` with no lamport movement, and a row where this wallet
+ * has neither a leg nor any net SOL movement of its own.
  *
  * The single fatal structural check left is `accountData` itself being an
  * array: a payload with nothing readable there mentions no addresses at all,
@@ -603,8 +603,12 @@ function accountEntries(payload: EnhancedTx): AccountEntry[] {
  * exactly what the dropped change would have told us.
  *
  * What stays lenient, so the feed does not go quiet for nothing: an
- * unattributable change of **zero**, and any payload where this wallet has
- * no attributable leg at all — that row does not concern it.
+ * unattributable change of **zero**, and a payload where this wallet has no
+ * attributable leg *and* no net SOL movement — that row does not concern
+ * it. A wallet with no readable leg but a real net SOL movement is a
+ * different thing entirely, and `evaluateSwap` refuses it: the payload says
+ * plainly that this wallet moved lamports, and a wallet the transaction
+ * never touched has no such entry.
  *
  * An unreadable *container* (a `tokenBalanceChanges` that is not an array, a
  * change that is not an object, an `accountData` element that is not an
@@ -612,7 +616,20 @@ function accountEntries(payload: EnhancedTx): AccountEntry[] {
  * nothing in it can be shown to be zero. From the parser's side it is
  * indistinguishable from an unreadable ATA carrying this wallet's WSOL leg.
  */
-function balanceChangesFor(payload: EnhancedTx, address: string): BalanceChange[] {
+type WalletChanges = {
+  changes: BalanceChange[];
+  /**
+   * Whether the payload carries a non-zero balance change this parser could
+   * not attribute to anyone. Returned rather than acted on here, because
+   * what it means depends on what else this wallet has: with a leg of its
+   * own it is refused immediately below; with no leg but a real native
+   * movement it is refused in `evaluateSwap`; with neither, it is nobody's
+   * business.
+   */
+  unattributable: boolean;
+};
+
+function balanceChangesFor(payload: EnhancedTx, address: string): WalletChanges {
   const changes: BalanceChange[] = [];
   let unattributable = false;
 
@@ -648,7 +665,7 @@ function balanceChangesFor(payload: EnhancedTx, address: string): BalanceChange[
   if (changes.length > 0 && unattributable) {
     throw new MalformedPayloadError("tokenBalanceChange.userAccount");
   }
-  return changes;
+  return { changes, unattributable };
 }
 
 /**
@@ -796,6 +813,31 @@ function nativeLamportsFor(payload: EnhancedTx, address: string): bigint {
 }
 
 /**
+ * This wallet's net SOL/WSOL movement, in lamports, and the fee terms behind
+ * it. Spec §4.3 treats SOL and WSOL as one quantity, so both are summed
+ * here; spec §4.4's fee is added back for the fee payer, whose
+ * `nativeBalanceChange` already contains it.
+ *
+ * Factored out because `evaluateSwap` needs the same number in two places:
+ * once to price a trade, and once — the branch below — to decide whether a
+ * wallet with no readable token leg was nevertheless doing something.
+ */
+function solSideFor(
+  payload: EnhancedTx,
+  address: string,
+  changes: readonly BalanceChange[],
+): { isFeePayer: boolean; fee: bigint; solDelta: bigint } {
+  // `feePayer` is required as a string rather than compared loosely — an
+  // absent or non-string one would silently make every wallet a
+  // non-fee-payer and drop the fee out of the §4.4 arithmetic without a word.
+  const isFeePayer = address === requireString(payload?.feePayer, "feePayer");
+  const fee = requireFee(payload?.fee);
+  const feeAdjustedNative = isFeePayer ? nativeLamportsFor(payload, address) + fee : nativeLamportsFor(payload, address);
+  // Both terms are lamports by construction.
+  return { isFeePayer, fee, solDelta: feeAdjustedNative + wsolLamportsIn(changes) };
+}
+
+/**
  * Evaluates one wallet's role in a Helius enhanced transaction. This is the
  * single source of truth for the SOL-quoted-swap arithmetic; `parseSwap`
  * below is a thin projection of it onto its historical `ParsedTrade | null`
@@ -826,11 +868,39 @@ export function evaluateSwap(
   payload: EnhancedTx,
   wallet: { id: string; kolId: string; address: string },
 ): SwapEvaluation {
-  const changes = balanceChangesFor(payload, wallet.address);
+  const { changes, unattributable } = balanceChangesFor(payload, wallet.address);
   const allLegs = tokenLegsIn(changes);
   const legs = dropDust(allLegs);
   if (legs.length === 0) {
-    return { outcome: allLegs.length === 0 ? "no_token_leg" : "dust_only" };
+    if (allLegs.length > 0) return { outcome: "dust_only" };
+
+    // No readable token leg. That is silent by design — but only because it
+    // normally means the transaction does not concern this wallet. When the
+    // payload also carries an unattributable non-zero change, the two
+    // possibilities are not the same thing at all, and the payload says
+    // which is which: a wallet the transaction never touched has no entry
+    // moving its lamports. So a real net SOL movement here (after the §4.4
+    // fee) plus a change nobody could be attributed to is a trade whose
+    // token side may simply have been the part we could not read, and it is
+    // refused rather than passed over.
+    //
+    // Measured before this branch existed: own entry readable,
+    // `nativeBalanceChange -1_000_005_000`, fee 5,000, fee payer, plus one
+    // unattributable non-zero change on an ATA -> `no_token_leg`, silent,
+    // `parsed_at` SET. The payload states outright that this wallet moved a
+    // net 1 SOL after fees.
+    //
+    // All three conditions are required. No unattributable change, or no
+    // native movement, and the wallet is genuinely uninvolved — the ordinary
+    // case, still silent. The false positive left is a tracked wallet's
+    // plain SOL transfer sharing a delivery with an unattributable change;
+    // the webhook is filtered to SWAP, so that shape should barely exist,
+    // and a refusal is recorded and requeueable where a dropped trade is
+    // neither.
+    if (unattributable && solSideFor(payload, wallet.address, changes).solDelta !== 0n) {
+      throw new MalformedPayloadError("tokenBalanceChange.userAccount");
+    }
+    return { outcome: "no_token_leg" };
   }
   if (legs.length >= 2) return { outcome: "unsupported_quote" };
 
@@ -842,16 +912,8 @@ export function evaluateSwap(
 
   // Read at the point of use, once this wallet is known to have a leg: a
   // wallet the transaction does not trade for never touches these, so a
-  // malformed one cannot cost it anything. `feePayer` is required as a
-  // string rather than compared loosely — an absent or non-string one would
-  // silently make every wallet a non-fee-payer and drop the fee out of the
-  // §4.4 arithmetic without a word.
-  const isFeePayer = wallet.address === requireString(payload?.feePayer, "feePayer");
-  const fee = requireFee(payload?.fee);
-  const nativeChange = nativeLamportsFor(payload, wallet.address);
-  const feeAdjustedNative = isFeePayer ? nativeChange + fee : nativeChange;
-  // Both terms are lamports by construction; spec §4.3 treats SOL and WSOL as one quantity.
-  const solDelta = feeAdjustedNative + wsolLamportsIn(changes);
+  // malformed one cannot cost it anything.
+  const { isFeePayer, fee, solDelta } = solSideFor(payload, wallet.address, changes);
 
   if (solDelta === 0n) return { outcome: "no_sol_leg" };
 

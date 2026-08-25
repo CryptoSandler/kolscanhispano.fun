@@ -81,6 +81,44 @@ function withPoolAccount(payload: EnhancedTx, mutate: (entry: Record<string, unk
   return payload;
 }
 
+/**
+ * A wallet whose own entry is perfectly readable and states a net 1 SOL
+ * movement after fees, but which has **no attributable token leg** — its
+ * only token change sits on an ATA and is unattributable when `hidden` is
+ * true. The payload says outright that this wallet moved lamports; a wallet
+ * the transaction never touched has no such entry.
+ */
+function nativeMoverWithHiddenLeg(
+  address: string,
+  theMint: string,
+  options: { hidden: boolean; amount?: string },
+): EnhancedTx {
+  const payload = buildSwapPayload({
+    wallet: address,
+    mint: theMint,
+    decimals: 6,
+    nativeChangeLamports: -1_000_005_000,
+    tokenChangeRaw: "2000000",
+    feeLamports: 5_000,
+    isFeePayer: true,
+  });
+  // Move the wallet's only token change onto an ATA entry, so the wallet's
+  // own entry carries the lamports and nothing else.
+  payload.accountData[0].tokenBalanceChanges = [];
+  payload.accountData.push({
+    account: inventAddress(),
+    nativeBalanceChange: 0,
+    tokenBalanceChanges: [
+      {
+        userAccount: options.hidden ? ("" as string) : address,
+        mint: theMint,
+        rawTokenAmount: { tokenAmount: options.amount ?? "2000000", decimals: 6 },
+      },
+    ],
+  });
+  return payload;
+}
+
 /** Breaks the `account` identity of the wallet's own (first) accountData entry. */
 function setOwnAccount(payload: EnhancedTx, value: unknown): EnhancedTx {
   (payload.accountData[0] as unknown as Record<string, unknown>).account = value;
@@ -1021,6 +1059,60 @@ describe("parseSwap", () => {
     }
   });
 
+  it("refuses a no-leg wallet that moved SOL while an unattributable change is present", () => {
+    // Review of 9b round 3. I had recorded this as undecidable — "a wallet
+    // with no attributable leg is indistinguishable from a wallet the
+    // transaction never touched". The payload distinguishes them plainly:
+    // this wallet's own entry is readable and states a net 1 SOL movement
+    // after the fee, and a wallet the transaction never touched has no such
+    // entry. Measured against c5cf1fe: `no_token_leg`, silent, `parsed_at`
+    // SET, nothing recorded.
+    const hidden = nativeMoverWithHiddenLeg(wallet.address, mint, { hidden: true });
+    expect(() => evaluateSwap(hidden, wallet)).toThrow(MalformedPayloadError);
+
+    // All three conditions are required, and each one alone keeps the
+    // ordinary silence. (1) The readable version of the same payload is an
+    // ordinary trade.
+    const readable = nativeMoverWithHiddenLeg(wallet.address, mint, { hidden: false });
+    expect(evaluateSwap(readable, wallet).outcome).toBe("trade");
+
+    // (2) Native movement but no unattributable change anywhere: genuinely
+    // uninvolved in anything this parser can see.
+    const noUnattributable = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    noUnattributable.accountData[0].tokenBalanceChanges = [];
+    expect(evaluateSwap(noUnattributable, wallet).outcome).toBe("no_token_leg");
+
+    // (3) The unattributable change is zero: it provably moved nothing.
+    const zeroChange = nativeMoverWithHiddenLeg(wallet.address, mint, { hidden: true, amount: "0" });
+    expect(evaluateSwap(zeroChange, wallet).outcome).toBe("no_token_leg");
+
+    // (4) No leg and no native movement: the transaction does not concern
+    // this wallet at all, whatever else the payload carries.
+    const uninvolved = withPoolAccount(
+      buildSwapPayload({
+        wallet: inventAddress(),
+        mint,
+        decimals: 6,
+        nativeChangeLamports: -1_000_005_000,
+        tokenChangeRaw: "2000000",
+        feeLamports: 5_000,
+        isFeePayer: true,
+      }),
+      (entry) => {
+        (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+      },
+    );
+    expect(evaluateSwap(uninvolved, wallet).outcome).toBe("no_token_leg");
+  });
+
   it("refuses a half-hidden token side rather than halving the token amount", () => {
     // The same defect on the token side: two changes of one token each, the
     // second on its own token-account entry and unattributable. Measured
@@ -1855,6 +1947,25 @@ describe("parsePending", () => {
     expect(Number(trade.price_sol)).toBeCloseTo(0.5, 9);
   });
 
+  it("records a no-leg wallet that moved SOL alongside an unattributable change", async () => {
+    // Review of 9b round 3, end to end. Measured against c5cf1fe:
+    //   trades 0, positions 0, rows [{parsed_at: <set>, parse_error: null}]
+    // — the row settled silently, with the payload plainly stating that this
+    // wallet moved a net 1 SOL after fees.
+    const payload = nativeMoverWithHiddenLeg(walletAddress, testMint, { hidden: true });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    expect(await query("SELECT kol_id FROM position")).toHaveLength(0);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload");
+    expect(raw.parsed_at).toBeNull();
+  });
+
   it("records a half-hidden token side end to end, instead of halving the token amount", async () => {
     // Measured against 171a6ea: token_amount 1, price_sol 1 against a truth
     // of token_amount 2, price_sol 0.5.
@@ -2410,6 +2521,56 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
         breakAta(twoLegViaAta(walletAddress, inventAddress(), inventAddress()), (entry) => {
           (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
         }),
+    },
+    {
+      // Review of 9b round 3: no attributable leg, but the wallet's own
+      // entry states a net 1 SOL movement and the payload carries an
+      // unattributable non-zero change. Was a silent `no_token_leg`.
+      name: "a no-leg wallet that moved SOL, with an unattributable change present",
+      outcome: "malformed_payload",
+      build: () => nativeMoverWithHiddenLeg(walletAddress, inventAddress(), { hidden: true }),
+    },
+    {
+      // The three negative controls for that rule, each still silent.
+      name: "a no-leg wallet that moved SOL, with no unattributable change",
+      outcome: "no_token_leg",
+      build: () => {
+        const payload = buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        });
+        payload.accountData[0].tokenBalanceChanges = [];
+        return payload;
+      },
+    },
+    {
+      name: "a no-leg wallet that moved SOL, with the unattributable change at zero",
+      outcome: "no_token_leg",
+      build: () => nativeMoverWithHiddenLeg(walletAddress, inventAddress(), { hidden: true, amount: "0" }),
+    },
+    {
+      name: "a wallet with no leg and no native movement, unattributable change present",
+      outcome: "no_token_leg",
+      build: () =>
+        withPoolAccount(
+          buildSwapPayload({
+            wallet: inventAddress(),
+            mint: inventAddress(),
+            decimals: 6,
+            nativeChangeLamports: -1_000_005_000,
+            tokenChangeRaw: "2000000",
+            feeLamports: 5_000,
+            isFeePayer: true,
+          }),
+          (entry) => {
+            (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+          },
+        ),
     },
     {
       name: "a half-hidden token side (was: token_amount 1, price_sol 1)",
