@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { aadFor, decrypt } from "./crypto";
 import { query } from "./db";
 import { inventAddress } from "./ids";
 import { addWallet, findWalletByAddress, revealAddress } from "./wallets";
@@ -26,13 +27,33 @@ describe("wallets", () => {
   });
 
   it("stores no plaintext address in the row", async () => {
+    // A ::text cast of the row proves nothing here: Postgres renders bytea as
+    // hex, so a bare substring check on that rendering would pass even if
+    // address_enc held the raw address bytes with no encryption at all. Read
+    // the column as a Buffer instead and check for the plaintext's raw bytes.
     const kol = await makeKol("dos");
     const address = inventAddress();
     await addWallet(kol, address);
 
-    const [row] = await query<{ blob: string }>(
-      "SELECT kol_wallet::text AS blob FROM kol_wallet");
-    expect(row.blob).not.toContain(address);
+    const [row] = await query<{ address_enc: Buffer }>(
+      "SELECT address_enc FROM kol_wallet");
+    expect(row.address_enc.includes(Buffer.from(address, "utf8"))).toBe(false);
+  });
+
+  it("round-trips the stored ciphertext through decrypt, bound to its own wallet id", async () => {
+    const kol = await makeKol("dos-b");
+    const address = inventAddress();
+    const walletId = await addWallet(kol, address);
+
+    const [row] = await query<{ address_enc: Buffer }>(
+      "SELECT address_enc FROM kol_wallet WHERE id = $1", [walletId]);
+    expect(decrypt(row.address_enc, aadFor("kol_wallet", "address", walletId))).toBe(address);
+
+    // A different wallet id's AAD must not authenticate this ciphertext: this
+    // is the property aadFor exists to guarantee, exercised end to end
+    // through the actual stored row rather than in isolation.
+    const otherWalletId = crypto.randomUUID();
+    expect(() => decrypt(row.address_enc, aadFor("kol_wallet", "address", otherWalletId))).toThrow();
   });
 
   it("returns null for an address nobody registered", async () => {
