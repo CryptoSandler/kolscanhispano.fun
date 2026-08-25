@@ -8,6 +8,35 @@
  * rather than guessed at (stablecoin- and token-to-token-quoted swaps get their
  * own task).
  *
+ * **Read this first: every classification in this file is monotone under
+ * dropped data, so no check anywhere can substitute for measuring the
+ * number.** If part of a payload is skipped, what remains still looks like a
+ * valid, self-consistent trade — and every guard below will agree that it is:
+ *
+ * - The **direction** check survives it. Half a SOL side has the same sign as
+ *   the whole of it, so a buy stays a buy: the check catches a wrong sign,
+ *   never a wrong magnitude. A dropped half was written as `sol_amount 0.5,
+ *   price_sol 0.25` against a truth of `1` and `0.5` — a cost basis 2x wrong,
+ *   with `parse_error` NULL.
+ * - The **arity** check survives it. A genuine two-leg swap with one leg's
+ *   identity unreadable is a perfectly ordinary one-leg trade,
+ *   `tok=2 sol=1 price=0.5`, and never reaches `unsupported_quote`.
+ * - The **dust floor** survives it. Half a token leg hidden gives
+ *   `token_amount 1, price_sol 1` against a truth of `0.5`; both are far above
+ *   the floor, so nothing is filtered and nothing is flagged.
+ * - `solDelta === 0 -> no_sol_leg` survives it too, in the other direction:
+ *   drop the only entry carrying the SOL side and a real trade resolves to a
+ *   silent, spec-sanctioned "not a swap".
+ *
+ * Every review round that tried to make this file *more* available — skip the
+ * unreadable part, keep the readable part — reintroduced the same defect,
+ * because the surviving data always passes. The only safe response to data
+ * this parser cannot read is to refuse the row: a refusal is recorded and
+ * requeueable, a halved cost basis is neither. Where refusing is not
+ * warranted, it is because the dropped data provably could not have moved a
+ * number (a zero-valued change, a wallet with no leg in the transaction) —
+ * never because a later check would have caught it.
+ *
  * **The one rule this file keeps getting wrong.** Three review rounds in a row
  * introduced a defect by comparing two quantities that are not in the same
  * unit: a token *count* against a ratio as if it were a value, then raw units
@@ -60,13 +89,18 @@
  * `tokenBalanceChanges` or `userAccount` really could be hiding that
  * wallet's own leg.
  *
- * The leniency stops short of one case, because the two identities are not
- * interchangeable: the native leg is keyed off `account`, while the token
- * and WSOL legs are keyed off `userAccount`. An unreadable `account` over a
- * **non-zero `nativeBalanceChange`** therefore drops half of a wallet's SOL
- * side while keeping the other, which is a wrong number rather than a
- * refusal — so that one raises (see `nativeLamportsFor`). An unreadable
- * `account` with no lamport movement stays skipped.
+ * The leniency stops short wherever dropped data could have moved a number,
+ * which by the monotonicity above is anywhere it was non-zero. The two
+ * identities are not interchangeable: the native leg is keyed off `account`,
+ * while the token and WSOL legs are keyed off `userAccount` — and in the
+ * real ATA shape the WSOL leg sits on a separate entry whose `account` is
+ * the token account, not the wallet. So an unreadable `account` over a
+ * non-zero `nativeBalanceChange` raises (see `nativeLamportsFor`), and an
+ * unattributable non-zero *balance change* raises whenever the wallet being
+ * evaluated has an attributable leg of its own (see `balanceChangesFor`).
+ * What stays skipped is only what provably moved nothing: a zero-valued
+ * change, an `account` with no lamport movement, and any row where this
+ * wallet has no leg at all.
  *
  * The single fatal structural check left is `accountData` itself being an
  * array: a payload with nothing readable there mentions no addresses at all,
@@ -539,38 +573,96 @@ function accountEntries(payload: EnhancedTx): AccountEntry[] {
 
 /**
  * Every SPL balance change the payload reports for `address`, validated.
- * Only this wallet's own changes are read: a malformed `rawTokenAmount`,
- * `decimals` or `mint` on somebody else's leg is never touched, so it cannot
- * cost this wallet its trade — and neither can an unattributable
- * `userAccount`, which is simply not this wallet's.
+ * Only this wallet's own changes are read, so a malformed `rawTokenAmount`,
+ * `decimals` or `mint` on somebody else's leg cannot cost this wallet its
+ * trade.
  *
- * The exception is an entry that demonstrably belongs to this wallet: there,
- * an unreadable change or identity may be hiding this wallet's own leg, and
- * the row is failed closed (recorded, requeueable) rather than reported
- * short.
+ * **An unattributable non-zero balance change makes the row malformed
+ * whenever this wallet has at least one attributable leg.** That rule is
+ * deliberately blunt, and it is the second half of the `account` lesson
+ * above. The SOL side of a trade is spread across two different keys: the
+ * native leg is keyed off `account`, while the token and WSOL legs are keyed
+ * off `userAccount` — and in the real ATA shape the WSOL leg sits on a
+ * *separate* `accountData` entry whose `account` is the token account, not
+ * the wallet. Skipping such an entry because its identity is unreadable
+ * dropped the WSOL half and kept the native half:
+ *
+ *     truth                         token_amount 2, sol_amount 1,   price_sol 0.5
+ *     userAccount unreadable (ATA)  token_amount 2, sol_amount 0.5, price_sol 0.25
+ *                                   parse_error NULL, parsed_at SET, position dirty
+ *
+ * The token side has it too: half a token leg hidden gives `token_amount 1,
+ * price_sol 1` against a truth of `0.5`. Both in the documented Helius
+ * `userAccount: ""` shape — the very shape the leniency exists for. The
+ * leniency bought availability and paid for it with a silently halved cost
+ * basis on the most likely payload in production.
+ *
+ * A narrower rule (refuse only when the unattributable change is WSOL, or a
+ * mint this wallet trades) was considered and rejected: every way of
+ * stating it depends on knowing which mints the wallet trades, which is
+ * exactly what the dropped change would have told us.
+ *
+ * What stays lenient, so the feed does not go quiet for nothing: an
+ * unattributable change of **zero**, and any payload where this wallet has
+ * no attributable leg at all — that row does not concern it.
+ *
+ * An unreadable *container* (a `tokenBalanceChanges` that is not an array, a
+ * change that is not an object, an `accountData` element that is not an
+ * object) counts as unattributable too: it may hold a non-zero change, and
+ * nothing in it can be shown to be zero. From the parser's side it is
+ * indistinguishable from an unreadable ATA carrying this wallet's WSOL leg.
  */
 function balanceChangesFor(payload: EnhancedTx, address: string): BalanceChange[] {
   const changes: BalanceChange[] = [];
+  let unattributable = false;
+
   for (const account of accountEntries(payload)) {
     const isOurs = account.account === address;
     if (account.changes === null) {
       if (isOurs) throw new MalformedPayloadError("tokenBalanceChanges");
-      continue; // not ours, and not readable: nothing here to attribute to anyone
+      unattributable = true; // may hold a non-zero change we cannot see
+      continue;
     }
     for (const change of account.changes) {
       if (change.record === null) {
         if (isOurs) throw new MalformedPayloadError("tokenBalanceChange");
+        unattributable = true;
         continue;
       }
       if (change.userAccount === null) {
         if (isOurs) throw new MalformedPayloadError("tokenBalanceChange.userAccount");
+        // Readable amount, unreadable owner: only a zero change is harmless,
+        // since a zero moves no side of any trade. An unreadable amount
+        // cannot be shown to be zero, so it counts as non-zero.
+        if (unattributableIsNonZero(change.record)) unattributable = true;
         continue;
       }
       if (change.userAccount !== address) continue;
       changes.push(readBalanceChange(change.record));
     }
   }
+
+  // "At least one attributable leg" is what makes the dropped change this
+  // wallet's problem: with no leg of its own, the transaction does not
+  // concern it and nothing is being reported short.
+  if (changes.length > 0 && unattributable) {
+    throw new MalformedPayloadError("tokenBalanceChange.userAccount");
+  }
   return changes;
+}
+
+/**
+ * Whether an unattributable change moved anything. Read defensively — this
+ * change belongs to nobody we can name, so an unreadable amount here must
+ * not raise on its own account; it is simply not provably zero.
+ */
+function unattributableIsNonZero(record: Record<string, unknown>): boolean {
+  const amount = record.rawTokenAmount;
+  if (amount === null || typeof amount !== "object") return true;
+  const raw = (amount as Record<string, unknown>).tokenAmount;
+  if (typeof raw === "number") return raw !== 0;
+  if (typeof raw !== "string" || !/^[+-]?\d+$/.test(raw)) return true;
+  return BigInt(raw) !== 0n;
 }
 
 /**

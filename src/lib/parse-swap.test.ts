@@ -107,6 +107,97 @@ function splitSolSide(address: string, side: "buy" | "sell", theMint: string): E
   });
 }
 
+/**
+ * The **real ATA shape**: the wallet's WSOL leg lives on its own
+ * `accountData` entry, whose `account` is the token account rather than the
+ * wallet, and whose change carries `userAccount: <wallet>`. Half the SOL
+ * side is native (keyed off `account`), half is WSOL (keyed off
+ * `userAccount`). Truth: `buy tok=2 sol=1 price_sol=0.5`.
+ */
+function splitSolSideViaAta(address: string, side: "buy" | "sell", theMint: string): EnhancedTx {
+  const payload = buildSwapPayload({
+    wallet: address,
+    mint: theMint,
+    decimals: 6,
+    nativeChangeLamports: side === "buy" ? -(500_000_000 + 5_000) : 500_000_000 - 5_000,
+    tokenChangeRaw: side === "buy" ? "2000000" : "-2000000",
+    feeLamports: 5_000,
+    isFeePayer: true,
+  });
+  payload.accountData.push({
+    account: inventAddress(), // the ATA, not the wallet
+    nativeBalanceChange: 0,
+    tokenBalanceChanges: [
+      {
+        userAccount: address,
+        mint: WSOL_MINT,
+        rawTokenAmount: { tokenAmount: side === "buy" ? "-500000000" : "500000000", decimals: 9 },
+      },
+    ],
+  });
+  return payload;
+}
+
+/** Applies `mutate` to the ATA entry `splitSolSideViaAta` appended. */
+function breakAta(payload: EnhancedTx, mutate: (entry: Record<string, unknown>) => void): EnhancedTx {
+  mutate(payload.accountData[payload.accountData.length - 1] as unknown as Record<string, unknown>);
+  return payload;
+}
+
+/**
+ * A 1-SOL buy of 2 tokens whose **token** side is reported as two changes of
+ * one token each, the second on its own `accountData` entry (a second token
+ * account of the same mint). Truth: `buy tok=2 sol=1 price_sol=0.5`; hide the
+ * second change and the survivor reads as `tok=1 price_sol=1`.
+ *
+ * The second change has to live on its own entry to exercise this: a change
+ * sitting on the wallet's own entry is already covered by the `account ===
+ * address` rule, which raises whatever its `userAccount` says.
+ */
+function splitTokenSide(address: string, theMint: string): EnhancedTx {
+  const payload = buildSwapPayload({
+    wallet: address,
+    mint: theMint,
+    decimals: 6,
+    nativeChangeLamports: -1_000_005_000,
+    tokenChangeRaw: "1000000",
+    feeLamports: 5_000,
+    isFeePayer: true,
+  });
+  payload.accountData.push({
+    account: inventAddress(), // a second token account, not the wallet
+    nativeBalanceChange: 0,
+    tokenBalanceChanges: [
+      { userAccount: address, mint: theMint, rawTokenAmount: { tokenAmount: "1000000", decimals: 6 } },
+    ],
+  });
+  return payload;
+}
+
+/**
+ * A genuine two-leg swap whose second leg sits on its own `accountData`
+ * entry. Truth: `unsupported_quote` — a swap this batch cannot price at all.
+ */
+function twoLegViaAta(address: string, theMint: string, otherMint: string): EnhancedTx {
+  const payload = buildSwapPayload({
+    wallet: address,
+    mint: theMint,
+    decimals: 6,
+    nativeChangeLamports: -1_000_005_000,
+    tokenChangeRaw: "2000000",
+    feeLamports: 5_000,
+    isFeePayer: true,
+  });
+  payload.accountData.push({
+    account: inventAddress(),
+    nativeBalanceChange: 0,
+    tokenBalanceChanges: [
+      { userAccount: address, mint: otherMint, rawTokenAmount: { tokenAmount: "-3000000", decimals: 6 } },
+    ],
+  });
+  return payload;
+}
+
 /** Breaks the identity of the wallet's own (first) balance change. */
 function setOwnUserAccount(payload: EnhancedTx, value: unknown): EnhancedTx {
   (payload.accountData[0].tokenBalanceChanges[0] as unknown as Record<string, unknown>).userAccount = value;
@@ -844,49 +935,127 @@ describe("parseSwap", () => {
     expect(evaluateSwap(setOwnRawAmount(cleanBuy(), 2_000_000), wallet).outcome).toBe("trade");
   });
 
-  it("treats an unreadable identity as not-ours and skips it, rather than failing the row", () => {
-    // `""`, `null` and a number can none of them equal a tracked address, so
-    // an entry carrying one is not this wallet's. Helius emits
-    // `userAccount: ""` for token accounts it cannot attribute; failing the
-    // row on one would take the feed quiet with nothing reporting it.
+  it("skips an unattributable identity only where it provably moved nothing", () => {
+    // The leniency exists for the documented Helius `userAccount: ""`, but
+    // it only survives where the dropped change could not have moved a
+    // number: a zero-valued change, an `account` with no lamport movement,
+    // and a row where this wallet has no leg at all. Everything else is
+    // refused — see the paired test below.
     for (const identity of ["", null, 42, undefined]) {
-      const onPool = withPoolAccount(cleanBuy(), (entry) => {
-        (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = identity;
+      const zeroChange = withPoolAccount(cleanBuy(), (entry) => {
+        const change = (entry.tokenBalanceChanges as Record<string, unknown>[])[0];
+        change.userAccount = identity;
+        (change.rawTokenAmount as Record<string, unknown>).tokenAmount = "0";
       });
-      const trade = parseSwap(onPool, wallet)!;
-      expect(trade).not.toBeNull();
-      expect(trade.solAmount).toBeCloseTo(1, 9);
+      expect(parseSwap(zeroChange, wallet)!.solAmount).toBeCloseTo(1, 9);
 
       // No lamport movement on this entry: an unreadable `account` is only
-      // skippable when nothing moved through it. See the paired test below
-      // for the non-zero case, which is fatal because the native leg is
-      // keyed off `account` while the token and WSOL legs are keyed off
-      // `userAccount`.
+      // skippable when nothing moved through it.
       const poolAccount = withPoolAccount(cleanBuy(), (entry) => {
         entry.account = identity;
         entry.nativeBalanceChange = 0;
+        (((entry.tokenBalanceChanges as Record<string, unknown>[])[0]
+          .rawTokenAmount as Record<string, unknown>).tokenAmount = "0");
       });
       expect(parseSwap(poolAccount, wallet)!.solAmount).toBeCloseTo(1, 9);
-
-      const poolAccountNoNative = withPoolAccount(cleanBuy(), (entry) => {
-        entry.account = identity;
-        delete entry.nativeBalanceChange;
-      });
-      expect(parseSwap(poolAccountNoNative, wallet)!.solAmount).toBeCloseTo(1, 9);
     }
 
-    // An unreadable container on an untracked pool is skipped too.
-    for (const container of [undefined, null, "not-an-array", 7]) {
-      const payload = withPoolAccount(cleanBuy(), (entry) => {
-        entry.tokenBalanceChanges = container;
-      });
-      expect(parseSwap(payload, wallet)!.solAmount).toBeCloseTo(1, 9);
-    }
+    // A wallet with no leg of its own: the transaction does not concern it,
+    // so nothing is being reported short and nothing is refused.
+    const notOurs = withPoolAccount(
+      buildSwapPayload({
+        wallet: inventAddress(),
+        mint,
+        decimals: 6,
+        nativeChangeLamports: -1_000_005_000,
+        tokenChangeRaw: "2000000",
+        feeLamports: 5_000,
+        isFeePayer: true,
+      }),
+      (entry) => {
+        (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+      },
+    );
+    expect(evaluateSwap(notOurs, wallet).outcome).toBe("no_token_leg");
+  });
 
-    // And so is an accountData element that is not an object at all.
-    const junkEntry = cleanBuy();
-    (junkEntry.accountData as unknown as unknown[]).push("not-an-account");
-    expect(parseSwap(junkEntry, wallet)!.solAmount).toBeCloseTo(1, 9);
+  it("refuses an unattributable non-zero change when this wallet has a leg of its own", () => {
+    // Review of 9b round 2. The WSOL leg sits on a SEPARATE accountData
+    // entry in the real ATA shape — `account` is the token account, not the
+    // wallet — so skipping it for an unreadable `userAccount` dropped the
+    // WSOL half of the SOL side and kept the native half. Measured against
+    // 171a6ea:
+    //   truth                        tok=2 sol=1   price_sol=0.5
+    //   userAccount unreadable (ATA) tok=2 sol=0.5 price_sol=0.25
+    // with parse_error NULL, parsed_at SET and position dirty — in the very
+    // shape the leniency was introduced for.
+    for (const side of ["buy", "sell"] as const) {
+      const truth = parseSwap(splitSolSideViaAta(wallet.address, side, mint), wallet)!;
+      expect(truth.solAmount).toBeCloseTo(1, 9);
+      expect(truth.solAmount / truth.tokenAmount).toBeCloseTo(0.5, 9);
+
+      for (const identity of ["", null, 42, undefined]) {
+        const broken = breakAta(splitSolSideViaAta(wallet.address, side, mint), (entry) => {
+          (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = identity;
+        });
+        expect(() => evaluateSwap(broken, wallet)).toThrow(MalformedPayloadError);
+      }
+
+      // An unreadable container on that same ATA is indistinguishable from
+      // the above: it may hold this wallet's WSOL leg.
+      for (const container of [undefined, null, "not-an-array", 7]) {
+        const broken = breakAta(splitSolSideViaAta(wallet.address, side, mint), (entry) => {
+          entry.tokenBalanceChanges = container;
+        });
+        expect(() => evaluateSwap(broken, wallet)).toThrow(MalformedPayloadError);
+      }
+
+      const nonObjectChange = breakAta(splitSolSideViaAta(wallet.address, side, mint), (entry) => {
+        (entry.tokenBalanceChanges as unknown[])[0] = "not-a-change";
+      });
+      expect(() => evaluateSwap(nonObjectChange, wallet)).toThrow(MalformedPayloadError);
+
+      const nonObjectEntry = splitSolSideViaAta(wallet.address, side, mint);
+      (nonObjectEntry.accountData as unknown as unknown[])[nonObjectEntry.accountData.length - 1] = "not-an-account";
+      expect(() => evaluateSwap(nonObjectEntry, wallet)).toThrow(MalformedPayloadError);
+    }
+  });
+
+  it("refuses a half-hidden token side rather than halving the token amount", () => {
+    // The same defect on the token side: two changes of one token each, the
+    // second on its own token-account entry and unattributable. Measured
+    // against 171a6ea with exactly that shape:
+    //   truth              tok=2 sol=1 price_sol=0.5
+    //   half hidden        tok=1 sol=1 price_sol=1
+    // (A hidden change on the wallet's OWN entry was already refused there
+    // by the `account === address` rule — only the separate-entry shape
+    // regressed, and that is the shape this asserts.)
+    const truth = parseSwap(splitTokenSide(wallet.address, mint), wallet)!;
+    expect(truth.tokenAmount).toBeCloseTo(2, 9);
+    expect(truth.solAmount / truth.tokenAmount).toBeCloseTo(0.5, 9);
+
+    const broken = breakAta(splitTokenSide(wallet.address, mint), (entry) => {
+      (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+    });
+    expect(() => evaluateSwap(broken, wallet)).toThrow(MalformedPayloadError);
+  });
+
+  it("refuses a two-leg swap with one leg's identity unreadable, rather than trading the survivor", () => {
+    // Arity is monotone under dropped data too: a genuine token<->token
+    // swap with the second leg's identity unreadable is an ordinary,
+    // self-consistent one-leg trade. Measured against 171a6ea, second leg on
+    // its own entry:
+    //   trade{token_amount 2, sol_amount 1, price_sol 0.5}, position dirty,
+    //   parsed_at SET, parse_error NULL
+    // — a written trade where the truth is `unsupported_quote`, i.e. a swap
+    // this batch cannot price at all.
+    const otherMint = inventAddress();
+    expect(evaluateSwap(twoLegViaAta(wallet.address, mint, otherMint), wallet).outcome).toBe("unsupported_quote");
+
+    const hidden = breakAta(twoLegViaAta(wallet.address, mint, otherMint), (entry) => {
+      (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+    });
+    expect(() => evaluateSwap(hidden, wallet)).toThrow(MalformedPayloadError);
   });
 
   it("still fails closed when the unreadable identity is on the tracked wallet's own entry", () => {
@@ -1609,12 +1778,16 @@ describe("parsePending", () => {
     // Failing the row on one would make every delivery containing one
     // `malformed_payload` — the feed goes quiet with nothing reporting it.
     const payload = withPoolAccount(goodBuy(), (entry) => {
-      (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+      const change = (entry.tokenBalanceChanges as Record<string, unknown>[])[0];
+      change.userAccount = "";
+      (change.rawTokenAmount as Record<string, unknown>).tokenAmount = "0"; // moved nothing
       entry.account = null;
       entry.nativeBalanceChange = 0; // nothing moved through it, so nothing to attribute
     });
     const second = withPoolAccount(goodBuy(), (entry) => {
-      delete entry.tokenBalanceChanges;
+      (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = null;
+      (((entry.tokenBalanceChanges as Record<string, unknown>[])[0]
+        .rawTokenAmount as Record<string, unknown>).tokenAmount = 0);
       entry.account = 42;
       delete entry.nativeBalanceChange;
     });
@@ -1640,6 +1813,59 @@ describe("parsePending", () => {
 
     await expect(parsePending()).resolves.toBe(1);
     expect(await query("SELECT id FROM trade")).toHaveLength(0);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload");
+    expect(raw.parsed_at).toBeNull();
+  });
+
+  it("records a split SOL side whose ATA identity is unreadable, instead of halving it", async () => {
+    // Review of 9b round 2, end to end. Measured against 171a6ea, both
+    // directions:
+    //   truth                        token_amount 2, sol_amount 1,   price_sol 0.5
+    //   userAccount unreadable (ATA) token_amount 2, sol_amount 0.5, price_sol 0.25
+    //   parse_error NULL, parsed_at SET, position dirty
+    for (const side of ["buy", "sell"] as const) {
+      const payload = breakAta(splitSolSideViaAta(walletAddress, side, testMint), (entry) => {
+        (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+      });
+      await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+    }
+
+    await expect(parsePending()).resolves.toBe(2);
+
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    expect(await query("SELECT kol_id FROM position")).toHaveLength(0);
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(rows.map((r) => r.parse_error)).toEqual(["malformed_payload", "malformed_payload"]);
+    expect(rows.every((r) => r.parsed_at === null)).toBe(true);
+
+    // The readable ATA shape is still an ordinary 1-SOL trade.
+    await query("TRUNCATE raw_tx, trade, position CASCADE");
+    const good = splitSolSideViaAta(walletAddress, "buy", testMint);
+    await storeRawTx({ signature: good.signature, blockTime: new Date(), slot: 1, payload: good, source: "webhook" });
+    await expect(parsePending()).resolves.toBe(1);
+    const [trade] = await query<Record<string, unknown>>("SELECT sol_amount, price_sol FROM trade");
+    expect(Number(trade.sol_amount)).toBeCloseTo(1, 9);
+    expect(Number(trade.price_sol)).toBeCloseTo(0.5, 9);
+  });
+
+  it("records a half-hidden token side end to end, instead of halving the token amount", async () => {
+    // Measured against 171a6ea: token_amount 1, price_sol 1 against a truth
+    // of token_amount 2, price_sol 0.5.
+    const payload = breakAta(splitTokenSide(walletAddress, testMint), (entry) => {
+      (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    expect(await query("SELECT kol_id FROM position")).toHaveLength(0);
 
     const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
       "SELECT parsed_at, parse_error FROM raw_tx",
@@ -2106,19 +2332,91 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     // tracked wallet's own entry stay fatal, because there they could be
     // hiding that wallet's own leg.
     {
-      name: 'an unattributable userAccount ("") on an untracked pool',
+      // Still lenient, because the dropped change provably moved nothing.
+      name: 'an unattributable userAccount ("") on a zero-valued change',
       outcome: "trade",
+      build: () =>
+        withPoolAccount(invariantBuy(), (entry) => {
+          const change = (entry.tokenBalanceChanges as Record<string, unknown>[])[0];
+          change.userAccount = "";
+          (change.rawTokenAmount as Record<string, unknown>).tokenAmount = "0";
+        }),
+    },
+    {
+      // Review of 9b round 2: an unattributable NON-zero change is refused
+      // once this wallet has a leg of its own — it may be half of this
+      // wallet's SOL or token side, and every check below it survives the
+      // loss (see the file header on monotonicity).
+      name: 'an unattributable userAccount ("") on a non-zero change',
+      outcome: "malformed_payload",
       build: () =>
         withPoolAccount(invariantBuy(), (entry) => {
           (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
         }),
     },
     {
-      name: "a missing tokenBalanceChanges on an untracked pool",
-      outcome: "trade",
+      name: "a missing tokenBalanceChanges on an untracked entry (may hide a leg)",
+      outcome: "malformed_payload",
       build: () =>
         withPoolAccount(invariantBuy(), (entry) => {
           delete entry.tokenBalanceChanges;
+        }),
+    },
+    {
+      name: "an unreadable userAccount on the ATA holding this wallet's WSOL leg, buy (was: price_sol 0.25)",
+      outcome: "malformed_payload",
+      build: () =>
+        breakAta(splitSolSideViaAta(walletAddress, "buy", inventAddress()), (entry) => {
+          (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+        }),
+    },
+    {
+      name: "an unreadable userAccount on the ATA holding this wallet's WSOL leg, sell (was: price_sol 0.25)",
+      outcome: "malformed_payload",
+      build: () =>
+        breakAta(splitSolSideViaAta(walletAddress, "sell", inventAddress()), (entry) => {
+          (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = null;
+        }),
+    },
+    {
+      name: "a non-array tokenBalanceChanges on the ATA holding this wallet's WSOL leg",
+      outcome: "malformed_payload",
+      build: () =>
+        breakAta(splitSolSideViaAta(walletAddress, "buy", inventAddress()), (entry) => {
+          entry.tokenBalanceChanges = "not-an-array";
+        }),
+    },
+    {
+      name: "a non-object change on the ATA holding this wallet's WSOL leg",
+      outcome: "malformed_payload",
+      build: () =>
+        breakAta(splitSolSideViaAta(walletAddress, "buy", inventAddress()), (entry) => {
+          (entry.tokenBalanceChanges as unknown[])[0] = "not-a-change";
+        }),
+    },
+    {
+      name: "a non-object accountData entry where this wallet's WSOL leg belongs",
+      outcome: "malformed_payload",
+      build: () => {
+        const payload = splitSolSideViaAta(walletAddress, "buy", inventAddress());
+        (payload.accountData as unknown as unknown[])[payload.accountData.length - 1] = "not-an-account";
+        return payload;
+      },
+    },
+    {
+      name: "a two-leg swap with one leg's identity unreadable (was: a one-leg trade, tok=2 sol=1)",
+      outcome: "malformed_payload",
+      build: () =>
+        breakAta(twoLegViaAta(walletAddress, inventAddress(), inventAddress()), (entry) => {
+          (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+        }),
+    },
+    {
+      name: "a half-hidden token side (was: token_amount 1, price_sol 1)",
+      outcome: "malformed_payload",
+      build: () =>
+        breakAta(splitTokenSide(walletAddress, inventAddress()), (entry) => {
+          (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
         }),
     },
     {
