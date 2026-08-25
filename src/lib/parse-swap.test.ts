@@ -3,7 +3,15 @@ import { query } from "./db";
 import { buildSwapPayload } from "./fixtures/swap";
 import { inventAddress, inventSignature } from "./ids";
 import { addWallet } from "./wallets";
-import { USDC_MINT, WSOL_MINT, evaluateSwap, parsePending, parseSwap } from "./parse-swap";
+import {
+  USDC_MINT,
+  WSOL_MINT,
+  evaluateSwap,
+  parseErrorFor,
+  parsePending,
+  parseSwap,
+  type SwapOutcome,
+} from "./parse-swap";
 import { storeRawTx } from "./raw-tx";
 
 const wallet = { id: "w-1", kolId: "k-1", address: inventAddress() };
@@ -106,6 +114,9 @@ describe("parseSwap", () => {
       isFeePayer: false,
     });
     expect(parseSwap(payload, wallet)).toBeNull();
+    // Named, so the invariant table can assert this shape specifically
+    // instead of excluding every outcome that happens to share a name.
+    expect(evaluateSwap(payload, wallet).outcome).toBe("no_sol_leg");
   });
 
   it("respects token decimals", () => {
@@ -215,7 +226,11 @@ describe("parseSwap", () => {
       isFeePayer: true,
     });
     expect(parseSwap(payload, wallet)).toBeNull();
-    expect(evaluateSwap(payload, wallet).outcome).toBe("no_trade");
+    // A named outcome, not a bare "no_trade": this is a spec exclusion, and
+    // the invariant test below asserts it by name rather than excluding a
+    // whole catch-all outcome from its table.
+    expect(evaluateSwap(payload, wallet).outcome).toBe("stable_rotation");
+    expect(parseErrorFor("stable_rotation")).toBeNull();
   });
 
   it("returns null for a token-to-token swap and flags it as an unsupported quote", () => {
@@ -408,6 +423,120 @@ describe("parseSwap", () => {
     });
     expect(parseSwap(payload, wallet)).toBeNull();
     expect(evaluateSwap(payload, wallet).outcome).toBe("sol_leg_wrong_direction");
+  });
+
+  it("does not fabricate a cost basis from a sole 1-raw-unit leg of a 6-decimal mint", () => {
+    // Review round 4: the round-3 arity guard exempted a sole leg from the
+    // dust floor whatever the mint's decimals, so one millionth of a token
+    // was booked as a whole trade priced off the ATA rent left in the native
+    // delta. Measured against the round-3 code:
+    //   buy tok=0.000001 sol=0.00203928 -> price_sol 2039.28
+    // A fabricated cost basis in `trade` and `position`. Dust is now judged
+    // on the token quantity (raw / 10**decimals), so this is `dust_only`.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: inventAddress(),
+      decimals: 6,
+      nativeChangeLamports: -(2_039_280 + 5_000), // ATA rent plus gas
+      tokenChangeRaw: "1",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    expect(parseSwap(payload, wallet)).toBeNull();
+    expect(evaluateSwap(payload, wallet).outcome).toBe("dust_only");
+  });
+
+  it("does not fabricate a cost basis from a sole 1-raw-unit leg of a 9-decimal mint", () => {
+    // The same defect at nine decimals, where one raw unit is a billionth of
+    // a token. Measured against the round-3 code:
+    //   buy tok=1e-9 sol=0.004995 -> price_sol 4,995,000
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: inventAddress(),
+      decimals: 9,
+      nativeChangeLamports: -5_000_000,
+      tokenChangeRaw: "1",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    expect(parseSwap(payload, wallet)).toBeNull();
+    expect(evaluateSwap(payload, wallet).outcome).toBe("dust_only");
+  });
+
+  it("judges the dust floor on token quantity, so the same raw count differs by decimals", () => {
+    // The whole point of the rule, stated as one comparison: an identical
+    // raw count is a whole token at 0 decimals and a millionth of one at 6.
+    const build = (decimals: number) =>
+      buildSwapPayload({
+        wallet: wallet.address,
+        mint: inventAddress(),
+        decimals,
+        nativeChangeLamports: -1_000_005_000,
+        tokenChangeRaw: "1",
+        feeLamports: 5_000,
+        isFeePayer: true,
+      });
+    expect(evaluateSwap(build(0), wallet).outcome).toBe("trade");
+    expect(evaluateSwap(build(6), wallet).outcome).toBe("dust_only");
+    expect(evaluateSwap(build(9), wallet).outcome).toBe("dust_only");
+  });
+
+  it("keeps a leg one raw unit above the floor at 6 decimals", () => {
+    // The floor is 1/1,000,000 of a token inclusive; 2/1,000,000 is a real
+    // leg. Sole leg here, so the guard being absent must not swallow it.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: inventAddress(),
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("trade");
+  });
+
+  it("converts a WSOL leg to lamports by its reported decimals rather than assuming nine", () => {
+    // The same unit error one level down: the SOL side sums native lamports
+    // with the WSOL token leg, which is only the identity because WSOL has 9
+    // decimals. Reading the raw amount without consulting the decimals the
+    // payload reports would add a 6-decimal figure straight into a lamports
+    // total and understate the SOL side by 1000x.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -5_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+      // 1 WSOL expressed at 6 decimals: 1,000,000 raw units, not 1e9.
+      extraTokenChanges: [{ mint: WSOL_MINT, decimals: 6, rawTokenAmount: "-1000000" }],
+    });
+    const trade = parseSwap(payload, wallet)!;
+    expect(trade.side).toBe("buy");
+    expect(trade.solAmount).toBeCloseTo(1, 9); // 1 SOL, not 0.001
+  });
+
+  it("sums two balance changes of one mint at a common scale, not as raw counts", () => {
+    // Two token accounts of the same mint reported at different decimals are
+    // not addable as raw counts: 1,000,000 units at 6 decimals is 1 token,
+    // 1,000,000 at 9 decimals is 0.001. Summing them unscaled would report
+    // 2 tokens instead of 1.001.
+    const splitMint = inventAddress();
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: splitMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "1000000", // 1 token
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: splitMint, decimals: 9, rawTokenAmount: "1000000" }], // 0.001 token
+    });
+    const trade = parseSwap(payload, wallet)!;
+    expect(trade.mint).toBe(splitMint);
+    expect(trade.tokenAmount).toBeCloseTo(1.001, 9);
   });
 });
 
@@ -769,13 +898,22 @@ describe("parsePending", () => {
  * written trade nor a recorded `parse_error` — invisible in the feed and
  * invisible in the error log. Rather than keep adding one more specific
  * regression test per incident, this asserts the property directly, driven
- * over every payload shape the three rounds have touched.
+ * over every payload shape the rounds have touched.
  *
- * Deliberately NOT included: a SOL<->USDC rotation and a payload with no
- * SOL/WSOL leg at all. Both are spec §4.3 exclusions with a non-zero token
- * balance change that legitimately produce `no_trade` with a null
- * `parse_error` forever — including them here would assert the invariant is
- * violated by a case that is correct by design, not a silent drop.
+ * Round 3 carved two shapes out of this table — a SOL<->USDC rotation and a
+ * payload with no SOL/WSOL leg — because both legitimately end as neither a
+ * trade nor an error. The rotation carve-out was right; the other was not.
+ * "No SOL leg" is reached *after* dust filtering, so a real trade can land
+ * there, and two shapes did: a sole 1-raw-unit leg of a 6- or 9-decimal
+ * mint. Worse, the carve-out excluded an *outcome* (`no_trade`) rather than
+ * a shape, so anything a future change routed into that outcome was excluded
+ * with it, silently.
+ *
+ * So the table now covers every shape, including those two, and each row
+ * asserts the **specific named outcome** it must reach. `no_trade` no longer
+ * exists as a type member, and the standing check below is that no shape
+ * lands outside the small, individually justified set of outcomes that are
+ * silent by design.
  */
 describe("invariant: a tracked wallet's swap is never silently dropped", () => {
   let kolId: string;
@@ -788,18 +926,36 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     await addWallet(kolId, walletAddress);
   });
 
+  /**
+   * The outcomes that are neither a trade nor a recorded error, each one
+   * named and justified. A shape reaching anything outside this set must
+   * leave a trade or a non-null `parse_error` behind.
+   */
+  const SILENT_BY_DESIGN: ReadonlySet<SwapOutcome> = new Set<SwapOutcome>([
+    // Spec §4.3: SOL <-> stablecoin rotation is not a trade and is not indexed.
+    "stable_rotation",
+    // Spec §4.3 again: no SOL/WSOL movement to trade against — a transfer or
+    // an airdrop, not a swap.
+    "no_sol_leg",
+    // Nothing above the mint's own precision floor moved.
+    "dust_only",
+    // The transaction does not touch this wallet's SPL balances at all.
+    "no_token_leg",
+  ]);
+
   type Shape = {
     name: string;
-    // What SHOULD happen, per the specific tests above — asserted too, but
-    // the invariant assertion below does not depend on this being right.
-    expectTrade: boolean;
+    // The exact outcome this shape must reach. Asserting the specific name
+    // is what makes the table catch a real trade being re-routed into a
+    // silent outcome — the property the round-3 `no_trade` carve-out lost.
+    outcome: SwapOutcome;
     build: () => ReturnType<typeof buildSwapPayload>;
   };
 
   const shapes: Shape[] = [
     {
       name: "clean SOL buy",
-      expectTrade: true,
+      outcome: "trade",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -813,7 +969,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "clean sell",
-      expectTrade: true,
+      outcome: "trade",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -827,7 +983,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "wrong-direction SOL leg (a tip exceeding sale proceeds)",
-      expectTrade: false,
+      outcome: "sol_leg_wrong_direction",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -841,7 +997,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "token<->token swap (two comparable real legs)",
-      expectTrade: false,
+      outcome: "unsupported_quote",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -856,7 +1012,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "sole 1-raw-unit leg (the whole trade, not a router remainder)",
-      expectTrade: true,
+      outcome: "trade",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -870,7 +1026,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "a 1-raw-unit dust remainder alongside a real leg",
-      expectTrade: true,
+      outcome: "trade",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -885,7 +1041,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "two real legs of lopsided count (no dust involved)",
-      expectTrade: false,
+      outcome: "unsupported_quote",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -900,7 +1056,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "non-fee-payer sell",
-      expectTrade: true,
+      outcome: "trade",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -914,7 +1070,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "persistent-WSOL buy",
-      expectTrade: true,
+      outcome: "trade",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -927,26 +1083,133 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
           extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: "-1000000000" }],
         }),
     },
+    {
+      // Round 3 excluded this shape from the table. It belongs here: spec
+      // §4.3 says a SOL <-> stablecoin rotation is not a trade and is not
+      // indexed, so the right assertion is its name, not its absence.
+      name: "SOL<->USDC rotation (spec §4.3 exclusion)",
+      outcome: "stable_rotation",
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: USDC_MINT,
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      // Round 3 excluded this one too, and that was the mistake: the branch
+      // is reached after dust filtering, so a real trade can land in it.
+      name: "no SOL/WSOL leg at all (a transfer, not a swap)",
+      outcome: "no_sol_leg",
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: 0,
+          tokenChangeRaw: "2000000",
+          feeLamports: 0,
+          isFeePayer: false,
+        }),
+    },
+    {
+      // The two shapes that were landing in the excluded region as
+      // fabricated trades before the dust floor became decimals-aware.
+      name: "sole 1-raw-unit leg of a 6-decimal mint (dust, not a trade)",
+      outcome: "dust_only",
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -(2_039_280 + 5_000),
+          tokenChangeRaw: "1",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "sole 1-raw-unit leg of a 9-decimal mint (dust, not a trade)",
+      outcome: "dust_only",
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 9,
+          nativeChangeLamports: -5_000_000,
+          tokenChangeRaw: "1",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "a transaction that does not touch this wallet",
+      outcome: "no_token_leg",
+      build: () =>
+        buildSwapPayload({
+          wallet: inventAddress(),
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
   ];
 
-  it.each(shapes)("$name: a trade is written or parse_error is non-null — never neither", async ({ build, expectTrade }) => {
-    const payload = build();
-    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+  it.each(shapes)(
+    "$name: reaches its named outcome, and never a silent drop outside the justified set",
+    async ({ build, outcome }) => {
+      const payload = build();
+      await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
 
-    await parsePending();
+      // The specific named outcome. This is what makes the table catch a
+      // real trade being re-routed into a not-a-trade branch: the previous
+      // version excluded a catch-all outcome, so anything that drifted into
+      // it drifted out of the test's reach at the same time.
+      expect(evaluateSwap(payload, { id: "w", kolId: kolId, address: walletAddress }).outcome).toBe(outcome);
 
-    const trades = await query<{ id: string }>("SELECT id FROM trade WHERE kol_id = $1", [kolId]);
-    const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
+      await parsePending();
 
-    const wroteTrade = trades.length > 0;
-    const hasError = raw.parse_error !== null;
+      const trades = await query<{ id: string }>("SELECT id FROM trade WHERE kol_id = $1", [kolId]);
+      const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
 
-    // The invariant under test: never both false.
-    expect(wroteTrade || hasError).toBe(true);
+      const wroteTrade = trades.length > 0;
+      const hasError = raw.parse_error !== null;
 
-    // The specific expectation, checked too — a stronger assertion than the
-    // invariant alone, and documentation of what each shape is supposed to do.
-    expect(wroteTrade).toBe(expectTrade);
-    expect(hasError).toBe(!expectTrade);
+      // The standing invariant: a shape ends as a trade, or as a recorded
+      // error, or in one of the few outcomes that are silent by design and
+      // individually justified above. Nothing else.
+      expect(wroteTrade || hasError || SILENT_BY_DESIGN.has(outcome)).toBe(true);
+
+      expect(wroteTrade).toBe(outcome === "trade");
+      expect(hasError).toBe(parseErrorFor(outcome) !== null);
+      expect(raw.parse_error).toBe(parseErrorFor(outcome));
+    },
+  );
+
+  it("covers every outcome the parser can produce", () => {
+    // A shape can only be asserted if the table has one. If a future change
+    // adds an outcome, this fails until a shape for it is added, so the
+    // table cannot quietly stop covering the parser.
+    // Exhaustive at compile time: adding a member to SwapOutcome breaks
+    // `tsc` here until it is listed, and breaks this test until the table
+    // has a shape that reaches it.
+    const ALL_OUTCOMES: Record<SwapOutcome, true> = {
+      trade: true,
+      no_token_leg: true,
+      dust_only: true,
+      stable_rotation: true,
+      no_sol_leg: true,
+      unsupported_quote: true,
+      sol_leg_wrong_direction: true,
+    };
+    const covered = new Set(shapes.map((s) => s.outcome));
+    expect((Object.keys(ALL_OUTCOMES) as SwapOutcome[]).filter((o) => !covered.has(o))).toEqual([]);
   });
 });
