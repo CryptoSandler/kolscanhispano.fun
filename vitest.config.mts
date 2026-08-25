@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    setupFiles: ["./vitest.env.ts"],
     // Tests share one database and truncate between cases, so they cannot run
     // in parallel against each other.
     fileParallelism: false,

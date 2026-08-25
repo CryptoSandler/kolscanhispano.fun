@@ -12,7 +12,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:migrate": "tsx scripts/migrate.mts",
+    "db:migrate:test": "tsx scripts/migrate.mts --test"
   },
   "repository": {
     "type": "git",
