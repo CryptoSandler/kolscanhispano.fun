@@ -68,6 +68,25 @@ try {
       throw err;
     }
   }
+
+  // A sentinel that does not depend on parsing any connection string: a
+  // database can only have this marker if it was migrated with --test, no
+  // matter how TEST_DATABASE_URL happens to be spelled. Only ever stamped
+  // on the --test path, and idempotent (upsert on the singleton row).
+  if (isTest) {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS test_database_marker (
+        id BOOLEAN PRIMARY KEY DEFAULT true,
+        stamped_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT test_database_marker_singleton CHECK (id)
+      )
+    `);
+    await client.query(`
+      INSERT INTO test_database_marker (id, stamped_at) VALUES (true, now())
+      ON CONFLICT (id) DO UPDATE SET stamped_at = EXCLUDED.stamped_at
+    `);
+    console.log("Stamped test_database_marker");
+  }
 } finally {
   await client.end();
 }
