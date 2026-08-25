@@ -279,9 +279,14 @@ idempotent. And Helius auto-disables failing webhooks — on the free plan, eval
 window** at a ≥95 % failure rate, checked every 4 hours — and **free plans get no email
 notification**. A disabled webhook is therefore a silent outage; §5.5 covers it.
 
-*Unverified:* the maximum number of addresses per webhook. Confirm before implementation. The design
-assumes a single webhook holding hundreds to low thousands of addresses, and the reconciler is
-written so that sharding across several webhooks is a config change.
+**Capacity, verified:** up to **100,000 addresses per webhook** via the API. A single webhook covers
+v1 by three orders of magnitude; the reconciler is still written so that sharding is a config change.
+
+**Delivery contract, verified:** our endpoint must return `200` **within 1 second**. Helius retries
+on `5xx`, on `4xx` other than `403`, on timeout and on connection failure — **3 attempts, 1 second
+apart** — and if all fail **the event is permanently lost**, with no re-queue. That single sentence
+is the whole argument for §5.5: the only recovery for a dropped event is our own gap repair.
+Enhanced webhooks do not deliver failed transactions, which is what we want.
 
 ### 5.2 Webhook
 
@@ -295,7 +300,8 @@ wallet of every `approved` KOL — **bare addresses, no names or labels, and a n
    otherwise, and rate-limit by `ip_hash` as in `outbid-tokens`.
 2. Encrypt the payload and insert into `raw_tx` with `ON CONFLICT (signature_hmac) DO NOTHING` —
    the idempotency barrier for Helius retries (§8.2).
-3. Return `200` immediately. No parsing in the request path.
+3. Return `200` immediately. No parsing in the request path — the budget is 1 second end to end,
+   and three failed attempts lose the event for good.
 
 A worker parses unparsed `raw_tx` rows into `trade` rows. Parse failures are recorded in
 `parse_error` and left in place: the payload is already paid for, so a parser fix can reprocess it
@@ -336,8 +342,24 @@ Every `RECONCILE_INTERVAL_HOURS` (default 6), per active wallet:
 3. Batch the missing signatures into `POST /v0/transactions` calls of 100 (100 credits each).
 
 If a wallet returns a gap larger than `HEALTH_GAP_ALERT`, or if no webhook push has arrived at all
-in `HEALTH_SILENCE_HOURS`, the run writes a health record and surfaces a banner in the admin. That
-banner is the only defence against the silent auto-disable.
+in `HEALTH_SILENCE_HOURS`, the run writes a health record and surfaces a banner in the admin.
+
+**Self-healing.** A banner alone is not enough: on the free plan the auto-disable is silent and the
+window is 24 hours, so a weekend outage is a weekend of lost trades. When the reconciler sees both
+signals together — no pushes in `HEALTH_SILENCE_HOURS` *and* `getSignaturesForAddress` showing real
+on-chain activity in that window — it repairs the webhook itself:
+
+1. Read the webhook. If it exists and is inactive, `PATCH { "active": true }` (100 credits).
+2. If it is gone, recreate it from the database address set (100 credits).
+3. Backfill the silent window through the gap-repair path above, so nothing is lost.
+4. Write an `audit_log` entry — `webhook_reactivated` or `webhook_recreated` — with the silent
+   window, the number of transactions recovered and the credits spent, and raise the admin banner
+   anyway. Self-healing that heals quietly hides a recurring fault.
+
+100 credits is a rounding error against 1M/month; a day of missing trades is not. Re-enabling grants
+a 24-hour grace period, so a repair loop cannot thrash: the reconciler additionally refuses to repair
+the same webhook more than `HEALTH_REPAIR_MAX_PER_DAY` (default 3) times in 24 hours, and escalates
+to the banner alone after that.
 
 ### 5.6 Budget enforcement
 
@@ -638,7 +660,8 @@ Test-driven, per the repo workflow. Beyond normal coverage:
 | `BACKFILL_MAX_PAGES` | `30` | ≈3,000 transactions, 3,000 credits |
 | `BACKFILL_WALLETS_PER_RUN` | `1` | Queue drain rate |
 | `RECONCILE_INTERVAL_HOURS` | `6` | Gap repair cadence |
-| `HEALTH_SILENCE_HOURS` | `3` | No pushes ⇒ admin banner |
+| `HEALTH_SILENCE_HOURS` | `3` | Silence that triggers the health check |
+| `HEALTH_REPAIR_MAX_PER_DAY` | `3` | Cap on self-healing attempts before escalating (§5.5) |
 | `PRICE_MIN_LIQUIDITY_USD` | `1000` | `unpriced` floor |
 | `CLOSED_POSITION_THRESHOLD` | `0.95` | Win-rate closure rule |
 | `CLAIM_TTL_HOURS` | `48` | Registration claim expiry |
@@ -654,7 +677,6 @@ change.
 
 ## 14. Open items
 
-1. Confirm the maximum `accountAddresses` per Helius webhook before implementation (§5.1).
-2. Seed roster: 15–20 KOLs entered from the admin so the site does not launch empty.
-3. The syndication endpoint used for tweet verification is unofficial and may break; the manual path
+1. Seed roster: 15–20 KOLs entered from the admin so the site does not launch empty.
+2. The syndication endpoint used for tweet verification is unofficial and may break; the manual path
    is the contract, the fetch is the convenience.
