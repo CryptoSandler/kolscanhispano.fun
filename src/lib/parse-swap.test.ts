@@ -82,6 +82,34 @@ function withPoolAccount(payload: EnhancedTx, mutate: (entry: Record<string, unk
 }
 
 /**
+ * A wallet that the transaction leaves entirely alone: no token leg of its
+ * own and no lamport movement of its own, in a payload that nonetheless
+ * carries an unattributable non-zero change. Nothing here is this wallet's
+ * problem, so nothing about it may be read.
+ */
+function uninvolvedBeside(address: string): EnhancedTx {
+  const theMint = inventAddress();
+  const payload = buildSwapPayload({
+    wallet: address,
+    mint: theMint,
+    decimals: 6,
+    nativeChangeLamports: 0,
+    tokenChangeRaw: "2000000",
+    feeLamports: 5_000,
+    isFeePayer: false,
+  });
+  payload.accountData[0].tokenBalanceChanges = [];
+  payload.accountData.push({
+    account: inventAddress(),
+    nativeBalanceChange: 0,
+    tokenBalanceChanges: [
+      { userAccount: "", mint: theMint, rawTokenAmount: { tokenAmount: "2000000", decimals: 6 } },
+    ],
+  });
+  return payload;
+}
+
+/**
  * A wallet whose own entry is perfectly readable and states a net 1 SOL
  * movement after fees, but which has **no attributable token leg** — its
  * only token change sits on an ATA and is unattributable when `hidden` is
@@ -1111,6 +1139,77 @@ describe("parseSwap", () => {
       },
     );
     expect(evaluateSwap(uninvolved, wallet).outcome).toBe("no_token_leg");
+  });
+
+  it("leaves an uninvolved wallet alone: no leg, no lamports of its own, nothing read", () => {
+    // Review of 9b round 4. Computing the SOL side before knowing whether
+    // this wallet moved anything made the no-leg path read `feePayer`, `fee`
+    // and `nativeBalanceChange` where it never had. Measured against
+    // 7239fd5, every one with no leg, an unattributable change present and
+    // ZERO net SOL movement of this wallet's own — a wallet that is
+    // genuinely uninvolved:
+    //   feePayer absent                            -> MalformedPayloadError(feePayer)
+    //   fee absent / non-numeric                   -> MalformedPayloadError(fee)
+    //   own nativeBalanceChange 1.5                -> MalformedPayloadError(nativeBalanceChange)
+    //   third party's unreadable account over 1 SOL-> MalformedPayloadError(accountData[].account)
+    // Fail-closed and requeueable, but none of it is this wallet's problem,
+    // and the comment at the read site promised the opposite.
+    const uninvolved = () => uninvolvedBeside(wallet.address);
+
+    expect(evaluateSwap(uninvolved(), wallet).outcome).toBe("no_token_leg");
+    expect(evaluateSwap(dropField(uninvolved(), "feePayer"), wallet).outcome).toBe("no_token_leg");
+    expect(evaluateSwap(dropField(uninvolved(), "fee"), wallet).outcome).toBe("no_token_leg");
+    expect(evaluateSwap(setField(uninvolved(), "fee", "5000"), wallet).outcome).toBe("no_token_leg");
+
+    const brokenOwnNative = uninvolved();
+    (brokenOwnNative.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = 1.5;
+    expect(evaluateSwap(brokenOwnNative, wallet).outcome).toBe("no_token_leg");
+
+    // A third party's unreadable `account` over a real SOL movement: still
+    // fatal for a wallet that HAS a leg (round 2), never for this one.
+    const thirdParty = uninvolved();
+    thirdParty.accountData.push({
+      account: null as unknown as string,
+      nativeBalanceChange: 1_000_000_000,
+      tokenBalanceChanges: [],
+    });
+    expect(evaluateSwap(thirdParty, wallet).outcome).toBe("no_token_leg");
+
+    // The round-4 refusal is intact: the same payload, but this wallet's own
+    // entry states a net 1 SOL movement.
+    expect(() => evaluateSwap(nativeMoverWithHiddenLeg(wallet.address, mint, { hidden: true }), wallet)).toThrow(
+      MalformedPayloadError,
+    );
+
+    // And a wallet that only paid gas nets to zero after the §4.4 fee, so it
+    // stays silent even though its lamports did move.
+    const gasOnly = uninvolved();
+    (gasOnly.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = -5_000;
+    setField(gasOnly, "feePayer", wallet.address);
+    expect(evaluateSwap(gasOnly, wallet).outcome).toBe("no_token_leg");
+  });
+
+  it("reads the trading path's fields in a fixed order: feePayer, then fee, then nativeBalanceChange", () => {
+    // The order decides which field a malformed payload is reported against,
+    // and it is unchanged since the fields were first guarded. Asserted by
+    // breaking all three at once and naming the field that wins.
+    const allThree = () => {
+      const payload = setField(setField(cleanBuy(), "feePayer", 42), "fee", "5000");
+      (payload.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = 1.5;
+      return payload;
+    };
+    expect(() => evaluateSwap(allThree(), wallet)).toThrow(/feePayer/);
+
+    const feeAndNative = () => {
+      const payload = setField(cleanBuy(), "fee", "5000");
+      (payload.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = 1.5;
+      return payload;
+    };
+    expect(() => evaluateSwap(feeAndNative(), wallet)).toThrow(/fee/);
+
+    const nativeOnly = cleanBuy();
+    (nativeOnly.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = 1.5;
+    expect(() => evaluateSwap(nativeOnly, wallet)).toThrow(/nativeBalanceChange/);
   });
 
   it("refuses a half-hidden token side rather than halving the token amount", () => {
@@ -2552,6 +2651,38 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       name: "a no-leg wallet that moved SOL, with the unattributable change at zero",
       outcome: "no_token_leg",
       build: () => nativeMoverWithHiddenLeg(walletAddress, inventAddress(), { hidden: true, amount: "0" }),
+    },
+    {
+      name: "an uninvolved wallet with an absent feePayer (must stay silent)",
+      outcome: "no_token_leg",
+      build: () => dropField(uninvolvedBeside(walletAddress), "feePayer"),
+    },
+    {
+      name: "an uninvolved wallet with an absent fee (must stay silent)",
+      outcome: "no_token_leg",
+      build: () => dropField(uninvolvedBeside(walletAddress), "fee"),
+    },
+    {
+      name: "an uninvolved wallet with its own nativeBalanceChange unreadable (must stay silent)",
+      outcome: "no_token_leg",
+      build: () => {
+        const payload = uninvolvedBeside(walletAddress);
+        (payload.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = 1.5;
+        return payload;
+      },
+    },
+    {
+      name: "an uninvolved wallet beside a third party's unreadable account over 1 SOL (must stay silent)",
+      outcome: "no_token_leg",
+      build: () => {
+        const payload = uninvolvedBeside(walletAddress);
+        payload.accountData.push({
+          account: null as unknown as string,
+          nativeBalanceChange: 1_000_000_000,
+          tokenBalanceChanges: [],
+        });
+        return payload;
+      },
     },
     {
       name: "a wallet with no leg and no native movement, unattributable change present",

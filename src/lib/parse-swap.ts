@@ -821,6 +821,12 @@ function nativeLamportsFor(payload: EnhancedTx, address: string): bigint {
  * Factored out because `evaluateSwap` needs the same number in two places:
  * once to price a trade, and once — the branch below — to decide whether a
  * wallet with no readable token leg was nevertheless doing something.
+ *
+ * Every read here can refuse, so it is reached only once this wallet is
+ * known to be involved: it has a token leg, or (via `readableNativeFor`) its
+ * own lamports demonstrably moved. The order is `feePayer` -> `fee` ->
+ * `nativeBalanceChange`, and it is load-bearing for which field a malformed
+ * payload is reported against.
  */
 function solSideFor(
   payload: EnhancedTx,
@@ -835,6 +841,36 @@ function solSideFor(
   const feeAdjustedNative = isFeePayer ? nativeLamportsFor(payload, address) + fee : nativeLamportsFor(payload, address);
   // Both terms are lamports by construction.
   return { isFeePayer, fee, solDelta: feeAdjustedNative + wsolLamportsIn(changes) };
+}
+
+/**
+ * This wallet's own native movement, read **leniently**: an unreadable value
+ * is "not known to have moved", never an error, and no other account's entry
+ * is consulted.
+ *
+ * It exists only as the *trigger* for the no-token-leg refusal in
+ * `evaluateSwap`. Reading the strict `nativeLamportsFor` there — or the fee
+ * terms, which need it — would make a genuinely uninvolved wallet raise on a
+ * field it has no business reading: measured, a payload with no leg, an
+ * unattributable change and no SOL movement of this wallet's own was refused
+ * for an absent `feePayer`, an absent `fee`, its own unreadable
+ * `nativeBalanceChange`, and a *third party's* unreadable `account` over 1
+ * SOL. Fail-closed and requeueable, but wrong: nothing on that path is this
+ * wallet's problem.
+ *
+ * So the order matters. Establish, without raising, that this wallet's own
+ * lamports moved; only then read the fields that price the movement, which
+ * may legitimately refuse.
+ */
+function readableNativeFor(payload: EnhancedTx, address: string): bigint {
+  let total = 0n;
+  for (const account of accountEntries(payload)) {
+    if (account.record === null || account.account !== address) continue;
+    const value = account.record.nativeBalanceChange;
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) continue;
+    total += BigInt(value);
+  }
+  return total;
 }
 
 /**
@@ -897,8 +933,16 @@ export function evaluateSwap(
     // the webhook is filtered to SWAP, so that shape should barely exist,
     // and a refusal is recorded and requeueable where a dropped trade is
     // neither.
-    if (unattributable && solSideFor(payload, wallet.address, changes).solDelta !== 0n) {
-      throw new MalformedPayloadError("tokenBalanceChange.userAccount");
+    // Native first, leniently, and the fee terms only once it is non-zero:
+    // a wallet whose own lamports did not move is uninvolved, and must not
+    // be made to raise on a `feePayer`, a `fee`, or a third party's
+    // `account` that it never needed. Once its lamports have moved, the
+    // strict read decides whether anything is left after the §4.4 fee — a
+    // wallet that only paid gas nets to zero and stays silent.
+    if (unattributable && readableNativeFor(payload, wallet.address) + wsolLamportsIn(changes) !== 0n) {
+      if (solSideFor(payload, wallet.address, changes).solDelta !== 0n) {
+        throw new MalformedPayloadError("tokenBalanceChange.userAccount");
+      }
     }
     return { outcome: "no_token_leg" };
   }
@@ -911,8 +955,10 @@ export function evaluateSwap(
   const tokenAmount = Number(raw < 0n ? -raw : raw) / 10 ** decimals;
 
   // Read at the point of use, once this wallet is known to have a leg: a
-  // wallet the transaction does not trade for never touches these, so a
-  // malformed one cannot cost it anything.
+  // wallet with no leg and no lamport movement of its own never touches
+  // these, so a malformed one cannot cost it anything. Order on this path is
+  // `feePayer` -> `fee` -> `nativeBalanceChange`, unchanged since the fields
+  // were first guarded.
   const { isFeePayer, fee, solDelta } = solSideFor(payload, wallet.address, changes);
 
   if (solDelta === 0n) return { outcome: "no_sol_leg" };
