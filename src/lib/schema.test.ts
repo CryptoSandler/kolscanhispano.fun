@@ -52,10 +52,32 @@ describe("core schema", () => {
     expect(row.data_type).toBe("numeric");
   });
 
-  it("enforces one trade per signature, instruction and wallet", async () => {
-    const [row] = await query<{ count: string }>(
-      `SELECT count(*) FROM pg_indexes
-       WHERE tablename = 'trade' AND indexdef ILIKE '%UNIQUE%signature_hmac%instruction_index%wallet_id%'`);
-    expect(Number(row.count)).toBe(1);
+  it("keeps slot as bigint for replay ordering", async () => {
+    const [row] = await query<{ data_type: string }>(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_name = 'trade' AND column_name = 'slot'`);
+    expect(row.data_type).toBe("bigint");
+  });
+
+  it("rejects the same signature, instruction and wallet twice", async () => {
+    const kolId = uuid();
+    const walletId = uuid();
+    await query("INSERT INTO kol (id, slug, display_name, x_handle) VALUES ($1,$2,$3,$4)",
+      [kolId, "trade-dup", "Trade Dup", "tradedup"]);
+    await query(
+      "INSERT INTO kol_wallet (id, kol_id, address_enc, address_hmac) VALUES ($1,$2,$3,$4)",
+      [walletId, kolId, Buffer.from("x"), Buffer.from("b".repeat(64), "hex")]);
+
+    const signatureHmac = Buffer.from("c".repeat(64), "hex");
+    const trade = (id: string) => query(
+      `INSERT INTO trade
+         (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
+          mint, side, token_amount, sol_amount, block_time)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, signatureHmac, Buffer.from("sig"), 0, kolId, walletId,
+        "So11111111111111111111111111111111111111112", "buy", 1000, 1, new Date()]);
+
+    await trade(uuid());
+    await expect(trade(uuid())).rejects.toThrow();
   });
 });
