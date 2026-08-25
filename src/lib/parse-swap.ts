@@ -28,6 +28,18 @@ export const WSOL_MINT = "So11111111111111111111111111111111111111112";
  */
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
+/**
+ * A dust leg must be at least this many times smaller than the dominant leg
+ * to be ignored (review round 1, finding 4). A router can leave a 1-raw-unit
+ * remainder on an intermediate mint; a genuine second leg of a real
+ * token↔token or stablecoin-quoted swap is comparable in size to the first,
+ * not many orders of magnitude smaller. This is a heuristic, not a spec
+ * value — chosen generously so a real trade compared against literal dust
+ * (raw amount 1) clears it by several more orders of magnitude than a
+ * router would ever leave on two economically meaningful legs.
+ */
+const DUST_RATIO = 100_000;
+
 export type TokenBalanceChange = {
   userAccount: string;
   mint: string;
@@ -60,6 +72,29 @@ export type ParsedTrade = {
   instructionIndex: number;
 };
 
+/**
+ * The full result of evaluating one wallet's role in a transaction, not just
+ * whether it produced a trade — `parsePending` needs the distinction to
+ * record a specific, honest `parse_error` instead of a silent drop.
+ *
+ * - `no_trade`: nothing to record and no error — the transaction doesn't
+ *   touch this wallet, moved no SPL token, or is a SOL↔USDC rotation (spec
+ *   §4.3, not a trade at all).
+ * - `unsupported_quote`: a real swap this batch does not parse (stablecoin-
+ *   or token-to-token-quoted — see `DUST_RATIO` for why a router's leftover
+ *   dust doesn't trigger this).
+ * - `sol_leg_wrong_direction`: the SOL/WSOL leg moved the same way as the
+ *   token leg (review round 1, finding 2) — e.g. a sell whose proceeds were
+ *   more than eaten by a priority-fee tip, so the net SOL delta is still
+ *   negative. Booking that as a positive `solAmount` would manufacture
+ *   realized profit out of a loss, so it is rejected rather than guessed at.
+ */
+export type SwapOutcome = "trade" | "no_trade" | "unsupported_quote" | "sol_leg_wrong_direction";
+
+export type SwapEvaluation =
+  | { outcome: "trade"; trade: ParsedTrade }
+  | { outcome: Exclude<SwapOutcome, "trade"> };
+
 type TokenLeg = { mint: string; raw: bigint; decimals: number };
 
 /**
@@ -84,6 +119,19 @@ function tokenLegsFor(payload: EnhancedTx, address: string): TokenLeg[] {
     .map(([mint, { raw, decimals }]) => ({ mint, raw, decimals }));
 }
 
+/**
+ * Drops any leg that is more than `DUST_RATIO` times smaller (in
+ * decimal-adjusted units) than the largest leg present. A no-op for 0 or 1
+ * legs. Comparison is in decimal-adjusted units, not raw counts, because two
+ * different mints' raw units are not otherwise comparable.
+ */
+function dropDust(legs: TokenLeg[]): TokenLeg[] {
+  if (legs.length <= 1) return legs;
+  const amounts = legs.map((leg) => Number(leg.raw < 0n ? -leg.raw : leg.raw) / 10 ** leg.decimals);
+  const dominant = Math.max(...amounts);
+  return legs.filter((_, i) => amounts[i] * DUST_RATIO >= dominant);
+}
+
 /** This wallet's net WSOL balance change (signed, raw units), 0n if none. */
 function wsolLegFor(payload: EnhancedTx, address: string): bigint {
   let total = 0n;
@@ -105,45 +153,40 @@ function nativeChangeFor(payload: EnhancedTx, address: string): number {
 }
 
 /**
- * True when this wallet's swap moved two or more non-SOL SPL tokens against
- * each other — a token↔token swap, or a stablecoin-quoted swap (the
- * stablecoin itself is a second SPL leg distinct from the traded mint).
- * Batch 1 does not parse these; the caller (`parsePending`) records
- * `parse_error = 'unsupported_quote'` on the `raw_tx` row instead of
- * guessing at a SOL value.
- */
-export function isUnsupportedQuote(payload: EnhancedTx, address: string): boolean {
-  return tokenLegsFor(payload, address).length >= 2;
-}
-
-/**
- * Reads one wallet's leg of a SOL-quoted swap out of a Helius enhanced
- * transaction. Returns null when:
- * - the transaction does not touch this wallet at all;
- * - this wallet moved zero or more-than-one non-SOL SPL token (not a single
- *   SOL-quoted swap — see `isUnsupportedQuote` for the multi-token case);
- * - the only counter-asset is USDC (a SOL↔stablecoin rotation, not a trade
- *   at all per spec §4.3);
- * - there is no SOL/WSOL leg once the transaction fee is accounted for (a
- *   plain token transfer, an airdrop, or the wrap/unwrap side of an
- *   unrelated instruction — not a trade).
+ * Evaluates one wallet's role in a Helius enhanced transaction. This is the
+ * single source of truth for the SOL-quoted-swap arithmetic; `parseSwap`
+ * below is a thin projection of it onto its historical `ParsedTrade | null`
+ * contract.
+ *
+ * The SOL/WSOL side is spec §4.3's "one quantity": native lamports and a
+ * persistent WSOL token account are always summed, never treated as
+ * alternatives (review round 1, finding 1) — a transaction can legitimately
+ * move both (e.g. gas and ATA rent through native lamports, the swap itself
+ * through a standing WSOL account).
  *
  * `nativeBalanceChange` already includes the transaction fee for the fee
- * payer (spec §4.4), so the fee is added back before taking the magnitude:
- * for a buy (native change negative) that cancels part of the fee's
- * negative contribution; for a sell (native change positive) it adds the
- * fee back on top of what was received. Both directions reduce to the same
- * one-line formula.
+ * payer (spec §4.4), so the fee is added back before the direction check —
+ * for a buy (native change negative) that cancels part of the fee's negative
+ * contribution; for a sell (native change positive) it adds the fee back on
+ * top of what was received.
+ *
+ * The combined SOL delta must move opposite the token leg — a buy spends SOL
+ * (delta < 0), a sell receives it (delta > 0). Taking `Math.abs` without
+ * checking this would silently flip a net outflow into "proceeds" whenever a
+ * tip or a fee ate more than a sell returned, or a rent refund into a
+ * "purchase" (review round 1, finding 2); that case is rejected instead of
+ * guessed at.
  */
-export function parseSwap(
+export function evaluateSwap(
   payload: EnhancedTx,
   wallet: { id: string; kolId: string; address: string },
-): ParsedTrade | null {
-  const legs = tokenLegsFor(payload, wallet.address);
-  if (legs.length !== 1) return null;
+): SwapEvaluation {
+  const legs = dropDust(tokenLegsFor(payload, wallet.address));
+  if (legs.length === 0) return { outcome: "no_trade" };
+  if (legs.length >= 2) return { outcome: "unsupported_quote" };
 
   const { mint, raw, decimals } = legs[0];
-  if (mint === USDC_MINT) return null; // SOL<->stablecoin rotation: not a trade (spec §4.3)
+  if (mint === USDC_MINT) return { outcome: "no_trade" }; // SOL<->stablecoin rotation (spec §4.3)
 
   const side: "buy" | "sell" = raw > 0n ? "buy" : "sell";
   const tokenAmount = Number(raw < 0n ? -raw : raw) / 10 ** decimals;
@@ -152,29 +195,39 @@ export function parseSwap(
   const fee = payload.fee ?? 0;
   const nativeChange = nativeChangeFor(payload, wallet.address);
   const feeAdjustedNative = isFeePayer ? nativeChange + fee : nativeChange;
+  const wsol = wsolLegFor(payload, wallet.address);
+  const solDelta = feeAdjustedNative + Number(wsol); // spec §4.3: SOL and WSOL are one quantity
 
-  let solAmountLamports = Math.abs(feeAdjustedNative);
-  if (solAmountLamports === 0) {
-    // No native SOL leg (or it was exactly the fee, and nothing else). The
-    // swap may still have moved a persistent WSOL token account instead.
-    const wsol = wsolLegFor(payload, wallet.address);
-    if (wsol !== 0n) solAmountLamports = Math.abs(Number(wsol));
-  }
-  if (solAmountLamports <= 0) return null;
+  if (solDelta === 0) return { outcome: "no_trade" }; // no SOL/WSOL leg at all
+
+  const wrongDirection = side === "buy" ? solDelta >= 0 : solDelta <= 0;
+  if (wrongDirection) return { outcome: "sol_leg_wrong_direction" };
 
   return {
-    mint,
-    side,
-    tokenAmount,
-    solAmount: solAmountLamports / 1e9,
-    feeSol: isFeePayer ? fee / 1e9 : 0,
-    // A Helius "SWAP" enhanced transaction is transaction-level, not
-    // per-instruction, so every wallet's leg of it is instruction 0. This is
-    // still safe against the (kol_id, mint) fan-out of a multi-wallet
-    // transaction: the unique index is (signature_hmac, instruction_index,
-    // wallet_id), and wallet_id differs per wallet.
-    instructionIndex: 0,
+    outcome: "trade",
+    trade: {
+      mint,
+      side,
+      tokenAmount,
+      solAmount: Math.abs(solDelta) / 1e9,
+      feeSol: isFeePayer ? fee / 1e9 : 0,
+      // A Helius "SWAP" enhanced transaction is transaction-level, not
+      // per-instruction, so every wallet's leg of it is instruction 0. This is
+      // still safe against the (kol_id, mint) fan-out of a multi-wallet
+      // transaction: the unique index is (signature_hmac, instruction_index,
+      // wallet_id), and wallet_id differs per wallet.
+      instructionIndex: 0,
+    },
   };
+}
+
+/** Reads one wallet's leg of a SOL-quoted swap. See `evaluateSwap` for the full classification. */
+export function parseSwap(
+  payload: EnhancedTx,
+  wallet: { id: string; kolId: string; address: string },
+): ParsedTrade | null {
+  const result = evaluateSwap(payload, wallet);
+  return result.outcome === "trade" ? result.trade : null;
 }
 
 /** Every address this transaction mentions, as a candidate wallet to resolve. */
@@ -242,24 +295,48 @@ async function insertTrade(
 }
 
 /**
+ * Priority used when two different tracked wallets in the same transaction
+ * hit two different non-trade outcomes: a wrong-direction leg is a rejected
+ * trade with real money on it, which matters more to surface than a quote
+ * this batch simply doesn't parse yet.
+ */
+function higherPriorityError(
+  a: "unsupported_quote" | "sol_leg_wrong_direction" | null,
+  b: "unsupported_quote" | "sol_leg_wrong_direction",
+): "unsupported_quote" | "sol_leg_wrong_direction" {
+  if (a === "sol_leg_wrong_direction" || b === "sol_leg_wrong_direction") return "sol_leg_wrong_direction";
+  return "unsupported_quote";
+}
+
+/**
  * Parses up to `limit` unparsed `raw_tx` rows into `trade` rows.
  *
  * For each row: decrypt the payload, resolve every address it mentions
- * through `findWalletByAddress`, and run `parseSwap` for each match. A
- * genuine parse failure (the ciphertext or the JSON is malformed) records
- * `parse_error` but leaves `parsed_at` null, so the row stays in the
- * unparsed queue for a parser fix to reprocess without spending another
- * Helius credit (spec §5.2) — a bad row can spin forever until fixed, which
- * is the accepted cost of that design. An out-of-scope quote sets
- * `parse_error = 'unsupported_quote'` and `parsed_at`, a deliberate
- * exception: batch 1 will never support it, so leaving it in the retry
- * queue forever would be pure waste, not a chance at a future fix.
+ * through `findWalletByAddress`, and evaluate each *active* tracked wallet's
+ * leg independently (spec §9: a withdrawn wallet stops being indexed, so its
+ * status is checked here rather than in `findWalletByAddress`, whose
+ * contract other callers rely on). A transaction can carry more than one
+ * tracked wallet with different outcomes — one wallet's clean trade must not
+ * hide another wallet's dropped swap (review round 1, finding 3), so every
+ * non-`no_trade` outcome across the whole row is tracked and the row's
+ * `parse_error` reflects it even when a trade was also written.
+ *
+ * A genuine parse failure (the ciphertext or the JSON is malformed) records
+ * `parse_error` but leaves `parsed_at` null, so the row stays eligible for a
+ * parser fix to reprocess without spending another Helius credit (spec
+ * §5.2). `unsupported_quote` and `sol_leg_wrong_direction` are the opposite:
+ * both are cases this parser version deliberately never guesses at, not bugs
+ * a future deploy might fix on retry, so they also set `parsed_at`. Either
+ * way, the pending-rows query below excludes any row with `parse_error` set,
+ * so a run of bad rows cannot crowd a later good delivery out of the queue
+ * (review round 1, finding 5) — clearing `parse_error` is what makes a row
+ * reprocessable again, independent of `parsed_at`.
  *
  * Returns the number of `raw_tx` rows this call examined.
  */
 export async function parsePending(limit = 100): Promise<number> {
   const rows = await query<{ signature_hmac: Buffer; payload_enc: Buffer }>(
-    `SELECT signature_hmac, payload_enc FROM raw_tx WHERE parsed_at IS NULL
+    `SELECT signature_hmac, payload_enc FROM raw_tx WHERE parsed_at IS NULL AND parse_error IS NULL
      ORDER BY received_at LIMIT $1`,
     [limit],
   );
@@ -281,26 +358,25 @@ export async function parsePending(limit = 100): Promise<number> {
       continue;
     }
 
-    let wroteTrade = false;
-    let unsupported = false;
+    let rowError: "unsupported_quote" | "sol_leg_wrong_direction" | null = null;
 
     for (const address of candidateAddresses(payload)) {
       const walletRow = await findWalletByAddress(address);
-      if (!walletRow) continue;
+      if (!walletRow || walletRow.status !== "active") continue; // spec §9: withdrawal stops indexing
 
-      const trade = parseSwap(payload, { id: walletRow.id, kolId: walletRow.kol_id, address });
-      if (trade) {
-        await insertTrade(row.signature_hmac, payload, walletRow, trade);
-        wroteTrade = true;
-      } else if (isUnsupportedQuote(payload, address)) {
-        unsupported = true;
+      const wallet = { id: walletRow.id, kolId: walletRow.kol_id, address };
+      const result = evaluateSwap(payload, wallet);
+
+      if (result.outcome === "trade") {
+        await insertTrade(row.signature_hmac, payload, walletRow, result.trade);
+      } else if (result.outcome === "unsupported_quote" || result.outcome === "sol_leg_wrong_direction") {
+        rowError = higherPriorityError(rowError, result.outcome);
       }
     }
 
-    const parseError = !wroteTrade && unsupported ? "unsupported_quote" : null;
     await query(`UPDATE raw_tx SET parsed_at = now(), parse_error = $2 WHERE signature_hmac = $1`, [
       row.signature_hmac,
-      parseError,
+      rowError,
     ]);
   }
 
