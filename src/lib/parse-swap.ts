@@ -29,16 +29,19 @@ export const WSOL_MINT = "So11111111111111111111111111111111111111112";
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /**
- * A dust leg must be at least this many times smaller than the dominant leg
- * to be ignored (review round 1, finding 4). A router can leave a 1-raw-unit
- * remainder on an intermediate mint; a genuine second leg of a real
- * token↔token or stablecoin-quoted swap is comparable in size to the first,
- * not many orders of magnitude smaller. This is a heuristic, not a spec
- * value — chosen generously so a real trade compared against literal dust
- * (raw amount 1) clears it by several more orders of magnitude than a
- * router would ever leave on two economically meaningful legs.
+ * A leg's raw amount at or below this floor is treated as router noise (the
+ * 1-unit remainder a router can leave on an intermediate mint), not a real
+ * leg (review round 2, finding: the round-1 fix compared raw *counts* across
+ * mints using a ratio, which conflates count with value — a token↔token
+ * swap of 1,000,000 units against 0.5 units is an entirely ordinary trade,
+ * not one where the smaller count is "dust", and dropping it fabricated a
+ * near-zero cost basis on a real position). This is an absolute floor
+ * instead: only a raw amount this small is dust, regardless of what the
+ * other leg's raw amount is. The parser has no price data, so it cannot
+ * judge which of two genuine legs matters more; if more than one leg clears
+ * this floor, the swap is `unsupported_quote`, never guessed at.
  */
-const DUST_RATIO = 100_000;
+const DUST_RAW_UNITS = 1n;
 
 export type TokenBalanceChange = {
   userAccount: string;
@@ -81,8 +84,10 @@ export type ParsedTrade = {
  *   touch this wallet, moved no SPL token, or is a SOL↔USDC rotation (spec
  *   §4.3, not a trade at all).
  * - `unsupported_quote`: a real swap this batch does not parse (stablecoin-
- *   or token-to-token-quoted — see `DUST_RATIO` for why a router's leftover
- *   dust doesn't trigger this).
+ *   or token-to-token-quoted), or two-or-more genuine legs the parser has no
+ *   price data to arbitrate between — see `DUST_RAW_UNITS` for the narrow
+ *   case (a router's literal 1-unit remainder) that does not count as a
+ *   second leg.
  * - `sol_leg_wrong_direction`: the SOL/WSOL leg moved the same way as the
  *   token leg (review round 1, finding 2) — e.g. a sell whose proceeds were
  *   more than eaten by a priority-fee tip, so the net SOL delta is still
@@ -120,16 +125,13 @@ function tokenLegsFor(payload: EnhancedTx, address: string): TokenLeg[] {
 }
 
 /**
- * Drops any leg that is more than `DUST_RATIO` times smaller (in
- * decimal-adjusted units) than the largest leg present. A no-op for 0 or 1
- * legs. Comparison is in decimal-adjusted units, not raw counts, because two
- * different mints' raw units are not otherwise comparable.
+ * Drops any leg whose raw amount is at or below `DUST_RAW_UNITS`. Everything
+ * above that floor is a real leg, judged absolutely — never against another
+ * leg's size, which would compare counts across mints as if they were
+ * values.
  */
 function dropDust(legs: TokenLeg[]): TokenLeg[] {
-  if (legs.length <= 1) return legs;
-  const amounts = legs.map((leg) => Number(leg.raw < 0n ? -leg.raw : leg.raw) / 10 ** leg.decimals);
-  const dominant = Math.max(...amounts);
-  return legs.filter((_, i) => amounts[i] * DUST_RATIO >= dominant);
+  return legs.filter((leg) => (leg.raw < 0n ? -leg.raw : leg.raw) > DUST_RAW_UNITS);
 }
 
 /** This wallet's net WSOL balance change (signed, raw units), 0n if none. */

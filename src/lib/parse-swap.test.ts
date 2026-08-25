@@ -249,10 +249,9 @@ describe("parseSwap", () => {
   });
 
   it("treats a 1-raw-unit router remainder as dust, not a second leg", () => {
-    // Review round 1, finding 4: a router can leave a tiny remainder on an
-    // intermediate mint. 1 raw unit at 6 decimals (0.000001 tokens) against
-    // a real 2-token leg is a ratio of 2,000,000 — comfortably past
-    // DUST_RATIO — so the real leg should still win and parse normally.
+    // A router can leave a literal 1-raw-unit remainder on an intermediate
+    // mint. That is the only case DUST_RAW_UNITS exists for: a leg this
+    // small, in absolute raw terms, regardless of what the other leg is.
     const dustMint = inventAddress();
     const payload = buildSwapPayload({
       wallet: wallet.address,
@@ -272,7 +271,26 @@ describe("parseSwap", () => {
     expect(trade.solAmount).toBeCloseTo(1, 9);
   });
 
-  it("still flags two comparably-sized legs as an unsupported quote despite the dust filter", () => {
+  it("does not treat a 2-raw-unit leg as dust: the swap is unsupported, not silently reduced to one leg", () => {
+    // Review round 2: dust is judged absolutely, never relatively. A leg of
+    // 2 raw units is one unit above the floor and must survive as a real
+    // leg, even though it would previously have been dropped as "dust"
+    // relative to a much larger dominant leg.
+    const otherMint = inventAddress();
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -5_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: otherMint, decimals: 6, rawTokenAmount: "2" }],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+  });
+
+  it("still flags two comparably-sized legs as an unsupported quote", () => {
     const otherMint = inventAddress();
     const payload = buildSwapPayload({
       wallet: wallet.address,
@@ -282,9 +300,58 @@ describe("parseSwap", () => {
       tokenChangeRaw: "-1000000",
       feeLamports: 5_000,
       isFeePayer: true,
-      // Same order of magnitude as the first leg: not dust.
       extraTokenChanges: [{ mint: otherMint, decimals: 6, rawTokenAmount: "1500000" }],
     });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+  });
+
+  it("does not fabricate a near-zero cost basis from a token<->token swap with a lopsided count ratio", () => {
+    // Review round 2, the fabrication this finding is about: a relative
+    // ("ratio") dust filter compares raw counts across two different mints
+    // as if they were values. 1,000,000 units of a 0-decimal mint against
+    // 0.5 units of a 6-decimal mint is a 2,000,000x count ratio, but both
+    // are genuine legs — there is no price data here to say one of them
+    // doesn't count. The old ratio-based filter dropped the smaller leg and
+    // reported `buy, tokenAmount 1000000, solAmount 0.00203928` (the ATA
+    // rent below, misread as the whole trade). The fix must refuse to
+    // guess: two real legs survive, and the swap is unsupported_quote.
+    const mintA = inventAddress(); // 0 decimals: raw count IS the human amount
+    const mintB = inventAddress(); // 6 decimals
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: mintA,
+      decimals: 0,
+      tokenChangeRaw: "1000000", // 1,000,000 units in
+      nativeChangeLamports: -(5_000 + 2_039_280), // ordinary fee + ATA rent
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: mintB, decimals: 6, rawTokenAmount: "-500000" }], // 0.5 units out
+    });
+
+    expect(parseSwap(payload, wallet)).toBeNull();
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+  });
+
+  it("does not fabricate a trade from a meme<->USDC swap with a ~200,000x count ratio", () => {
+    // Ten million units of a 0-decimal ("sub-cent") meme token against 50
+    // USDC is a 200,000x count ratio — the same shape the review flagged as
+    // routine, not a corner case. With only a gas-only native change (no
+    // rent), the old ratio filter dropped the USDC leg as dust, leaving a
+    // single-leg "trade" whose SOL side then netted to zero and vanished as
+    // `no_trade` with no error — reopening the round-1 silent-drop hole.
+    const memeMint = inventAddress();
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint: memeMint,
+      decimals: 0,
+      tokenChangeRaw: "10000000", // 10,000,000 meme units in
+      nativeChangeLamports: -5_000, // gas only
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: USDC_MINT, decimals: 6, rawTokenAmount: "-50000000" }], // 50 USDC out
+    });
+
+    expect(parseSwap(payload, wallet)).toBeNull();
     expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
   });
 });
@@ -430,6 +497,54 @@ describe("parsePending", () => {
     );
     expect(raw.parsed_at).not.toBeNull(); // never retried again (task 9 scope note)
     expect(raw.parse_error).toBe("unsupported_quote");
+  });
+
+  it("does not fabricate a trade end to end for a lopsided-count token<->token swap", async () => {
+    // parsePending-level regression for review round 2's fabrication case
+    // (see the equivalent evaluateSwap-level test for the full worked
+    // numbers): confirms the row is never left with parse_error NULL.
+    const mintA = inventAddress();
+    const mintB = inventAddress();
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: mintA,
+      decimals: 0,
+      tokenChangeRaw: "1000000",
+      nativeChangeLamports: -(5_000 + 2_039_280),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: mintB, decimals: 6, rawTokenAmount: "-500000" }],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
+    expect(raw.parse_error).toBe("unsupported_quote");
+    expect(raw.parse_error).not.toBeNull();
+  });
+
+  it("does not fabricate a trade end to end for a lopsided-count meme<->USDC swap", async () => {
+    const memeMint = inventAddress();
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: memeMint,
+      decimals: 0,
+      tokenChangeRaw: "10000000",
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: USDC_MINT, decimals: 6, rawTokenAmount: "-50000000" }],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
+    expect(raw.parse_error).toBe("unsupported_quote");
+    expect(raw.parse_error).not.toBeNull();
   });
 
   it("records a wrong-direction SOL leg without inserting a trade", async () => {
