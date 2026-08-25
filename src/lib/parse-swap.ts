@@ -20,12 +20,39 @@
  * with token quantities.
  *
  * **Reading the payload is total.** Every field access and every integer
- * parse goes through a guard that raises `MalformedPayloadError`, which
- * `parsePending` records on the row. Nothing else may throw out of the
- * payload-reading path: a bare `SyntaxError` from `BigInt("1.5")` escaping
- * `parsePending` left the row `parsed_at NULL, parse_error NULL`, and since
- * the pending query orders by `received_at`, it was re-selected and threw
- * again forever — stalling every good delivery behind it.
+ * parse goes through a `require*` guard that raises `MalformedPayloadError`,
+ * which `parsePending` records on the row. Nothing reachable from payload
+ * data may raise a bare `TypeError` or `SyntaxError`, and no payload field
+ * may become a number by coercion or by a default.
+ *
+ * Three stalls and one wrong number came from a field left outside that
+ * discipline. `BigInt("1.5")` threw a bare `SyntaxError` out of
+ * `parsePending` with the row still `parsed_at NULL, parse_error NULL`, and
+ * since the pending query orders by `received_at` it was re-selected and
+ * threw again forever. A missing `timestamp` reached the same permanent
+ * stall one door over, through Postgres (`invalid input syntax for type
+ * timestamp with time zone: "0NaN-NaN-NaN…"`), as did a non-string
+ * `signature` and a non-numeric `slot`. A `timestamp: null` was worse than a
+ * stall: it coerced to `1970-01-01` and wrote a trade with a 1970 block time
+ * and a 1970 SOL/USD lookup, with nothing recorded anywhere. And a
+ * `decimals` that silently became `0` wrote a cost basis wrong by a factor
+ * of a million.
+ *
+ * **Validation is narrow, not payload-wide.** A malformed field on an
+ * account belonging to no tracked wallet — an untracked liquidity pool, say
+ * — must not cost a tracked wallet its trade, so nothing is validated until
+ * it is actually read, for a specific wallet.
+ *
+ * The one exception is *identity*: `accountData` must be an array of
+ * objects, each with a string `account`, whose `tokenBalanceChanges` is an
+ * array of objects each with a string `userAccount`. Those are the fields
+ * that decide *whose* leg a value belongs to, so an unreadable one may be
+ * hiding the tracked wallet's own leg; failing the row closed is the only
+ * answer there that cannot silently drop a trade. Values (`fee`,
+ * `nativeBalanceChange`, `rawTokenAmount`, `decimals`, `mint`, `feePayer`)
+ * are read only for the wallet under evaluation, and the transaction header
+ * (`signature`, `timestamp`, `slot`) only when a trade is about to be
+ * written.
  */
 import { aadFor, decrypt, encrypt } from "./crypto";
 import { query } from "./db";
@@ -53,9 +80,23 @@ const LAMPORT_DECIMALS = 9;
 /**
  * Upper bound on a payload-reported `decimals` before it is treated as
  * nonsense. Guards `powTen` against being handed a huge exponent by a
- * malformed payload; no SPL mint exceeds 9 in practice.
+ * malformed payload; no SPL mint exceeds 9 in practice, so 32 is already
+ * generous. A `decimals` outside `[0, MAX_DECIMALS]` is malformed, not
+ * clamped — see `requireDecimals`.
  */
 const MAX_DECIMALS = 32;
+
+/**
+ * Bounds on a payload-reported unix-seconds `timestamp`. The floor is years
+ * before Solana mainnet-beta existed, so no transaction this project can
+ * index falls below it; the ceiling is the year 2100. The point is not to
+ * date-check a real transaction but to reject the values that are not a
+ * timestamp at all — `0`, `null` coerced to `0`, or a millisecond figure —
+ * before one of them becomes a 1970 `block_time` and a 1970 `sol_usd`
+ * lookup.
+ */
+const MIN_UNIX_SECONDS = 1_500_000_000; // 2017-07-14
+const MAX_UNIX_SECONDS = 4_102_444_800; // 2100-01-01
 
 /**
  * The dust floor, expressed as a **token quantity** (`raw / 10**decimals`),
@@ -184,15 +225,9 @@ export type SwapEvaluation =
 
 type TokenLeg = { mint: string; raw: bigint; decimals: number };
 
-/** Exact 10**n as a bigint. `n` must already have been through `normalizeDecimals`. */
+/** Exact 10**n as a bigint. `n` must already have been through `requireDecimals`. */
 function powTen(n: number): bigint {
   return 10n ** BigInt(n);
-}
-
-/** A payload-reported `decimals`, clamped to something `powTen` can safely raise. */
-function normalizeDecimals(decimals: unknown): number {
-  if (typeof decimals !== "number" || !Number.isFinite(decimals) || decimals <= 0) return 0;
-  return Math.min(Math.trunc(decimals), MAX_DECIMALS);
 }
 
 /**
@@ -231,6 +266,19 @@ function requireObject(value: unknown, field: string): Record<string, unknown> {
 }
 
 /**
+ * A non-empty string field: a mint, an account, a fee payer, a signature.
+ * `route.ts` only checks `!event?.signature`, so a numeric `signature`
+ * (`12345`) is truthy there and reaches this parser; it then reached
+ * `encrypt()` and threw a bare `TypeError` out of `parsePending`, leaving
+ * the row `parsed_at NULL, parse_error NULL` and stalling every delivery
+ * behind it.
+ */
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) throw new MalformedPayloadError(field);
+  return value;
+}
+
+/**
  * A raw token amount as an exact integer. Helius reports base units as a
  * decimal string; anything that is not a whole number of base units is a
  * payload this parser cannot read, not a value to round.
@@ -253,57 +301,174 @@ function requireRawAmount(value: unknown, field: string): bigint {
  */
 function requireLamports(value: unknown, field: string): bigint {
   if (value === undefined || value === null) return 0n;
-  if (typeof value !== "number" || !Number.isInteger(value)) throw new MalformedPayloadError(field);
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new MalformedPayloadError(field);
   return BigInt(value);
+}
+
+/**
+ * The transaction fee, in lamports. **Required**, unlike
+ * `nativeBalanceChange`, and that asymmetry is the point: spec §4.4 makes
+ * the fee material ("at the 0.25–3 SOL ticket sizes visible in the reference
+ * data, fees are material") and Helius always sends it, so an absent `fee`
+ * means this is not the payload shape the parser reads. An account with no
+ * `nativeBalanceChange`, by contrast, legitimately means that account's
+ * native balance did not move. Defaulting the fee to zero would silently
+ * misreport the SOL side of every fee-payer trade in the row — an
+ * unreadable field becoming a number, which is exactly what this file's
+ * guards exist to prevent.
+ */
+function requireFee(value: unknown): bigint {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new MalformedPayloadError("fee");
+  }
+  return BigInt(value);
+}
+
+/**
+ * A mint's `decimals`: the **scale** every token quantity in this file is
+ * divided by.
+ *
+ * This replaces `normalizeDecimals`, which mapped anything unreadable to `0`
+ * while every neighbouring field raised. `decimals` is the last field that
+ * turns unreadable payload data into a trade *number*, and reading a broken
+ * one as zero is the same "two numbers of different kinds" defect that has
+ * run through this whole file: `decimals: -3` (or `NaN`) on a 2,000,000-raw
+ * leg wrote `tokenAmount 2000000, price_sol 5e-7` into `trade` and
+ * `position` — a cost basis wrong by a factor of a million, on the number
+ * the leaderboard ranks. There is no safe default for a scale: a payload
+ * that cannot say what scale its number is in is a payload this parser
+ * cannot read.
+ *
+ * Must be a non-negative integer no greater than `MAX_DECIMALS`. A negative,
+ * fractional, `NaN`, absent or non-numeric value is malformed, and so is one
+ * past the ceiling — `powTen` would otherwise be handed an absurd exponent.
+ */
+function requireDecimals(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > MAX_DECIMALS) {
+    throw new MalformedPayloadError(field);
+  }
+  return value;
+}
+
+/**
+ * A unix-seconds timestamp. Absent is **not** zero here: `new Date(undefined
+ * * 1000)` is an Invalid Date, which Postgres rejects with `invalid input
+ * syntax for type timestamp with time zone: "0NaN-NaN-NaN…"` from inside
+ * `insertTrade`, past every guard, leaving the row `parsed_at NULL,
+ * parse_error NULL` to be re-selected and to throw again forever. And
+ * `null` is worse: it coerces to `0` and silently writes a 1970 trade.
+ */
+function requireUnixSeconds(value: unknown, field: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < MIN_UNIX_SECONDS ||
+    value > MAX_UNIX_SECONDS
+  ) {
+    throw new MalformedPayloadError(field);
+  }
+  return value;
+}
+
+/**
+ * The slot. Genuinely nullable (task decision 1: `trade.slot` is nullable
+ * and the payload may not carry one), so absent means `null` — but present
+ * and not a non-negative whole number is malformed, not coerced: Postgres
+ * rejects a non-numeric slot on a `bigint` column, from inside `insertTrade`
+ * and past every guard.
+ */
+function requireSlot(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new MalformedPayloadError("slot");
+  }
+  return value;
+}
+
+/**
+ * The transaction-level fields `insertTrade` writes onto every trade row.
+ * Read once, and only when a trade is actually about to be written: a row
+ * that produces no trade has no use for them, and a malformed one must not
+ * cost a row that never reads it.
+ */
+export type TradeHeader = { signature: string; blockTime: Date; slot: number | null };
+
+export function readTradeHeader(payload: EnhancedTx): TradeHeader {
+  return {
+    signature: requireString(payload?.signature, "signature"),
+    blockTime: new Date(requireUnixSeconds(payload?.timestamp, "timestamp") * 1000),
+    slot: requireSlot(payload?.slot),
+  };
 }
 
 /** A validated SPL balance change: the only shape the arithmetic below reads. */
 type BalanceChange = { mint: string; raw: bigint; decimals: number };
 
-function readBalanceChange(change: unknown): BalanceChange {
-  const record = requireObject(change, "tokenBalanceChange");
-  if (typeof record.mint !== "string") throw new MalformedPayloadError("tokenBalanceChange.mint");
+function readBalanceChange(record: Record<string, unknown>): BalanceChange {
   const amount = requireObject(record.rawTokenAmount, "tokenBalanceChange.rawTokenAmount");
   return {
-    mint: record.mint,
+    mint: requireString(record.mint, "tokenBalanceChange.mint"),
     raw: requireRawAmount(amount.tokenAmount, "rawTokenAmount.tokenAmount"),
-    decimals: normalizeDecimals(amount.decimals),
+    decimals: requireDecimals(amount.decimals, "rawTokenAmount.decimals"),
   };
 }
 
-/** The payload's `accountData`, or `MalformedPayloadError` if there is none to read. */
-function accountDataOf(payload: EnhancedTx): readonly AccountData[] {
-  return requireArray((payload as EnhancedTx | undefined | null)?.accountData, "accountData");
-}
+/**
+ * One `accountData` entry, with its *identity* validated and its values left
+ * untouched.
+ *
+ * The split is the whole point (see the file header): `account` and
+ * `userAccount` say whose leg a value belongs to, so an unreadable one may
+ * be hiding the tracked wallet's own leg and the row fails closed. The
+ * values hanging off them are read only if the identity turns out to be a
+ * wallet we are evaluating, so an untracked liquidity pool's broken
+ * `decimals` costs nobody a trade.
+ */
+type AccountEntry = {
+  account: string;
+  record: Record<string, unknown>;
+  changes: { userAccount: string; record: Record<string, unknown> }[];
+};
 
 /**
- * Walks the entire payload once and throws `MalformedPayloadError` on
- * anything the parser cannot read. `parsePending` calls this before
- * evaluating any wallet, so a malformed field found halfway through cannot
- * leave a partially written row behind.
+ * The payload's `accountData`, with every entry's identity validated. This
+ * is the single traversal of the payload's structure: `candidateAddresses`,
+ * `balanceChangesFor` and `nativeLamportsFor` all read through it, so there
+ * is one place where an unreadable structure becomes a typed error instead
+ * of a `TypeError` escaping the caller.
  */
-export function validatePayload(payload: EnhancedTx): void {
-  requireLamports(payload?.fee, "fee");
-  for (const account of accountDataOf(payload)) {
-    requireLamports(account?.nativeBalanceChange, "nativeBalanceChange");
-    for (const change of requireArray(account?.tokenBalanceChanges, "tokenBalanceChanges")) {
-      readBalanceChange(change);
-    }
+function accountEntries(payload: EnhancedTx): AccountEntry[] {
+  const entries: AccountEntry[] = [];
+  for (const account of requireArray((payload as EnhancedTx | undefined | null)?.accountData, "accountData")) {
+    const record = requireObject(account, "accountData[]");
+    const changes = requireArray(record.tokenBalanceChanges as readonly unknown[] | undefined, "tokenBalanceChanges");
+    entries.push({
+      account: requireString(record.account, "accountData[].account"),
+      record,
+      changes: changes.map((change) => {
+        const changeRecord = requireObject(change, "tokenBalanceChange");
+        return {
+          userAccount: requireString(changeRecord.userAccount, "tokenBalanceChange.userAccount"),
+          record: changeRecord,
+        };
+      }),
+    });
   }
+  return entries;
 }
 
 /**
  * Every SPL balance change the payload reports for `address`, validated.
- * All raw payload traversal for the token side happens here, so there is one
- * place where an unreadable field becomes a typed error instead of a
- * `SyntaxError` or a `TypeError` escaping the caller.
+ * Only this wallet's own changes are read: a malformed `rawTokenAmount`,
+ * `decimals` or `mint` on somebody else's leg is never touched, so it cannot
+ * cost this wallet its trade.
  */
 function balanceChangesFor(payload: EnhancedTx, address: string): BalanceChange[] {
   const changes: BalanceChange[] = [];
-  for (const account of accountDataOf(payload)) {
-    for (const change of requireArray(account?.tokenBalanceChanges, "tokenBalanceChanges")) {
-      if ((change as TokenBalanceChange | undefined)?.userAccount !== address) continue;
-      changes.push(readBalanceChange(change));
+  for (const account of accountEntries(payload)) {
+    for (const change of account.changes) {
+      if (change.userAccount !== address) continue;
+      changes.push(readBalanceChange(change.record));
     }
   }
   return changes;
@@ -392,11 +557,22 @@ function wsolLamportsIn(changes: readonly BalanceChange[]): bigint {
   return total;
 }
 
-/** This wallet's net native balance change, **in lamports**, 0n if the payload has no entry for it. */
+/**
+ * This wallet's net native balance change, **in lamports**, 0n if the
+ * payload has no entry for it. Only this wallet's own entries are read: an
+ * unreadable `nativeBalanceChange` on another account is not this wallet's
+ * problem. Absent on this wallet's own entry *is* zero — an account whose
+ * native balance did not move is a normal thing for a payload to say — but
+ * present and not a whole number of lamports is malformed rather than
+ * coerced, since coercing it to 0 would turn an unreadable SOL leg into a
+ * silent `no_sol_leg`.
+ */
 function nativeLamportsFor(payload: EnhancedTx, address: string): bigint {
   let total = 0n;
-  for (const account of accountDataOf(payload)) {
-    if (account?.account === address) total += requireLamports(account.nativeBalanceChange, "nativeBalanceChange");
+  for (const account of accountEntries(payload)) {
+    if (account.account === address) {
+      total += requireLamports(account.record.nativeBalanceChange, "nativeBalanceChange");
+    }
   }
   return total;
 }
@@ -446,8 +622,14 @@ export function evaluateSwap(
   const side: "buy" | "sell" = raw > 0n ? "buy" : "sell";
   const tokenAmount = Number(raw < 0n ? -raw : raw) / 10 ** decimals;
 
-  const isFeePayer = wallet.address === payload.feePayer;
-  const fee = requireLamports(payload.fee, "fee");
+  // Read at the point of use, once this wallet is known to have a leg: a
+  // wallet the transaction does not trade for never touches these, so a
+  // malformed one cannot cost it anything. `feePayer` is required as a
+  // string rather than compared loosely — an absent or non-string one would
+  // silently make every wallet a non-fee-payer and drop the fee out of the
+  // §4.4 arithmetic without a word.
+  const isFeePayer = wallet.address === requireString(payload?.feePayer, "feePayer");
+  const fee = requireFee(payload?.fee);
   const nativeChange = nativeLamportsFor(payload, wallet.address);
   const feeAdjustedNative = isFeePayer ? nativeChange + fee : nativeChange;
   // Both terms are lamports by construction; spec §4.3 treats SOL and WSOL as one quantity.
@@ -485,28 +667,38 @@ export function parseSwap(
   return result.outcome === "trade" ? result.trade : null;
 }
 
-/** Every address this transaction mentions, as a candidate wallet to resolve. */
+/**
+ * Every address this transaction mentions, as a candidate wallet to resolve.
+ * Reads identities only — no value in the payload is touched here, so a
+ * malformed leg cannot stop the row's tracked wallets from being found.
+ */
 function candidateAddresses(payload: EnhancedTx): string[] {
   const addresses = new Set<string>();
-  for (const account of accountDataOf(payload)) {
-    if (typeof account?.account === "string") addresses.add(account.account);
-    for (const change of requireArray(account?.tokenBalanceChanges, "tokenBalanceChanges")) {
-      const userAccount = (change as TokenBalanceChange | undefined)?.userAccount;
-      if (typeof userAccount === "string") addresses.add(userAccount);
-    }
+  for (const account of accountEntries(payload)) {
+    addresses.add(account.account);
+    for (const change of account.changes) addresses.add(change.userAccount);
   }
   return [...addresses];
 }
 
+/**
+ * Writes one trade row. Takes an already-validated `TradeHeader` rather than
+ * the payload: `signature`, `timestamp` and `slot` used to be read straight
+ * off the payload here, past every guard in this file, and a missing or
+ * non-numeric one threw out of `parsePending` from inside Postgres with the
+ * row left `parsed_at NULL, parse_error NULL` — the same permanent stall,
+ * one door over, and reached only by rows that hold a real trade for a
+ * tracked wallet.
+ */
 async function insertTrade(
   signatureHmac: Buffer,
-  payload: EnhancedTx,
+  header: TradeHeader,
   wallet: WalletRow,
   trade: ParsedTrade,
 ): Promise<void> {
   const id = crypto.randomUUID();
-  const signatureEnc = encrypt(payload.signature, aadFor("trade", "signature", id));
-  const blockTime = new Date(payload.timestamp * 1000);
+  const signatureEnc = encrypt(header.signature, aadFor("trade", "signature", id));
+  const blockTime = header.blockTime;
   const priceSol = trade.solAmount / trade.tokenAmount;
 
   const [rate] = await query<{ usd: string }>(
@@ -541,7 +733,7 @@ async function insertTrade(
       priceUsd,
       trade.feeSol,
       blockTime,
-      payload.slot,
+      header.slot,
     ],
   );
 
@@ -552,15 +744,29 @@ async function insertTrade(
   );
 }
 
+/** What can end up in `raw_tx.parse_error`: a swap outcome, or an unreadable payload. */
+export type RowParseError = SwapParseError | "malformed_payload";
+
 /**
  * Priority used when two different tracked wallets in the same transaction
- * hit two different non-trade outcomes: a wrong-direction leg is a rejected
+ * hit two different non-trade outcomes.
+ *
+ * `malformed_payload` outranks both, because it is the only one that leaves
+ * the row requeueable (`parsed_at` NULL): losing it to a lower-priority
+ * error would settle the row for good and drop that wallet's leg forever. A
+ * wrong-direction leg then outranks an unsupported quote — it is a rejected
  * trade with real money on it, which matters more to surface than a quote
  * this batch simply doesn't parse yet.
  */
-function higherPriorityError(a: SwapParseError | null, b: SwapParseError): SwapParseError {
-  if (a === "sol_leg_wrong_direction" || b === "sol_leg_wrong_direction") return "sol_leg_wrong_direction";
-  return "unsupported_quote";
+const ERROR_PRIORITY: Record<RowParseError, number> = {
+  malformed_payload: 3,
+  sol_leg_wrong_direction: 2,
+  unsupported_quote: 1,
+};
+
+function higherPriorityError(a: RowParseError | null, b: RowParseError): RowParseError {
+  if (a === null) return b;
+  return ERROR_PRIORITY[a] >= ERROR_PRIORITY[b] ? a : b;
 }
 
 /**
@@ -584,6 +790,14 @@ function higherPriorityError(a: SwapParseError | null, b: SwapParseError): SwapP
  * and a payload that decrypts cleanly but cannot be read field by field
  * (`MalformedPayloadError`) — the latter used to escape this function
  * entirely and stall the queue behind it forever.
+ *
+ * That reading happens **per wallet**, not once over the whole payload: a
+ * malformed field is recorded against the row only if some tracked wallet
+ * actually had to read it. A wallet whose own leg is unreadable is skipped
+ * and the row is marked `malformed_payload`, while any other tracked
+ * wallet in the same transaction still gets its trade — and the reparse
+ * that follows a parser fix will not duplicate it, since the trade insert
+ * is `ON CONFLICT DO NOTHING`.
  * `unsupported_quote` and `sol_leg_wrong_direction` are the opposite:
  * both are cases this parser version deliberately never guesses at, not bugs
  * a future deploy might fix on retry, so they also set `parsed_at`. Either
@@ -618,16 +832,14 @@ export async function parsePending(limit = 100): Promise<number> {
       continue;
     }
 
-    let rowError: SwapParseError | null = null;
+    let rowError: RowParseError | null = null;
     let addresses: string[];
     try {
-      // Validate the whole payload before evaluating any wallet, so a
-      // malformed field found partway through cannot leave a half-written
-      // row behind. (A retry after a parser fix would be idempotent anyway
-      // — the trade insert is ON CONFLICT DO NOTHING — but not writing at
-      // all is the cheaper guarantee.)
-      validatePayload(payload);
-      addresses = [...candidateAddresses(payload)];
+      // Identity only — enough to know whose leg is whose. Every value is
+      // read per wallet below, at the point of use, so a malformed field on
+      // an account belonging to no tracked wallet cannot cost a tracked
+      // wallet its trade.
+      addresses = candidateAddresses(payload);
     } catch (error) {
       if (!(error instanceof MalformedPayloadError)) throw error;
       // Never log the field's value, only that the row could not be read.
@@ -643,19 +855,53 @@ export async function parsePending(limit = 100): Promise<number> {
       continue;
     }
 
+    // Read once, lazily, and only if some wallet actually produces a trade.
+    // The header is transaction-level: if it reads for one wallet it reads
+    // for every wallet in the row, so no trade is ever written against a
+    // header that a later wallet would have found unreadable.
+    let header: TradeHeader | null = null;
+
     for (const address of addresses) {
       const walletRow = await findWalletByAddress(address);
       if (!walletRow || walletRow.status !== "active") continue; // spec §9: withdrawal stops indexing
 
       const wallet = { id: walletRow.id, kolId: walletRow.kol_id, address };
-      const result = evaluateSwap(payload, wallet);
+      let result: SwapEvaluation;
+      try {
+        result = evaluateSwap(payload, wallet);
+        if (result.outcome === "trade") header ??= readTradeHeader(payload);
+      } catch (error) {
+        // Only an unreadable payload is recorded. A database failure raised
+        // anywhere in this loop must propagate: swallowing it would turn a
+        // transient outage into a permanent `malformed_payload` on an
+        // innocent row.
+        if (!(error instanceof MalformedPayloadError)) throw error;
+        // Never log the field's value: it can be an address or a signature.
+        console.warn("parsePending: a tracked wallet's leg of a raw_tx payload is unreadable");
+        rowError = higherPriorityError(rowError, "malformed_payload");
+        continue;
+      }
 
-      if (result.outcome === "trade") {
-        await insertTrade(row.signature_hmac, payload, walletRow, result.trade);
+      if (result.outcome === "trade" && header) {
+        await insertTrade(row.signature_hmac, header, walletRow, result.trade);
         continue;
       }
       const error = parseErrorFor(result.outcome);
       if (error) rowError = higherPriorityError(rowError, error);
+    }
+
+    if (rowError === "malformed_payload") {
+      // Requeueable: parse_error set so the row stops being re-selected and
+      // cannot stall the queue, parsed_at left NULL so clearing parse_error
+      // after a parser fix reprocesses it without spending another Helius
+      // credit (spec §5.2). A trade already written for another wallet in
+      // the same row survives that reparse untouched — the insert is
+      // ON CONFLICT DO NOTHING.
+      await query(`UPDATE raw_tx SET parse_error = $2 WHERE signature_hmac = $1`, [
+        row.signature_hmac,
+        rowError,
+      ]);
+      continue;
     }
 
     await query(`UPDATE raw_tx SET parsed_at = now(), parse_error = $2 WHERE signature_hmac = $1`, [

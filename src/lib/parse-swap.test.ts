@@ -11,6 +11,8 @@ import {
   parseErrorFor,
   parsePending,
   parseSwap,
+  readTradeHeader,
+  type EnhancedTx,
   type SwapOutcome,
   type TokenBalanceChange,
 } from "./parse-swap";
@@ -18,6 +20,63 @@ import { storeRawTx } from "./raw-tx";
 
 const wallet = { id: "w-1", kolId: "k-1", address: inventAddress() };
 const mint = inventAddress();
+
+/**
+ * Payload fields are typed, so breaking one on purpose needs a cast. Every
+ * deliberate mutation goes through these helpers instead of scattering
+ * `as unknown as` through the tests, and each one names the exact field it
+ * breaks — the point of these tests is which field is unreadable, not how
+ * the cast is spelled.
+ */
+function setField(payload: EnhancedTx, field: string, value: unknown): EnhancedTx {
+  (payload as unknown as Record<string, unknown>)[field] = value;
+  return payload;
+}
+
+function dropField(payload: EnhancedTx, field: string): EnhancedTx {
+  delete (payload as unknown as Record<string, unknown>)[field];
+  return payload;
+}
+
+/** Breaks the `decimals` of the wallet's own (first) balance change. */
+function setDecimals(payload: EnhancedTx, value: unknown): EnhancedTx {
+  const amount = payload.accountData[0].tokenBalanceChanges[0].rawTokenAmount;
+  (amount as unknown as Record<string, unknown>).decimals = value;
+  return payload;
+}
+
+/**
+ * Appends an untracked liquidity pool whose own leg cannot be read. Nothing
+ * in it belongs to a tracked wallet, so nothing in it may cost one a trade.
+ */
+function withUnreadablePoolLeg(payload: EnhancedTx): EnhancedTx {
+  const pool = inventAddress();
+  payload.accountData.push({
+    account: pool,
+    nativeBalanceChange: 1_000_000_000,
+    tokenBalanceChanges: [
+      // Not a whole number of base units: the exact shape that raises
+      // MalformedPayloadError when it is read.
+      { userAccount: pool, mint: inventAddress(), rawTokenAmount: { tokenAmount: "-1.5", decimals: 6 } },
+    ],
+  });
+  return payload;
+}
+
+/**
+ * Everything `parsePending` reads on behalf of one wallet: its leg, plus the
+ * transaction header a trade needs. Validation is narrow and lazy now, so a
+ * malformed `timestamp` is only reached by a payload that produces a trade —
+ * asserting on `evaluateSwap` alone would miss it.
+ */
+function readForWallet(
+  payload: EnhancedTx,
+  w: { id: string; kolId: string; address: string },
+): ReturnType<typeof evaluateSwap> {
+  const result = evaluateSwap(payload, w);
+  if (result.outcome === "trade") readTradeHeader(payload);
+  return result;
+}
 
 describe("parseSwap", () => {
   it("reads a buy: SOL out, tokens in", () => {
@@ -541,6 +600,156 @@ describe("parseSwap", () => {
     expect(trade.mint).toBe(splitMint);
     expect(trade.tokenAmount).toBeCloseTo(1.001, 9);
   });
+
+  // ---- Task 9b: the fields that were still outside the require* discipline ----
+
+  const cleanBuy = () =>
+    buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+
+  it("refuses a decimals it cannot read instead of silently reading it as zero", () => {
+    // Consequence 3, measured against 7788380: `decimals: -3` on this exact
+    // 2,000,000-raw leg wrote `tokenAmount 2000000, price_sol 5e-7` into
+    // `trade` and `position` — a cost basis wrong by a factor of a million,
+    // on the number the leaderboard ranks. `normalizeDecimals` mapped
+    // anything unreadable to 0 while every neighbouring field raised.
+    // `NaN` produced the same trade.
+    for (const broken of [-3, Number.NaN, 6.5, 40, "6", null, undefined]) {
+      expect(() => evaluateSwap(setDecimals(cleanBuy(), broken), wallet)).toThrow(MalformedPayloadError);
+    }
+    // The boundaries of the accepted range are still accepted.
+    expect(evaluateSwap(setDecimals(cleanBuy(), 0), wallet).outcome).toBe("trade");
+    expect(evaluateSwap(setDecimals(cleanBuy(), 32), wallet).outcome).toBe("dust_only"); // 2e-32 of a token
+  });
+
+  it("requires a fee, while an absent nativeBalanceChange is legitimately zero", () => {
+    // Spec §4.4 makes the fee material and Helius always sends it, so an
+    // absent `fee` is an unreadable payload. Measured against 7788383's
+    // `requireLamports` (absent -> 0n): a missing fee on this fee-payer buy
+    // silently wrote `sol_amount 1.000005, price_sol 0.5000025` instead of
+    // 1 and 0.5 — the fee dropped straight out of the §4.4 arithmetic.
+    expect(() => evaluateSwap(dropField(cleanBuy(), "fee"), wallet)).toThrow(MalformedPayloadError);
+    for (const broken of [null, "5000", 5_000.5, Number.NaN, -1]) {
+      expect(() => evaluateSwap(setField(cleanBuy(), "fee", broken), wallet)).toThrow(MalformedPayloadError);
+    }
+
+    // The other half of the asymmetry: an account that simply did not move
+    // its native balance is ordinary, and its swap still reads. The SOL side
+    // here is entirely a WSOL leg.
+    const noNative = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: 0,
+      tokenChangeRaw: "2000000",
+      feeLamports: 0,
+      isFeePayer: false,
+      extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: "-1000000000" }],
+    });
+    delete (noNative.accountData[0] as Partial<(typeof noNative.accountData)[number]>).nativeBalanceChange;
+    const trade = parseSwap(noNative, wallet)!;
+    expect(trade.side).toBe("buy");
+    expect(trade.solAmount).toBeCloseTo(1, 9);
+
+    // But a present-and-unreadable one is malformed, not coerced to zero:
+    // coercing would turn an unreadable SOL leg into a silent `no_sol_leg`.
+    for (const broken of ["-1000005000", -1_000_005_000.5, Number.NaN]) {
+      const payload = cleanBuy();
+      (payload.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = broken;
+      expect(() => evaluateSwap(payload, wallet)).toThrow(MalformedPayloadError);
+    }
+
+    // `null` is the one value that must NOT throw: like an absent field, it
+    // reads as "this account's native balance did not move". Built here
+    // without a fee to pay, so the whole SOL side really is zero.
+    const nullNative = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: 0,
+      tokenChangeRaw: "2000000",
+      feeLamports: 0,
+      isFeePayer: false,
+    });
+    (nullNative.accountData[0] as unknown as Record<string, unknown>).nativeBalanceChange = null;
+    expect(evaluateSwap(nullNative, wallet).outcome).toBe("no_sol_leg");
+  });
+
+  it("requires a feePayer it can read rather than silently making every wallet a non-fee-payer", () => {
+    // `wallet.address === payload.feePayer` is false for any non-string, so
+    // an unreadable feePayer would drop the fee out of the §4.4 arithmetic
+    // for every wallet in the row without a word.
+    expect(() => evaluateSwap(dropField(cleanBuy(), "feePayer"), wallet)).toThrow(MalformedPayloadError);
+    expect(() => evaluateSwap(setField(cleanBuy(), "feePayer", 12345), wallet)).toThrow(MalformedPayloadError);
+  });
+
+  it("reads the transaction header through the same discipline", () => {
+    // Consequence 1, measured against 7788380 through parsePending: a
+    // missing `timestamp` reached Postgres as `invalid input syntax for type
+    // timestamp with time zone: "0NaN-NaN-NaNTNaN:NaN:NaN.NaN+NaN:NaN"`, a
+    // non-string `signature` reached `encrypt()` as `TypeError: The "data"
+    // argument must be of type string ... Received type number (12345)`, and
+    // a non-numeric `slot` reached Postgres as `invalid input syntax for
+    // type bigint: "abc"`. All three left the row `parsed_at NULL,
+    // parse_error NULL`, to be re-selected and to throw again forever.
+    for (const broken of [undefined, null, 0, -1, "1750000000", 1.5, Date.now()]) {
+      expect(() => readTradeHeader(setField(cleanBuy(), "timestamp", broken))).toThrow(MalformedPayloadError);
+    }
+    for (const broken of [undefined, null, 12345, ""]) {
+      expect(() => readTradeHeader(setField(cleanBuy(), "signature", broken))).toThrow(MalformedPayloadError);
+    }
+    for (const broken of ["abc", "555", 1.5, -1, Number.NaN]) {
+      expect(() => readTradeHeader(setField(cleanBuy(), "slot", broken))).toThrow(MalformedPayloadError);
+    }
+
+    // A slot is genuinely nullable (task decision 1), so absent is null, not
+    // an error — the one field in the header that has a legitimate absence.
+    expect(readTradeHeader(dropField(cleanBuy(), "slot")).slot).toBeNull();
+    expect(readTradeHeader(setField(cleanBuy(), "slot", null)).slot).toBeNull();
+
+    const seconds = 1_770_000_000;
+    const header = readTradeHeader(setField(setField(cleanBuy(), "timestamp", seconds), "slot", 555));
+    expect(header.blockTime.getTime()).toBe(seconds * 1000);
+    expect(header.slot).toBe(555);
+    expect(typeof header.signature).toBe("string");
+  });
+
+  it("does not let a malformed leg on an untracked account cost a tracked wallet its trade", () => {
+    // Consequence 4: validation used to walk the entire payload before any
+    // wallet was evaluated, so an unreadable leg on an account belonging to
+    // no tracked wallet — a liquidity pool the parser never reads — made the
+    // whole row `malformed_payload` and wrote zero trades. Measured against
+    // 7788380 end to end: 0 trades, `parse_error = 'malformed_payload'`,
+    // even though this wallet's own leg is perfectly readable.
+    const payload = withUnreadablePoolLeg(cleanBuy());
+    const trade = parseSwap(payload, wallet)!;
+    expect(trade).not.toBeNull();
+    expect(trade.side).toBe("buy");
+    expect(trade.solAmount).toBeCloseTo(1, 9);
+    expect(trade.tokenAmount).toBeCloseTo(2, 9);
+  });
+
+  it("still fails the row closed when an identity field is unreadable", () => {
+    // The deliberate exception to narrowing, stated as a test: `account` and
+    // `userAccount` decide *whose* leg a value is. An unreadable one may be
+    // hiding the tracked wallet's own leg, so it cannot be skipped — that
+    // would be a silent drop, the one failure this whole task exists to
+    // prevent.
+    const noUserAccount = cleanBuy();
+    delete (noUserAccount.accountData[0].tokenBalanceChanges[0] as Partial<TokenBalanceChange>).userAccount;
+    expect(() => evaluateSwap(noUserAccount, wallet)).toThrow(MalformedPayloadError);
+
+    const noAccount = cleanBuy();
+    delete (noAccount.accountData[0] as Partial<(typeof noAccount.accountData)[number]>).account;
+    expect(() => evaluateSwap(noAccount, wallet)).toThrow(MalformedPayloadError);
+  });
 });
 
 async function makeKol(handle: string): Promise<string> {
@@ -968,6 +1177,213 @@ describe("parsePending", () => {
     expect(raw.parsed_at).toBeNull(); // still eligible for a fix to reprocess, once parse_error clears
     expect(raw.parse_error).toBe("malformed_payload");
   });
+
+  // ---- Task 9b: the four consequences, end to end ----
+
+  const goodBuy = () =>
+    buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+
+  it("records a missing timestamp instead of stalling the queue on it forever", async () => {
+    // Consequence 1, measured against 7788380 with this exact row:
+    //   RUN 1 threw: error: invalid input syntax for type timestamp with time
+    //                zone: "0NaN-NaN-NaNTNaN:NaN:NaN.NaN+NaN:NaN"
+    //   RUN 1 trades: 0   rows: [{parsed_at: null, parse_error: null}]
+    //   RUN 2 threw: the same error, on the same re-selected row.
+    // `insertTrade` read `payload.timestamp` directly, past every guard in
+    // the file, so the throw came from Postgres. Worse than the stall round
+    // 5 fixed: it only fires on rows that reach `insertTrade` — real trades
+    // for tracked wallets.
+    const bad = dropField(goodBuy(), "timestamp");
+    await storeRawTx({ signature: bad.signature, blockTime: new Date(), slot: 1, payload: bad, source: "webhook" });
+    // Force it to the head of the queue, so a stall would hide the good row.
+    await query("UPDATE raw_tx SET received_at = now() - interval '1 minute'");
+
+    const good = goodBuy();
+    await storeRawTx({ signature: good.signature, blockTime: new Date(), slot: 2, payload: good, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(2); // does not throw
+    expect(await query("SELECT id FROM trade")).toHaveLength(1); // the good row got through
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx ORDER BY received_at",
+    );
+    expect(rows[0].parse_error).toBe("malformed_payload");
+    expect(rows[0].parsed_at).toBeNull(); // requeue by clearing parse_error
+    expect(rows[1].parse_error).toBeNull();
+
+    // The head of the line is unblocked: a second run neither throws nor
+    // re-selects the poison row.
+    await expect(parsePending()).resolves.toBe(0);
+    expect(await query("SELECT id FROM trade")).toHaveLength(1);
+  });
+
+  it("records a non-string signature and a non-numeric slot rather than throwing on them", async () => {
+    // The same stall through two more doors, both measured against 7788380:
+    //   signature 12345 -> TypeError: The "data" argument must be of type
+    //     string or an instance of Buffer, TypedArray, or DataView.
+    //     Received type number (12345)   [from encrypt(), inside insertTrade]
+    //   slot "abc" -> error: invalid input syntax for type bigint: "abc"
+    // Both left the row `parsed_at NULL, parse_error NULL` and threw again
+    // on every later run. `route.ts` only checks `!event?.signature`, so a
+    // numeric signature is truthy there and reaches the parser.
+    const badSignature = goodBuy();
+    const realSignature = badSignature.signature; // the raw_tx row's own signature stays valid
+    setField(badSignature, "signature", 12345);
+    await storeRawTx({
+      signature: realSignature,
+      blockTime: new Date(),
+      slot: 1,
+      payload: badSignature,
+      source: "webhook",
+    });
+
+    const badSlot = setField(goodBuy(), "slot", "abc");
+    await storeRawTx({ signature: badSlot.signature, blockTime: new Date(), slot: 2, payload: badSlot, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(2);
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(rows.map((r) => r.parse_error)).toEqual(["malformed_payload", "malformed_payload"]);
+    expect(rows.every((r) => r.parsed_at === null)).toBe(true);
+    await expect(parsePending()).resolves.toBe(0); // neither row stalls the queue
+  });
+
+  it("does not write a 1970 trade from a null timestamp", async () => {
+    // Consequence 2, measured against 7788380: `timestamp: null` coerced to
+    // 0 and wrote a trade with
+    //   block_time 1970-01-01T00:00:00.000Z, sol_usd null
+    // — a real trade dated 1970, priced off a 1970 SOL/USD lookup, with
+    // nothing recorded anywhere. Silent, not even a stall.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, 150)", [new Date("1970-01-01T00:00:00.000Z")]);
+
+    const bad = setField(goodBuy(), "timestamp", null);
+    await storeRawTx({ signature: bad.signature, blockTime: new Date(), slot: 1, payload: bad, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload");
+    expect(raw.parsed_at).toBeNull();
+  });
+
+  it("does not write a cost basis a million times wrong from an unreadable decimals", async () => {
+    // Consequence 3, measured against 7788380 with this exact row
+    // (`decimals: -3` on a 2,000,000-raw leg bought for 1 SOL):
+    //   trade: token_amount 2000000, sol_amount 1, price_sol 0.0000005
+    // The correct reading is token_amount 2, price_sol 0.5 — the written
+    // basis was wrong by a factor of a million, on the number the
+    // leaderboard ranks, and `position` was marked dirty off it.
+    // `normalizeDecimals` mapped it to 0 while every neighbouring field
+    // raised.
+    const bad = setDecimals(goodBuy(), -3);
+    await storeRawTx({ signature: bad.signature, blockTime: new Date(), slot: 1, payload: bad, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    expect(await query("SELECT kol_id FROM position")).toHaveLength(0);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload");
+    expect(raw.parsed_at).toBeNull();
+  });
+
+  it("keeps a tracked wallet's trade when an untracked account's leg is unreadable", async () => {
+    // Consequence 4, measured against 7788380: validation walked the ENTIRE
+    // payload before any wallet was evaluated, so an unreadable leg on an
+    // untracked liquidity pool made the row `malformed_payload` and wrote
+    //   trades: 0
+    // even though the tracked wallet's own leg reads perfectly. It failed
+    // closed and stayed requeueable, but a permanently unreadable
+    // third-party field permanently cost a good wallet its trade.
+    const payload = withUnreadablePoolLeg(goodBuy());
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+
+    const [trade] = await query<Record<string, unknown>>("SELECT * FROM trade");
+    expect(Number(trade.token_amount)).toBeCloseTo(2, 9);
+    expect(Number(trade.sol_amount)).toBeCloseTo(1, 9);
+    expect(Number(trade.price_sol)).toBeCloseTo(0.5, 9);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parsed_at).not.toBeNull();
+    expect(raw.parse_error).toBeNull(); // nothing tracked was lost, so nothing to record
+  });
+
+  it("still writes one wallet's trade when another tracked wallet's own leg is unreadable", async () => {
+    // The narrowing does not extend to a tracked wallet: if wallet B's own
+    // leg cannot be read, that IS recorded on the row (and the row stays
+    // requeueable), but wallet A's clean trade is not thrown away with it.
+    const kol2 = await makeKol("parse-swap-kol-3");
+    const wallet2Address = inventAddress();
+    await addWallet(kol2, wallet2Address);
+
+    const payload = goodBuy();
+    payload.accountData.push({
+      account: wallet2Address,
+      nativeBalanceChange: -1_000_005_000,
+      tokenBalanceChanges: [
+        { userAccount: wallet2Address, mint: testMint, rawTokenAmount: { tokenAmount: "1.5", decimals: 6 } },
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+
+    const trades = await query<{ kol_id: string }>("SELECT kol_id FROM trade");
+    expect(trades).toHaveLength(1);
+    expect(trades[0].kol_id).toBe(kolId); // wallet A's trade survives wallet B's unreadable leg
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload"); // wallet B's loss is not silent
+    expect(raw.parsed_at).toBeNull(); // and a parser fix can requeue it: the insert is ON CONFLICT DO NOTHING
+  });
+
+  it("lets a database failure propagate instead of recording it as a malformed payload", async () => {
+    // The catch must not widen. `parsePending` catches MalformedPayloadError
+    // specifically; anything else — a transient Neon outage, a constraint
+    // violation — must reach the caller, or an innocent row is permanently
+    // stamped `malformed_payload` and the real failure disappears.
+    const payload = goodBuy();
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    // A trade insert against this row cannot succeed: `side` only accepts
+    // 'buy' and 'sell', so the INSERT raises inside insertTrade, in the same
+    // per-wallet loop that catches unreadable payloads.
+    await query("ALTER TABLE trade ADD CONSTRAINT trade_9b_probe CHECK (side = 'neither')");
+    try {
+      await expect(parsePending()).rejects.toThrow(/trade_9b_probe/);
+    } finally {
+      await query("ALTER TABLE trade DROP CONSTRAINT trade_9b_probe");
+    }
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    // Untouched: not marked parsed, and NOT stamped malformed_payload.
+    expect(raw.parsed_at).toBeNull();
+    expect(raw.parse_error).toBeNull();
+  });
 });
 
 /**
@@ -1036,6 +1452,19 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     outcome: SwapOutcome | "malformed_payload";
     build: () => ReturnType<typeof buildSwapPayload>;
   };
+
+  /** A clean, readable SOL-quoted buy for the tracked wallet: the base every
+   *  "one field is unreadable" shape below breaks exactly one field of. */
+  const invariantBuy = () =>
+    buildSwapPayload({
+      wallet: walletAddress,
+      mint: inventAddress(),
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
 
   const shapes: Shape[] = [
     {
@@ -1276,13 +1705,63 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
           isFeePayer: true,
         }),
     },
+    // Task 9b: the five fields that were still outside the require*
+    // discipline. Each one is a shape here, not just a regression test, so
+    // the standing invariant covers it — three of them used to throw out of
+    // `parsePending` from inside Postgres or `encrypt()`, and two used to
+    // write a wrong number in silence.
+    {
+      name: "a missing timestamp (was: a permanent stall inside insertTrade)",
+      outcome: "malformed_payload",
+      build: () => dropField(invariantBuy(), "timestamp"),
+    },
+    {
+      name: "a null timestamp (was: a silent 1970 trade)",
+      outcome: "malformed_payload",
+      build: () => setField(invariantBuy(), "timestamp", null),
+    },
+    {
+      name: "a non-string signature (was: a TypeError out of encrypt)",
+      outcome: "malformed_payload",
+      build: () => setField(invariantBuy(), "signature", 12345),
+    },
+    {
+      name: "a non-numeric slot (was: a bigint syntax error from Postgres)",
+      outcome: "malformed_payload",
+      build: () => setField(invariantBuy(), "slot", "abc"),
+    },
+    {
+      name: "a missing fee (was: silently zero, dropping it from the §4.4 arithmetic)",
+      outcome: "malformed_payload",
+      build: () => dropField(invariantBuy(), "fee"),
+    },
+    {
+      name: "an unreadable decimals (was: silently zero, a basis a million times wrong)",
+      outcome: "malformed_payload",
+      build: () => setDecimals(invariantBuy(), -3),
+    },
+    {
+      // The narrowing, as a shape: the tracked wallet's leg is clean and
+      // must still become a trade, whatever an untracked pool's leg says.
+      name: "an unreadable leg on an untracked account (must not cost this wallet its trade)",
+      outcome: "trade",
+      build: () => withUnreadablePoolLeg(invariantBuy()),
+    },
   ];
 
   it.each(shapes)(
     "$name: reaches its named outcome, and never a silent drop outside the justified set",
     async ({ build, outcome }) => {
       const payload = build();
-      await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+      // The `raw_tx` row's own signature is a separate value from the
+      // payload's `signature` field — `storeRawTx` takes it from the
+      // delivery envelope — so a payload whose inner field is unreadable is
+      // still stored under a real one, which is exactly how such a row
+      // arrives. Only this one shape needs the fallback.
+      const signature = typeof payload.signature === "string" && payload.signature.length > 0
+        ? payload.signature
+        : inventSignature();
+      await storeRawTx({ signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
 
       const wallet = { id: "w", kolId: kolId, address: walletAddress };
 
@@ -1292,10 +1771,14 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       // it drifted out of the test's reach at the same time.
       if (outcome === "malformed_payload") {
         // A typed error, so parsePending can tell an unreadable payload
-        // apart from a database failure it must not swallow.
-        expect(() => evaluateSwap(payload, wallet)).toThrow(MalformedPayloadError);
+        // apart from a database failure it must not swallow. Read through
+        // `readForWallet`, not `evaluateSwap`: validation is narrow and lazy
+        // now, so an unreadable `timestamp`, `signature` or `slot` is only
+        // reached by a payload that produces a trade, and `evaluateSwap`
+        // alone would return that trade without ever touching them.
+        expect(() => readForWallet(payload, wallet)).toThrow(MalformedPayloadError);
       } else {
-        expect(evaluateSwap(payload, wallet).outcome).toBe(outcome);
+        expect(readForWallet(payload, wallet).outcome).toBe(outcome);
       }
 
       // parsePending must never throw, whatever the shape: an escaping error
