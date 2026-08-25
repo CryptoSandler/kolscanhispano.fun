@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
+import { createDecipheriv, createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { blindIndex, decrypt, encrypt } from "./crypto";
 
 const value = "z".repeat(44); // an address-shaped string, invented
 const aad = "kol_wallet:address:row-1";
+const IV_BYTES = 12;
+const TAG_BYTES = 16;
 
 describe("encrypt / decrypt", () => {
   it("round-trips under the same AAD", () => {
@@ -46,10 +48,52 @@ describe("encrypt / decrypt", () => {
     expect(() => decrypt(blob, aad)).toThrow();
   });
 
-  it("refuses a blob with an altered version byte", () => {
+  it("refuses a blob with an unknown key version", () => {
+    // This only proves the version-lookup guard rejects an unrecognized
+    // version; it cannot fail for any reason related to the AAD folding
+    // below, since blob[0] ^ 0xff is never a version this code knows about
+    // and the lookup guard rejects it before setAAD is ever reached. See
+    // "the version byte is authenticated data, not just a lookup key" for
+    // coverage of the AAD folding itself.
     const blob = encrypt(value, aad);
     blob[0] ^= 0xff;
     expect(() => decrypt(blob, aad)).toThrow();
+  });
+
+  it("the version byte is authenticated data, not just a lookup key", () => {
+    // decrypt()/encrypt() alone cannot exercise this: with only one key
+    // version defined, an altered version byte is always rejected by the
+    // version-lookup guard before setAAD runs (see the test above), so the
+    // AAD folding added in review is otherwise unobservable from outside.
+    // Reach into the primitives directly, the same way crypto.ts does, to
+    // prove the version byte genuinely participates in GCM authentication.
+    const blob = encrypt(value, aad);
+    const version = blob[0];
+    const iv = blob.subarray(1, 1 + IV_BYTES);
+    const tag = blob.subarray(1 + IV_BYTES, 1 + IV_BYTES + TAG_BYTES);
+    const body = blob.subarray(1 + IV_BYTES + TAG_BYTES);
+    // Read the key the same way crypto.ts's key() does; nothing new is
+    // exported from crypto.ts just to make this test possible.
+    const encKey = Buffer.from(process.env.WALLET_ENC_KEY!, "base64");
+
+    // The pre-review AAD (no version prefix) must fail authentication.
+    const withoutVersionPrefix = createDecipheriv("aes-256-gcm", encKey, iv);
+    withoutVersionPrefix.setAAD(Buffer.from(aad, "utf8"));
+    withoutVersionPrefix.setAuthTag(tag);
+    expect(() =>
+      Buffer.concat([withoutVersionPrefix.update(body), withoutVersionPrefix.final()]),
+    ).toThrow();
+
+    // The current AAD (version byte prepended) must authenticate and
+    // recover the original plaintext.
+    const withVersionPrefix = createDecipheriv("aes-256-gcm", encKey, iv);
+    withVersionPrefix.setAAD(Buffer.concat([Buffer.from([version]), Buffer.from(aad, "utf8")]));
+    withVersionPrefix.setAuthTag(tag);
+    const plaintext = Buffer.concat([
+      withVersionPrefix.update(body),
+      withVersionPrefix.final(),
+    ]).toString("utf8");
+    expect(plaintext).toBe(value);
   });
 
   it("refuses a truncated blob instead of returning garbage", () => {
