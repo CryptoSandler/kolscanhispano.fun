@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "pg";
+import { assertDistinctFromProduction } from "../src/lib/connection-identity";
 import { loadEnvLocal } from "../src/lib/env";
 
 loadEnvLocal();
@@ -73,7 +74,18 @@ try {
   // database can only have this marker if it was migrated with --test, no
   // matter how TEST_DATABASE_URL happens to be spelled. Only ever stamped
   // on the --test path, and idempotent (upsert on the singleton row).
+  //
+  // Refuse to stamp at all if TEST_DATABASE_URL and DATABASE_URL look like
+  // the same database: stamping here is exactly what would make a
+  // misconfigured TEST_DATABASE_URL permanently pass the marker check in
+  // assertTestDatabaseMarker(), certifying production as safe to truncate.
   if (isTest) {
+    assertDistinctFromProduction(
+      connectionString,
+      "Refusing to stamp test_database_marker: TEST_DATABASE_URL and DATABASE_URL name the same " +
+        "database. Point TEST_DATABASE_URL at a different Neon branch, then re-run `npm run db:migrate:test`."
+    );
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS test_database_marker (
         id BOOLEAN PRIMARY KEY DEFAULT true,
