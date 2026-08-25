@@ -81,6 +81,32 @@ function withPoolAccount(payload: EnhancedTx, mutate: (entry: Record<string, unk
   return payload;
 }
 
+/** Breaks the `account` identity of the wallet's own (first) accountData entry. */
+function setOwnAccount(payload: EnhancedTx, value: unknown): EnhancedTx {
+  (payload.accountData[0] as unknown as Record<string, unknown>).account = value;
+  return payload;
+}
+
+/**
+ * A buy whose SOL side is split down the middle: 0.5 SOL through a standing
+ * WSOL account (keyed off `userAccount`) and 0.5 SOL natively (keyed off
+ * `account`). Truth: `buy tok=2 sol=1 price_sol=0.5`. The sell mirrors it.
+ */
+function splitSolSide(address: string, side: "buy" | "sell", theMint: string): EnhancedTx {
+  return buildSwapPayload({
+    wallet: address,
+    mint: theMint,
+    decimals: 6,
+    nativeChangeLamports: side === "buy" ? -(500_000_000 + 5_000) : 500_000_000 - 5_000,
+    tokenChangeRaw: side === "buy" ? "2000000" : "-2000000",
+    feeLamports: 5_000,
+    isFeePayer: true,
+    extraTokenChanges: [
+      { mint: WSOL_MINT, decimals: 9, rawTokenAmount: side === "buy" ? "-500000000" : "500000000" },
+    ],
+  });
+}
+
 /** Breaks the identity of the wallet's own (first) balance change. */
 function setOwnUserAccount(payload: EnhancedTx, value: unknown): EnhancedTx {
   (payload.accountData[0].tokenBalanceChanges[0] as unknown as Record<string, unknown>).userAccount = value;
@@ -831,10 +857,22 @@ describe("parseSwap", () => {
       expect(trade).not.toBeNull();
       expect(trade.solAmount).toBeCloseTo(1, 9);
 
+      // No lamport movement on this entry: an unreadable `account` is only
+      // skippable when nothing moved through it. See the paired test below
+      // for the non-zero case, which is fatal because the native leg is
+      // keyed off `account` while the token and WSOL legs are keyed off
+      // `userAccount`.
       const poolAccount = withPoolAccount(cleanBuy(), (entry) => {
         entry.account = identity;
+        entry.nativeBalanceChange = 0;
       });
       expect(parseSwap(poolAccount, wallet)!.solAmount).toBeCloseTo(1, 9);
+
+      const poolAccountNoNative = withPoolAccount(cleanBuy(), (entry) => {
+        entry.account = identity;
+        delete entry.nativeBalanceChange;
+      });
+      expect(parseSwap(poolAccountNoNative, wallet)!.solAmount).toBeCloseTo(1, 9);
     }
 
     // An unreadable container on an untracked pool is skipped too.
@@ -873,6 +911,70 @@ describe("parseSwap", () => {
     // payload with nothing readable there mentions no address at all, so
     // skipping it would settle the row as "touches no tracked wallet".
     expect(() => evaluateSwap(setField(cleanBuy(), "accountData", null), wallet)).toThrow(MalformedPayloadError);
+  });
+
+  it("refuses an unreadable account over lamports that actually moved", () => {
+    // Review of 9b round 1: the lenient identity read was over-applied. The
+    // native leg is keyed off `account`, while the token and WSOL legs are
+    // keyed off `userAccount`, so skipping an entry whose `account` is
+    // unreadable dropped HALF of a split SOL side and kept the other —
+    // producing a wrong number rather than a refusal. Measured against
+    // 5787ed9 on this exact shape:
+    //   truth:               trade buy  tok=2 sol=1        price_sol=0.5
+    //   account unreadable:  trade buy  tok=2 sol=0.499995 price_sol=0.2499975
+    //   sell direction:      trade sell tok=2 sol=0.500005 price_sol=0.2500025
+    // Right direction, plausible magnitude, parse_error NULL, parsed_at SET,
+    // position dirty: a cost basis wrong by 2x, silently, on the number the
+    // leaderboard ranks.
+    for (const side of ["buy", "sell"] as const) {
+      const truth = parseSwap(splitSolSide(wallet.address, side, mint), wallet)!;
+      expect(truth.side).toBe(side);
+      expect(truth.solAmount).toBeCloseTo(1, 9);
+      expect(truth.solAmount / truth.tokenAmount).toBeCloseTo(0.5, 9);
+
+      for (const identity of ["", null, 42, undefined]) {
+        const broken = setOwnAccount(splitSolSide(wallet.address, side, mint), identity);
+        expect(() => evaluateSwap(broken, wallet)).toThrow(MalformedPayloadError);
+      }
+    }
+
+    // The same rule seen from the other side: an unreadable account whose
+    // lamports did not move is still skipped, so the documented Helius
+    // shape and ordinary pool entries cost nothing.
+    const quiet = withPoolAccount(cleanBuy(), (entry) => {
+      entry.account = "";
+      entry.nativeBalanceChange = 0;
+    });
+    expect(parseSwap(quiet, wallet)!.solAmount).toBeCloseTo(1, 9);
+
+    // A present-but-unreadable nativeBalanceChange cannot be shown to be
+    // zero, so it raises rather than being assumed harmless.
+    const unreadableNative = withPoolAccount(cleanBuy(), (entry) => {
+      entry.account = null;
+      entry.nativeBalanceChange = "1000000000";
+    });
+    expect(() => evaluateSwap(unreadableNative, wallet)).toThrow(MalformedPayloadError);
+  });
+
+  it("records rather than silently resolving when an unreadable account holds the whole SOL side", () => {
+    // The `no_sol_leg` variant: the SOL side is entirely native, the wallet
+    // is not the fee payer, and its own entry's `account` is unreadable.
+    // Under the over-applied leniency this resolved to `no_sol_leg` — a
+    // silent-by-design outcome — so a real 1-SOL buy vanished with
+    // parse_error NULL. Now it is recorded and requeueable.
+    const payload = setOwnAccount(
+      buildSwapPayload({
+        wallet: wallet.address,
+        mint,
+        decimals: 6,
+        nativeChangeLamports: -1_000_000_000,
+        tokenChangeRaw: "2000000",
+        feeLamports: 5_000,
+        isFeePayer: false,
+      }),
+      "",
+    );
+    expect(() => evaluateSwap(payload, wallet)).toThrow(MalformedPayloadError);
   });
 });
 
@@ -1509,10 +1611,12 @@ describe("parsePending", () => {
     const payload = withPoolAccount(goodBuy(), (entry) => {
       (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
       entry.account = null;
+      entry.nativeBalanceChange = 0; // nothing moved through it, so nothing to attribute
     });
     const second = withPoolAccount(goodBuy(), (entry) => {
       delete entry.tokenBalanceChanges;
       entry.account = 42;
+      delete entry.nativeBalanceChange;
     });
     await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
     await storeRawTx({ signature: second.signature, blockTime: new Date(), slot: 2, payload: second, source: "webhook" });
@@ -1542,6 +1646,38 @@ describe("parsePending", () => {
     );
     expect(raw.parse_error).toBe("malformed_payload");
     expect(raw.parsed_at).toBeNull();
+  });
+
+  it("records a split SOL side whose account is unreadable, instead of pricing it 2x wrong", async () => {
+    // Review of 9b round 1, end to end. Measured against 5787ed9:
+    //   buy  -> trade{token_amount 2, sol_amount 0.499995, price_sol 0.2499975}
+    //   sell -> trade{token_amount 2, sol_amount 0.500005, price_sol 0.2500025}
+    // both with parse_error NULL, parsed_at SET and position dirty, against
+    // a truth of sol_amount 1 / price_sol 0.5.
+    for (const side of ["buy", "sell"] as const) {
+      const payload = setOwnAccount(splitSolSide(walletAddress, side, testMint), "");
+      await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+    }
+
+    await expect(parsePending()).resolves.toBe(2);
+
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    expect(await query("SELECT kol_id FROM position")).toHaveLength(0);
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(rows.map((r) => r.parse_error)).toEqual(["malformed_payload", "malformed_payload"]);
+    expect(rows.every((r) => r.parsed_at === null)).toBe(true); // requeueable, as it was before the leniency
+
+    // And the readable version of the same shape is still a clean 1-SOL trade.
+    await query("TRUNCATE raw_tx, trade, position CASCADE");
+    const good = splitSolSide(walletAddress, "buy", testMint);
+    await storeRawTx({ signature: good.signature, blockTime: new Date(), slot: 1, payload: good, source: "webhook" });
+    await expect(parsePending()).resolves.toBe(1);
+    const [trade] = await query<Record<string, unknown>>("SELECT sol_amount, price_sol FROM trade");
+    expect(Number(trade.sol_amount)).toBeCloseTo(1, 9);
+    expect(Number(trade.price_sol)).toBeCloseTo(0.5, 9);
   });
 
   it("still writes one wallet's trade when another tracked wallet's own leg is unreadable", async () => {
@@ -1986,11 +2122,12 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
         }),
     },
     {
-      name: "a numeric account on an untracked pool",
+      name: "a numeric account on an untracked pool, with no lamport movement",
       outcome: "trade",
       build: () =>
         withPoolAccount(invariantBuy(), (entry) => {
           entry.account = 42;
+          entry.nativeBalanceChange = 0;
         }),
     },
     {
@@ -2006,6 +2143,45 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
         delete (payload.accountData[0] as unknown as Record<string, unknown>).tokenBalanceChanges;
         return payload;
       },
+    },
+    {
+      // Review of 9b round 1: the lenient `account` read dropped the native
+      // half of a split SOL side and kept the WSOL half, writing a cost
+      // basis 2x wrong in silence. Both directions are shapes here.
+      name: "an unreadable account over a split SOL side, buy (was: price_sol 0.2499975)",
+      outcome: "malformed_payload",
+      build: () => setOwnAccount(splitSolSide(walletAddress, "buy", inventAddress()), ""),
+    },
+    {
+      name: "an unreadable account over a split SOL side, sell (was: price_sol 0.2500025)",
+      outcome: "malformed_payload",
+      build: () => setOwnAccount(splitSolSide(walletAddress, "sell", inventAddress()), null),
+    },
+    {
+      name: "an unreadable account holding the whole native SOL side (was: a silent no_sol_leg)",
+      outcome: "malformed_payload",
+      build: () =>
+        setOwnAccount(
+          buildSwapPayload({
+            wallet: walletAddress,
+            mint: inventAddress(),
+            decimals: 6,
+            nativeChangeLamports: -1_000_000_000,
+            tokenChangeRaw: "2000000",
+            feeLamports: 5_000,
+            isFeePayer: false,
+          }),
+          "",
+        ),
+    },
+    {
+      name: "an unreadable account with no lamport movement on an untracked pool",
+      outcome: "trade",
+      build: () =>
+        withPoolAccount(invariantBuy(), (entry) => {
+          entry.account = "";
+          delete entry.nativeBalanceChange;
+        }),
     },
     {
       name: "a 321-digit raw token amount (was: Infinity/NaN, settled and unrequeueable)",

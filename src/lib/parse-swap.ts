@@ -60,6 +60,14 @@
  * `tokenBalanceChanges` or `userAccount` really could be hiding that
  * wallet's own leg.
  *
+ * The leniency stops short of one case, because the two identities are not
+ * interchangeable: the native leg is keyed off `account`, while the token
+ * and WSOL legs are keyed off `userAccount`. An unreadable `account` over a
+ * **non-zero `nativeBalanceChange`** therefore drops half of a wallet's SOL
+ * side while keeping the other, which is a wrong number rather than a
+ * refusal — so that one raises (see `nativeLamportsFor`). An unreadable
+ * `account` with no lamport movement stays skipped.
+ *
  * The single fatal structural check left is `accountData` itself being an
  * array: a payload with nothing readable there mentions no addresses at all,
  * so skipping it would settle the row as "touches no tracked wallet" — a
@@ -661,7 +669,34 @@ function wsolLamportsIn(changes: readonly BalanceChange[]): bigint {
 function nativeLamportsFor(payload: EnhancedTx, address: string): bigint {
   let total = 0n;
   for (const account of accountEntries(payload)) {
-    if (account.account === address && account.record) {
+    if (account.record === null) continue; // not an object: no native field to read at all
+
+    if (account.account === null) {
+      // An unattributable entry that moved no lamports costs nothing, so it
+      // stays skipped — the documented Helius `userAccount: ""` shape and
+      // ordinary pool entries are unaffected. But lamports that *did* move
+      // belong to somebody, and this is the one field that says whom, so an
+      // unreadable `account` over a non-zero `nativeBalanceChange` is fatal.
+      //
+      // Without this, the leniency dropped half of one wallet's SOL side and
+      // kept the other: the native leg is keyed off `account`, while the
+      // token and WSOL legs are keyed off `userAccount`. A wallet buying 2
+      // tokens with 0.5 SOL through a standing WSOL account plus 0.5 SOL
+      // natively, with its own entry's `account` unreadable, was written as
+      // `buy tok=2 sol=0.499995 price_sol=0.2499975` against a truth of
+      // `sol=1 price_sol=0.5` — right direction, plausible magnitude,
+      // `parse_error` NULL, `parsed_at` SET. A cost basis wrong by 2x, in
+      // silence, on the number the leaderboard ranks.
+      //
+      // A present-but-unreadable `nativeBalanceChange` raises through
+      // `requireLamports` for the same reason: it cannot be shown to be zero.
+      if (requireLamports(account.record.nativeBalanceChange, "nativeBalanceChange") !== 0n) {
+        throw new MalformedPayloadError("accountData[].account");
+      }
+      continue;
+    }
+
+    if (account.account === address) {
       total += requireLamports(account.record.nativeBalanceChange, "nativeBalanceChange");
     }
   }
