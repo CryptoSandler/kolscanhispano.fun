@@ -4,6 +4,7 @@ import { buildSwapPayload } from "./fixtures/swap";
 import { inventAddress, inventSignature } from "./ids";
 import { addWallet } from "./wallets";
 import {
+  MalformedPayloadError,
   USDC_MINT,
   WSOL_MINT,
   evaluateSwap,
@@ -11,6 +12,7 @@ import {
   parsePending,
   parseSwap,
   type SwapOutcome,
+  type TokenBalanceChange,
 } from "./parse-swap";
 import { storeRawTx } from "./raw-tx";
 
@@ -265,8 +267,9 @@ describe("parseSwap", () => {
 
   it("treats a 1-raw-unit router remainder as dust, not a second leg", () => {
     // A router can leave a literal 1-raw-unit remainder on an intermediate
-    // mint. That is the only case DUST_RAW_UNITS exists for: a leg this
-    // small, in absolute raw terms, regardless of what the other leg is.
+    // mint. At 6 decimals that is one millionth of a token, exactly the
+    // dust floor, so the remainder is dropped and the real leg stands
+    // alone. Judged on the leg's own quantity, never against the other leg.
     const dustMint = inventAddress();
     const payload = buildSwapPayload({
       wallet: wallet.address,
@@ -873,6 +876,81 @@ describe("parsePending", () => {
     expect(await query("SELECT id FROM trade")).toHaveLength(1);
   });
 
+  it("records an unreadable raw token amount instead of throwing out of parsePending", async () => {
+    // Review round 5. `BigInt("1.5")` threw a SyntaxError from inside the
+    // per-wallet loop, past parsePending's only try/catch (which covers
+    // decryption). Measured before the fix, with the bad row sorting first:
+    // parsePending threw `SyntaxError: Cannot convert 1.5 to a BigInt`, zero
+    // trades were written, and BOTH rows stayed `parsed_at NULL,
+    // parse_error NULL` — so the pending query, which orders by received_at,
+    // re-selected the same row and threw again on every later run. A
+    // permanent head-of-line stall, with the good delivery behind it never
+    // parsed and nothing recorded anywhere.
+    const bad = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "1.5", // not a whole number of base units
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    await storeRawTx({ signature: bad.signature, blockTime: new Date(), slot: 1, payload: bad, source: "webhook" });
+    // Force it to the head of the queue, so a stall would hide the good row.
+    await query("UPDATE raw_tx SET received_at = now() - interval '1 minute'");
+
+    const good = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    await storeRawTx({ signature: good.signature, blockTime: new Date(), slot: 2, payload: good, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(2); // does not throw
+    expect(await query("SELECT id FROM trade")).toHaveLength(1); // the good row got through
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx ORDER BY received_at",
+    );
+    expect(rows[0].parse_error).toBe("malformed_payload");
+    expect(rows[0].parsed_at).toBeNull(); // requeue by clearing parse_error, as before
+    expect(rows[1].parse_error).toBeNull();
+
+    // The head of the line is unblocked: the poison row is filtered out by
+    // `parse_error IS NULL`, so a second run neither throws nor re-selects it.
+    await expect(parsePending()).resolves.toBe(0);
+    expect(await query("SELECT id FROM trade")).toHaveLength(1);
+  });
+
+  it("records a missing rawTokenAmount rather than throwing a TypeError", async () => {
+    // The same stall through a different door: before the fix this threw
+    // `TypeError: Cannot read properties of undefined (reading 'decimals')`
+    // and left the row `parsed_at NULL, parse_error NULL`.
+    const bad = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    delete (bad.accountData[0].tokenBalanceChanges[0] as Partial<TokenBalanceChange>).rawTokenAmount;
+    await storeRawTx({ signature: bad.signature, blockTime: new Date(), slot: 1, payload: bad, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload");
+    expect(raw.parsed_at).toBeNull();
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+  });
+
   it("leaves a malformed row retryable: parse_error is set but parsed_at stays null", async () => {
     const signatureHmac = Buffer.from(inventSignature());
     await query(
@@ -948,7 +1026,14 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     // The exact outcome this shape must reach. Asserting the specific name
     // is what makes the table catch a real trade being re-routed into a
     // silent outcome — the property the round-3 `no_trade` carve-out lost.
-    outcome: SwapOutcome;
+    //
+    // `"malformed_payload"` is not a SwapOutcome: it is the state a payload
+    // the parser cannot read must leave on the row. It belongs in this
+    // table because an unreadable payload used to throw out of
+    // `parsePending`, which left the row with neither a trade nor an error
+    // — the same silent-drop signature, reached by escaping the function
+    // rather than by returning from it.
+    outcome: SwapOutcome | "malformed_payload";
     build: () => ReturnType<typeof buildSwapPayload>;
   };
 
@@ -1147,6 +1232,37 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
         }),
     },
     {
+      name: "an unreadable raw token amount (recorded, never thrown)",
+      outcome: "malformed_payload",
+      build: () =>
+        buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "1.5",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        }),
+    },
+    {
+      name: "a missing rawTokenAmount (recorded, never thrown)",
+      outcome: "malformed_payload",
+      build: () => {
+        const payload = buildSwapPayload({
+          wallet: walletAddress,
+          mint: inventAddress(),
+          decimals: 6,
+          nativeChangeLamports: -1_000_005_000,
+          tokenChangeRaw: "2000000",
+          feeLamports: 5_000,
+          isFeePayer: true,
+        });
+        delete (payload.accountData[0].tokenBalanceChanges[0] as Partial<TokenBalanceChange>).rawTokenAmount;
+        return payload;
+      },
+    },
+    {
       name: "a transaction that does not touch this wallet",
       outcome: "no_token_leg",
       build: () =>
@@ -1168,28 +1284,44 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       const payload = build();
       await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
 
+      const wallet = { id: "w", kolId: kolId, address: walletAddress };
+
       // The specific named outcome. This is what makes the table catch a
       // real trade being re-routed into a not-a-trade branch: the previous
       // version excluded a catch-all outcome, so anything that drifted into
       // it drifted out of the test's reach at the same time.
-      expect(evaluateSwap(payload, { id: "w", kolId: kolId, address: walletAddress }).outcome).toBe(outcome);
+      if (outcome === "malformed_payload") {
+        // A typed error, so parsePending can tell an unreadable payload
+        // apart from a database failure it must not swallow.
+        expect(() => evaluateSwap(payload, wallet)).toThrow(MalformedPayloadError);
+      } else {
+        expect(evaluateSwap(payload, wallet).outcome).toBe(outcome);
+      }
 
-      await parsePending();
+      // parsePending must never throw, whatever the shape: an escaping error
+      // leaves the row untouched and stalls every delivery behind it.
+      await expect(parsePending()).resolves.toBe(1);
 
       const trades = await query<{ id: string }>("SELECT id FROM trade WHERE kol_id = $1", [kolId]);
-      const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
+      const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+        "SELECT parsed_at, parse_error FROM raw_tx",
+      );
 
+      const expectedError = outcome === "malformed_payload" ? "malformed_payload" : parseErrorFor(outcome);
       const wroteTrade = trades.length > 0;
       const hasError = raw.parse_error !== null;
+
+      // An unreadable payload stays requeueable; everything else is settled.
+      expect(raw.parsed_at === null).toBe(outcome === "malformed_payload");
 
       // The standing invariant: a shape ends as a trade, or as a recorded
       // error, or in one of the few outcomes that are silent by design and
       // individually justified above. Nothing else.
-      expect(wroteTrade || hasError || SILENT_BY_DESIGN.has(outcome)).toBe(true);
+      expect(wroteTrade || hasError || SILENT_BY_DESIGN.has(outcome as SwapOutcome)).toBe(true);
 
       expect(wroteTrade).toBe(outcome === "trade");
-      expect(hasError).toBe(parseErrorFor(outcome) !== null);
-      expect(raw.parse_error).toBe(parseErrorFor(outcome));
+      expect(hasError).toBe(expectedError !== null);
+      expect(raw.parse_error).toBe(expectedError);
     },
   );
 
@@ -1209,7 +1341,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       unsupported_quote: true,
       sol_leg_wrong_direction: true,
     };
-    const covered = new Set(shapes.map((s) => s.outcome));
+    const covered = new Set<string>(shapes.map((s) => s.outcome));
     expect((Object.keys(ALL_OUTCOMES) as SwapOutcome[]).filter((o) => !covered.has(o))).toEqual([]);
   });
 });

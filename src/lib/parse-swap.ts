@@ -18,6 +18,14 @@
  * directly. Two numbers may only be compared or summed here once they are
  * demonstrably in the same unit: lamports with lamports, token quantities
  * with token quantities.
+ *
+ * **Reading the payload is total.** Every field access and every integer
+ * parse goes through a guard that raises `MalformedPayloadError`, which
+ * `parsePending` records on the row. Nothing else may throw out of the
+ * payload-reading path: a bare `SyntaxError` from `BigInt("1.5")` escaping
+ * `parsePending` left the row `parsed_at NULL, parse_error NULL`, and since
+ * the pending query orders by `received_at`, it was re-selected and threw
+ * again forever — stalling every good delivery behind it.
  */
 import { aadFor, decrypt, encrypt } from "./crypto";
 import { query } from "./db";
@@ -182,14 +190,123 @@ function powTen(n: number): bigint {
 }
 
 /** A payload-reported `decimals`, clamped to something `powTen` can safely raise. */
-function normalizeDecimals(decimals: number): number {
-  if (!Number.isFinite(decimals) || decimals <= 0) return 0;
+function normalizeDecimals(decimals: unknown): number {
+  if (typeof decimals !== "number" || !Number.isFinite(decimals) || decimals <= 0) return 0;
   return Math.min(Math.trunc(decimals), MAX_DECIMALS);
 }
 
-/** A payload-reported lamports figure as an exact integer, 0 if it is not a finite number. */
-function lamports(value: number): bigint {
-  return Number.isFinite(value) ? BigInt(Math.trunc(value)) : 0n;
+/**
+ * Raised when the stored payload cannot be read at all — a raw amount that
+ * is not an integer, a `rawTokenAmount` that is absent, an `accountData`
+ * that is not an array. `parsePending` catches it and records
+ * `parse_error = 'malformed_payload'` on the row.
+ *
+ * It has to be a distinct class rather than any thrown error: a database
+ * failure inside the same loop must propagate, not poison the row it
+ * happened to be working on.
+ *
+ * Before this existed, `BigInt("1.5")` threw a bare `SyntaxError` out of
+ * `parsePending` with the row still `parsed_at NULL, parse_error NULL`. The
+ * pending query orders by `received_at`, so that row was re-selected and
+ * threw again on every later run — a permanent head-of-line stall with
+ * every good delivery behind it unparsed and nothing recorded anywhere.
+ */
+export class MalformedPayloadError extends Error {
+  constructor(field: string) {
+    // Only the field's name goes in the message. A payload value can be an
+    // address or a signature and must never reach a log line.
+    super(`malformed enhanced transaction: ${field}`);
+    this.name = "MalformedPayloadError";
+  }
+}
+
+function requireArray<T>(value: readonly T[] | undefined | null, field: string): readonly T[] {
+  if (!Array.isArray(value)) throw new MalformedPayloadError(field);
+  return value;
+}
+
+function requireObject(value: unknown, field: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object") throw new MalformedPayloadError(field);
+  return value as Record<string, unknown>;
+}
+
+/**
+ * A raw token amount as an exact integer. Helius reports base units as a
+ * decimal string; anything that is not a whole number of base units is a
+ * payload this parser cannot read, not a value to round.
+ */
+function requireRawAmount(value: unknown, field: string): bigint {
+  if (typeof value === "number") {
+    if (!Number.isInteger(value)) throw new MalformedPayloadError(field);
+    return BigInt(value);
+  }
+  if (typeof value !== "string" || !/^[+-]?\d+$/.test(value)) throw new MalformedPayloadError(field);
+  return BigInt(value);
+}
+
+/**
+ * A payload-reported lamports figure as an exact integer. Absent means zero
+ * (the field is simply not reported for that account); anything present but
+ * not a whole number of lamports is malformed rather than coerced, since
+ * coercing it to 0 would turn an unreadable SOL leg into a silent
+ * `no_sol_leg`.
+ */
+function requireLamports(value: unknown, field: string): bigint {
+  if (value === undefined || value === null) return 0n;
+  if (typeof value !== "number" || !Number.isInteger(value)) throw new MalformedPayloadError(field);
+  return BigInt(value);
+}
+
+/** A validated SPL balance change: the only shape the arithmetic below reads. */
+type BalanceChange = { mint: string; raw: bigint; decimals: number };
+
+function readBalanceChange(change: unknown): BalanceChange {
+  const record = requireObject(change, "tokenBalanceChange");
+  if (typeof record.mint !== "string") throw new MalformedPayloadError("tokenBalanceChange.mint");
+  const amount = requireObject(record.rawTokenAmount, "tokenBalanceChange.rawTokenAmount");
+  return {
+    mint: record.mint,
+    raw: requireRawAmount(amount.tokenAmount, "rawTokenAmount.tokenAmount"),
+    decimals: normalizeDecimals(amount.decimals),
+  };
+}
+
+/** The payload's `accountData`, or `MalformedPayloadError` if there is none to read. */
+function accountDataOf(payload: EnhancedTx): readonly AccountData[] {
+  return requireArray((payload as EnhancedTx | undefined | null)?.accountData, "accountData");
+}
+
+/**
+ * Walks the entire payload once and throws `MalformedPayloadError` on
+ * anything the parser cannot read. `parsePending` calls this before
+ * evaluating any wallet, so a malformed field found halfway through cannot
+ * leave a partially written row behind.
+ */
+export function validatePayload(payload: EnhancedTx): void {
+  requireLamports(payload?.fee, "fee");
+  for (const account of accountDataOf(payload)) {
+    requireLamports(account?.nativeBalanceChange, "nativeBalanceChange");
+    for (const change of requireArray(account?.tokenBalanceChanges, "tokenBalanceChanges")) {
+      readBalanceChange(change);
+    }
+  }
+}
+
+/**
+ * Every SPL balance change the payload reports for `address`, validated.
+ * All raw payload traversal for the token side happens here, so there is one
+ * place where an unreadable field becomes a typed error instead of a
+ * `SyntaxError` or a `TypeError` escaping the caller.
+ */
+function balanceChangesFor(payload: EnhancedTx, address: string): BalanceChange[] {
+  const changes: BalanceChange[] = [];
+  for (const account of accountDataOf(payload)) {
+    for (const change of requireArray(account?.tokenBalanceChanges, "tokenBalanceChanges")) {
+      if ((change as TokenBalanceChange | undefined)?.userAccount !== address) continue;
+      changes.push(readBalanceChange(change));
+    }
+  }
+  return changes;
 }
 
 /**
@@ -207,33 +324,29 @@ function toLamports(raw: bigint, decimals: number): bigint {
 }
 
 /**
- * Every non-zero SPL token leg this wallet held in the transaction, excluding
- * WSOL. Multiple token accounts of the same mint are summed together — after
- * being brought to a common scale, since two balance changes of one mint that
- * report different decimals are not addable as they stand.
+ * Every non-zero SPL token leg in a validated set of balance changes,
+ * excluding WSOL. Multiple token accounts of the same mint are summed
+ * together — after being brought to a common scale, since two balance
+ * changes of one mint that report different decimals are not addable as
+ * they stand.
  */
-function tokenLegsFor(payload: EnhancedTx, address: string): TokenLeg[] {
+function tokenLegsIn(changes: readonly BalanceChange[]): TokenLeg[] {
   const byMint = new Map<string, { raw: bigint; decimals: number }>();
-  for (const account of payload.accountData) {
-    for (const change of account.tokenBalanceChanges) {
-      if (change.userAccount !== address) continue;
-      const decimals = normalizeDecimals(change.rawTokenAmount.decimals);
-      const raw = BigInt(change.rawTokenAmount.tokenAmount);
-      const existing = byMint.get(change.mint);
-      if (!existing) {
-        byMint.set(change.mint, { raw, decimals });
-        continue;
-      }
-      // Scale both to the finer of the two before adding: 1 raw unit at 6
-      // decimals and 1 raw unit at 9 decimals are different quantities of
-      // the same token, and summing them as they stand would overstate the
-      // coarser one by 1000x.
-      const scale = Math.max(existing.decimals, decimals);
-      byMint.set(change.mint, {
-        raw: existing.raw * powTen(scale - existing.decimals) + raw * powTen(scale - decimals),
-        decimals: scale,
-      });
+  for (const change of changes) {
+    const existing = byMint.get(change.mint);
+    if (!existing) {
+      byMint.set(change.mint, { raw: change.raw, decimals: change.decimals });
+      continue;
     }
+    // Scale both to the finer of the two before adding: 1 raw unit at 6
+    // decimals and 1 raw unit at 9 decimals are different quantities of
+    // the same token, and summing them as they stand would overstate the
+    // coarser one by 1000x.
+    const scale = Math.max(existing.decimals, change.decimals);
+    byMint.set(change.mint, {
+      raw: existing.raw * powTen(scale - existing.decimals) + change.raw * powTen(scale - change.decimals),
+      decimals: scale,
+    });
   }
   return [...byMint.entries()]
     .filter(([mint, { raw }]) => mint !== WSOL_MINT && raw !== 0n)
@@ -270,27 +383,22 @@ function dropDust(legs: TokenLeg[]): TokenLeg[] {
   return legs.filter((leg) => !isDust(leg));
 }
 
-/** This wallet's net WSOL balance change, **in lamports**, 0n if none. */
-function wsolLamportsFor(payload: EnhancedTx, address: string): bigint {
+/** The net WSOL balance change in a validated set of changes, **in lamports**, 0n if none. */
+function wsolLamportsIn(changes: readonly BalanceChange[]): bigint {
   let total = 0n;
-  for (const account of payload.accountData) {
-    for (const change of account.tokenBalanceChanges) {
-      if (change.userAccount === address && change.mint === WSOL_MINT) {
-        total += toLamports(
-          BigInt(change.rawTokenAmount.tokenAmount),
-          normalizeDecimals(change.rawTokenAmount.decimals),
-        );
-      }
-    }
+  for (const change of changes) {
+    if (change.mint === WSOL_MINT) total += toLamports(change.raw, change.decimals);
   }
   return total;
 }
 
 /** This wallet's net native balance change, **in lamports**, 0n if the payload has no entry for it. */
 function nativeLamportsFor(payload: EnhancedTx, address: string): bigint {
-  return payload.accountData
-    .filter((a) => a.account === address)
-    .reduce((sum, a) => sum + lamports(a.nativeBalanceChange), 0n);
+  let total = 0n;
+  for (const account of accountDataOf(payload)) {
+    if (account?.account === address) total += requireLamports(account.nativeBalanceChange, "nativeBalanceChange");
+  }
+  return total;
 }
 
 /**
@@ -324,7 +432,8 @@ export function evaluateSwap(
   payload: EnhancedTx,
   wallet: { id: string; kolId: string; address: string },
 ): SwapEvaluation {
-  const allLegs = tokenLegsFor(payload, wallet.address);
+  const changes = balanceChangesFor(payload, wallet.address);
+  const allLegs = tokenLegsIn(changes);
   const legs = dropDust(allLegs);
   if (legs.length === 0) {
     return { outcome: allLegs.length === 0 ? "no_token_leg" : "dust_only" };
@@ -338,11 +447,11 @@ export function evaluateSwap(
   const tokenAmount = Number(raw < 0n ? -raw : raw) / 10 ** decimals;
 
   const isFeePayer = wallet.address === payload.feePayer;
-  const fee = lamports(payload.fee ?? 0);
+  const fee = requireLamports(payload.fee, "fee");
   const nativeChange = nativeLamportsFor(payload, wallet.address);
   const feeAdjustedNative = isFeePayer ? nativeChange + fee : nativeChange;
   // Both terms are lamports by construction; spec §4.3 treats SOL and WSOL as one quantity.
-  const solDelta = feeAdjustedNative + wsolLamportsFor(payload, wallet.address);
+  const solDelta = feeAdjustedNative + wsolLamportsIn(changes);
 
   if (solDelta === 0n) return { outcome: "no_sol_leg" };
 
@@ -379,9 +488,12 @@ export function parseSwap(
 /** Every address this transaction mentions, as a candidate wallet to resolve. */
 function candidateAddresses(payload: EnhancedTx): string[] {
   const addresses = new Set<string>();
-  for (const account of payload.accountData) {
-    addresses.add(account.account);
-    for (const change of account.tokenBalanceChanges) addresses.add(change.userAccount);
+  for (const account of accountDataOf(payload)) {
+    if (typeof account?.account === "string") addresses.add(account.account);
+    for (const change of requireArray(account?.tokenBalanceChanges, "tokenBalanceChanges")) {
+      const userAccount = (change as TokenBalanceChange | undefined)?.userAccount;
+      if (typeof userAccount === "string") addresses.add(userAccount);
+    }
   }
   return [...addresses];
 }
@@ -465,10 +577,14 @@ function higherPriorityError(a: SwapParseError | null, b: SwapParseError): SwapP
  * row and the row's `parse_error` reflects it even when a trade was also
  * written.
  *
- * A genuine parse failure (the ciphertext or the JSON is malformed) records
- * `parse_error` but leaves `parsed_at` null, so the row stays eligible for a
+ * A genuine parse failure records `parse_error = 'malformed_payload'` but
+ * leaves `parsed_at` null, so the row stays eligible for a
  * parser fix to reprocess without spending another Helius credit (spec
- * §5.2). `unsupported_quote` and `sol_leg_wrong_direction` are the opposite:
+ * §5.2). That covers both an undecryptable ciphertext or unparseable JSON
+ * and a payload that decrypts cleanly but cannot be read field by field
+ * (`MalformedPayloadError`) — the latter used to escape this function
+ * entirely and stall the queue behind it forever.
+ * `unsupported_quote` and `sol_leg_wrong_direction` are the opposite:
  * both are cases this parser version deliberately never guesses at, not bugs
  * a future deploy might fix on retry, so they also set `parsed_at`. Either
  * way, the pending-rows query below excludes any row with `parse_error` set,
@@ -503,8 +619,31 @@ export async function parsePending(limit = 100): Promise<number> {
     }
 
     let rowError: SwapParseError | null = null;
+    let addresses: string[];
+    try {
+      // Validate the whole payload before evaluating any wallet, so a
+      // malformed field found partway through cannot leave a half-written
+      // row behind. (A retry after a parser fix would be idempotent anyway
+      // — the trade insert is ON CONFLICT DO NOTHING — but not writing at
+      // all is the cheaper guarantee.)
+      validatePayload(payload);
+      addresses = [...candidateAddresses(payload)];
+    } catch (error) {
+      if (!(error instanceof MalformedPayloadError)) throw error;
+      // Never log the field's value, only that the row could not be read.
+      console.warn("parsePending: a raw_tx payload is structurally unreadable");
+      // parse_error set, parsed_at left NULL: the pending query filters on
+      // `parse_error IS NULL`, so the row stops being re-selected (it can no
+      // longer stall every delivery behind it) while still being requeued by
+      // a later parser fix that clears parse_error.
+      await query(`UPDATE raw_tx SET parse_error = $2 WHERE signature_hmac = $1`, [
+        row.signature_hmac,
+        "malformed_payload",
+      ]);
+      continue;
+    }
 
-    for (const address of candidateAddresses(payload)) {
+    for (const address of addresses) {
       const walletRow = await findWalletByAddress(address);
       if (!walletRow || walletRow.status !== "active") continue; // spec §9: withdrawal stops indexing
 
