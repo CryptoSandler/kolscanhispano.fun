@@ -4,7 +4,12 @@
  * this runs as a test rather than as a lint anyone can skip.
  */
 const BASE58 = "[1-9A-HJ-NP-Za-km-z]";
-const CANDIDATE = new RegExp(`${BASE58}{32,88}`, "g");
+// No upper bound: matching only the address/signature-length window let a real
+// address slip through undetected whenever it abutted more base58 text with no
+// delimiter (the combined run fell outside 32-44 and 87-88 and was dropped).
+// Any run of 32+ is now reported whole; false positives on long incidental
+// base58 runs are the accepted cost, absorbed by HYGIENE_SKIP and the allowlist.
+const CANDIDATE = new RegExp(`${BASE58}{32,}`, "g");
 
 /** Public, non-personal constants. Anything added here must be justified in review. */
 export const ALLOWED_BASE58 = new Set([
@@ -22,13 +27,10 @@ export const ALLOWED_BASE58 = new Set([
  */
 export const HYGIENE_SKIP = ["src/lib/hygiene.ts", "package-lock.json"];
 
-/** Distinct address- or signature-length base58 strings that are not allowlisted. */
+/** Distinct maximal base58 runs of 32+ characters that are not allowlisted. */
 export function findDisallowedBase58(text: string): string[] {
   const found = new Set<string>();
   for (const [match] of text.matchAll(CANDIDATE)) {
-    const isAddress = match.length >= 32 && match.length <= 44;
-    const isSignature = match.length >= 87 && match.length <= 88;
-    if (!isAddress && !isSignature) continue;
     if (ALLOWED_BASE58.has(match)) continue;
     found.add(match);
   }

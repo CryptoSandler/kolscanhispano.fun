@@ -15,9 +15,17 @@ describe("findDisallowedBase58", () => {
     expect(findDisallowedBase58(`tx ${signature}`)).toEqual([signature]);
   });
 
-  it("ignores strings that are too short or too long", () => {
+  it("ignores strings that are too short", () => {
     expect(findDisallowedBase58("z".repeat(31))).toEqual([]);
-    expect(findDisallowedBase58("z".repeat(45))).toEqual([]);
+  });
+
+  it("flags an address embedded in a longer base58 run with no delimiter", () => {
+    // findDisallowedBase58 matches the maximal contiguous run, not a
+    // length-windowed slice of it, so an address abutting more base58 text
+    // must still be caught rather than silently dropped for being 49 chars
+    // instead of 44.
+    const embedded = address + "abcde";
+    expect(findDisallowedBase58(embedded)).toEqual([embedded]);
   });
 
   it("ignores strings containing characters outside the base58 alphabet", () => {
