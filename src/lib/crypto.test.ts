@@ -1,6 +1,6 @@
 import { createDecipheriv, createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { blindIndex, decrypt, encrypt } from "./crypto";
+import { aadFor, blindIndex, decrypt, encrypt } from "./crypto";
 
 const value = "z".repeat(44); // an address-shaped string, invented
 const aad = "kol_wallet:address:row-1";
@@ -136,5 +136,43 @@ describe("blindIndex", () => {
   it("is not a bare hash of the input", () => {
     const sha = createHash("sha256").update(value).digest();
     expect(blindIndex(value, "address").equals(sha)).toBe(false);
+  });
+});
+
+describe("aadFor", () => {
+  it("joins table, column, and id with ':'", () => {
+    expect(aadFor("kol_wallet", "address", "row-1")).toBe("kol_wallet:address:row-1");
+  });
+
+  it("rejects a ':' in the table part", () => {
+    expect(() => aadFor("kol_wallet:evil", "address", "row-1")).toThrow();
+  });
+
+  it("rejects a ':' in the column part", () => {
+    expect(() => aadFor("kol_wallet", "address:evil", "row-1")).toThrow();
+  });
+
+  it("rejects a ':' in the id part", () => {
+    expect(() => aadFor("kol_wallet", "address", "row-1:evil")).toThrow();
+  });
+
+  it("rejects an empty table part", () => {
+    expect(() => aadFor("", "address", "row-1")).toThrow();
+  });
+
+  it("rejects an empty column part", () => {
+    expect(() => aadFor("kol_wallet", "", "row-1")).toThrow();
+  });
+
+  it("rejects an empty id part", () => {
+    expect(() => aadFor("kol_wallet", "address", "")).toThrow();
+  });
+
+  it("prevents two distinct locations from colliding on the same AAD string", () => {
+    // Without the ':' rejection, ("t", "a:b", "c") and ("t", "a", "b:c")
+    // would both join to "t:a:b:c" — exactly the collision the AAD exists
+    // to rule out. Both must be rejected.
+    expect(() => aadFor("t", "a:b", "c")).toThrow();
+    expect(() => aadFor("t", "a", "b:c")).toThrow();
   });
 });

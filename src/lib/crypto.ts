@@ -37,6 +37,22 @@ function key(name: "WALLET_ENC_KEY" | "WALLET_HMAC_KEY"): Buffer {
 }
 
 /**
+ * Builds the AAD string that binds a ciphertext to its exact table, column,
+ * and row id. Joins the three parts with `:` and rejects any part that is
+ * empty or itself contains a `:`: without that check, two distinct
+ * (column, row) locations could concatenate to the same AAD string (e.g.
+ * table "a", column "b:c", id "d" vs. table "a", column "b", id "c:d"),
+ * which defeats the exact-location guarantee the AAD exists to provide.
+ */
+export function aadFor(table: string, column: string, id: string): string {
+  for (const [name, part] of [["table", table], ["column", column], ["id", id]] as const) {
+    if (part.length === 0) throw new Error(`aadFor: ${name} must not be empty`);
+    if (part.includes(":")) throw new Error(`aadFor: ${name} must not contain ':'`);
+  }
+  return `${table}:${column}:${id}`;
+}
+
+/**
  * `aad` binds the ciphertext to its exact column and row, so a value cannot be
  * moved between fields or rows and still authenticate. The key version is
  * folded into the authenticated data too (not just prepended to the blob), so
