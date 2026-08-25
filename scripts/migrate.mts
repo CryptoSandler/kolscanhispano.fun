@@ -35,6 +35,18 @@ try {
     .filter((name) => name.endsWith(".sql"))
     .sort();
 
+  // Alphabetical sort only matches intended migration order when every
+  // filename uses a fixed-width, zero-padded version prefix (000, 001, ...,
+  // 010, ...). Enforce that convention instead of silently applying DDL out
+  // of order the moment it's violated (e.g. "2_x.sql" sorting after "010_x.sql").
+  for (const file of files) {
+    if (!/^\d{3}_/.test(file)) {
+      throw new Error(
+        `Migration filename "${file}" must start with a 3-digit, zero-padded version (e.g. 007_add_users.sql).`
+      );
+    }
+  }
+
   const { rows: applied } = await client.query<{ version: string }>(
     "SELECT version FROM schema_migrations"
   );
