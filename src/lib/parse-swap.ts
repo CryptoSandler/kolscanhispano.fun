@@ -43,16 +43,27 @@
  * — must not cost a tracked wallet its trade, so nothing is validated until
  * it is actually read, for a specific wallet.
  *
- * The one exception is *identity*: `accountData` must be an array of
- * objects, each with a string `account`, whose `tokenBalanceChanges` is an
- * array of objects each with a string `userAccount`. Those are the fields
- * that decide *whose* leg a value belongs to, so an unreadable one may be
- * hiding the tracked wallet's own leg; failing the row closed is the only
- * answer there that cannot silently drop a trade. Values (`fee`,
- * `nativeBalanceChange`, `rawTokenAmount`, `decimals`, `mint`, `feePayer`)
- * are read only for the wallet under evaluation, and the transaction header
- * (`signature`, `timestamp`, `slot`) only when a trade is about to be
- * written.
+ * Values (`fee`, `nativeBalanceChange`, `rawTokenAmount`, `decimals`,
+ * `mint`, `feePayer`) are read only for the wallet under evaluation, and the
+ * transaction header (`signature`, `timestamp`, `slot`) only when a trade is
+ * about to be written.
+ *
+ * *Identity* (`account`, `userAccount`) is narrower still: an identity that
+ * cannot be read is **not one of ours**, because `""`, `null` and a number
+ * can none of them equal a tracked address. Such an entry is skipped, not
+ * fatal — Helius is documented to emit `userAccount: ""` for token accounts
+ * it cannot attribute, and failing the row on one would turn every delivery
+ * containing one into `malformed_payload` and take the feed quiet with
+ * nothing anywhere reporting it. The fail-closed reading is kept for the
+ * case that earns it: an entry that demonstrably belongs to the wallet being
+ * evaluated (`account === address`), where an unreadable
+ * `tokenBalanceChanges` or `userAccount` really could be hiding that
+ * wallet's own leg.
+ *
+ * The single fatal structural check left is `accountData` itself being an
+ * array: a payload with nothing readable there mentions no addresses at all,
+ * so skipping it would settle the row as "touches no tracked wallet" — a
+ * silent drop, and not requeueable.
  */
 import { aadFor, decrypt, encrypt } from "./crypto";
 import { query } from "./db";
@@ -279,17 +290,47 @@ function requireString(value: unknown, field: string): string {
 }
 
 /**
+ * Exclusive upper bound on the magnitude of a raw token amount. An SPL token
+ * amount **is a u64** on chain, so this is the domain, not a heuristic.
+ *
+ * Without it, `requireRawAmount` bounded the number of digits at nothing —
+ * the seventh instance of this file's one recurring defect, and the
+ * worst-behaved of them. A 321-digit `tokenAmount` on a token leg and on a
+ * WSOL leg both became `Infinity` at `Number()`, so `priceSol = Infinity /
+ * Infinity = NaN`, and the row was written as
+ * `trade{token_amount Infinity, sol_amount Infinity, price_sol NaN}` with
+ * `position` marked dirty, `parsed_at` SET and `parse_error` NULL. Unlike
+ * every other defect in this task it was **not requeueable**: nothing was
+ * recorded, and the row was settled. (The token leg alone gave
+ * `price_sol 0`.) An unbounded bigint forced into a double is the same
+ * family as the six before it — two numbers of different kinds meeting.
+ */
+const MAX_RAW_AMOUNT = 2n ** 64n;
+
+/**
  * A raw token amount as an exact integer. Helius reports base units as a
  * decimal string; anything that is not a whole number of base units is a
  * payload this parser cannot read, not a value to round.
+ *
+ * The number branch requires a **safe** integer, like every sibling guard
+ * here: `12345678901234567890` as a JSON number is not one integer but a
+ * double that silently stands for `12345678901234567000`, and accepting it
+ * would re-round the amount without a word. The same digits as a *string*
+ * are exact and under the u64 bound, so they are read as written — the
+ * distinction is between a value JavaScript can carry exactly and one it
+ * cannot.
  */
 function requireRawAmount(value: unknown, field: string): bigint {
+  let raw: bigint;
   if (typeof value === "number") {
-    if (!Number.isInteger(value)) throw new MalformedPayloadError(field);
-    return BigInt(value);
+    if (!Number.isSafeInteger(value)) throw new MalformedPayloadError(field);
+    raw = BigInt(value);
+  } else {
+    if (typeof value !== "string" || !/^[+-]?\d+$/.test(value)) throw new MalformedPayloadError(field);
+    raw = BigInt(value);
   }
-  if (typeof value !== "string" || !/^[+-]?\d+$/.test(value)) throw new MalformedPayloadError(field);
-  return BigInt(value);
+  if ((raw < 0n ? -raw : raw) >= MAX_RAW_AMOUNT) throw new MalformedPayloadError(field);
+  return raw;
 }
 
 /**
@@ -414,44 +455,75 @@ function readBalanceChange(record: Record<string, unknown>): BalanceChange {
 }
 
 /**
- * One `accountData` entry, with its *identity* validated and its values left
- * untouched.
+ * One `accountData` entry, read structurally. Nothing here raises: an
+ * identity that cannot be read becomes `null`, and a container that is not
+ * an array becomes `null`, for the caller to interpret against the wallet it
+ * is evaluating.
  *
- * The split is the whole point (see the file header): `account` and
- * `userAccount` say whose leg a value belongs to, so an unreadable one may
- * be hiding the tracked wallet's own leg and the row fails closed. The
- * values hanging off them are read only if the identity turns out to be a
- * wallet we are evaluating, so an untracked liquidity pool's broken
- * `decimals` costs nobody a trade.
+ * **An identity that cannot be read is not one of ours.** `""`, `null`, a
+ * number — none of them can equal a tracked address, so an entry carrying
+ * one is skipped rather than failing the whole row. Helius is documented to
+ * emit `userAccount: ""` for token accounts it cannot attribute; treating
+ * that as fatal would turn every delivery containing one into
+ * `malformed_payload` and take the feed quiet with nothing reporting it.
+ * This mirrors what already happens one level up for *values*: an unreadable
+ * field on wallet B's leg records the error and still writes wallet A's
+ * trade.
+ *
+ * The fail-closed behaviour is kept for exactly the case that earns it — an
+ * entry that **demonstrably belongs** to the wallet being evaluated
+ * (`account === address`). There, an unreadable `tokenBalanceChanges`, an
+ * unreadable change, or an unreadable `userAccount` really could be hiding
+ * that wallet's own leg, so the row is recorded and requeued instead of
+ * quietly reporting less than the wallet did.
  */
+type ChangeEntry = { userAccount: string | null; record: Record<string, unknown> | null };
 type AccountEntry = {
-  account: string;
-  record: Record<string, unknown>;
-  changes: { userAccount: string; record: Record<string, unknown> }[];
+  account: string | null;
+  record: Record<string, unknown> | null;
+  /** `null` when `tokenBalanceChanges` is not an array at all. */
+  changes: ChangeEntry[] | null;
 };
 
+/** An address as an identity, or `null` if it cannot be read as one. Never raises. */
+function readAddress(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 /**
- * The payload's `accountData`, with every entry's identity validated. This
- * is the single traversal of the payload's structure: `candidateAddresses`,
+ * The payload's `accountData`, read structurally. This is the single
+ * traversal of the payload's shape: `candidateAddresses`,
  * `balanceChangesFor` and `nativeLamportsFor` all read through it, so there
- * is one place where an unreadable structure becomes a typed error instead
- * of a `TypeError` escaping the caller.
+ * is one place where an unreadable structure becomes either a skipped entry
+ * or a typed error — never a `TypeError` escaping the caller.
+ *
+ * `accountData` itself must still be an array, and that one *is* fatal: a
+ * payload with nothing readable there mentions no addresses at all, so
+ * skipping it would settle the row as "touches no tracked wallet" — a
+ * silent drop, and not requeueable.
  */
 function accountEntries(payload: EnhancedTx): AccountEntry[] {
   const entries: AccountEntry[] = [];
   for (const account of requireArray((payload as EnhancedTx | undefined | null)?.accountData, "accountData")) {
-    const record = requireObject(account, "accountData[]");
-    const changes = requireArray(record.tokenBalanceChanges as readonly unknown[] | undefined, "tokenBalanceChanges");
+    if (account === null || typeof account !== "object") {
+      entries.push({ account: null, record: null, changes: null });
+      continue;
+    }
+    const record = account as unknown as Record<string, unknown>;
+    const rawChanges = record.tokenBalanceChanges;
     entries.push({
-      account: requireString(record.account, "accountData[].account"),
+      account: readAddress(record.account),
       record,
-      changes: changes.map((change) => {
-        const changeRecord = requireObject(change, "tokenBalanceChange");
-        return {
-          userAccount: requireString(changeRecord.userAccount, "tokenBalanceChange.userAccount"),
-          record: changeRecord,
-        };
-      }),
+      changes: Array.isArray(rawChanges)
+        ? rawChanges.map((change) =>
+            change === null || typeof change !== "object"
+              ? { userAccount: null, record: null }
+              : {
+                  userAccount: readAddress((change as Record<string, unknown>).userAccount),
+                  record: change as Record<string, unknown>,
+                },
+          )
+        : null,
     });
   }
   return entries;
@@ -461,12 +533,31 @@ function accountEntries(payload: EnhancedTx): AccountEntry[] {
  * Every SPL balance change the payload reports for `address`, validated.
  * Only this wallet's own changes are read: a malformed `rawTokenAmount`,
  * `decimals` or `mint` on somebody else's leg is never touched, so it cannot
- * cost this wallet its trade.
+ * cost this wallet its trade — and neither can an unattributable
+ * `userAccount`, which is simply not this wallet's.
+ *
+ * The exception is an entry that demonstrably belongs to this wallet: there,
+ * an unreadable change or identity may be hiding this wallet's own leg, and
+ * the row is failed closed (recorded, requeueable) rather than reported
+ * short.
  */
 function balanceChangesFor(payload: EnhancedTx, address: string): BalanceChange[] {
   const changes: BalanceChange[] = [];
   for (const account of accountEntries(payload)) {
+    const isOurs = account.account === address;
+    if (account.changes === null) {
+      if (isOurs) throw new MalformedPayloadError("tokenBalanceChanges");
+      continue; // not ours, and not readable: nothing here to attribute to anyone
+    }
     for (const change of account.changes) {
+      if (change.record === null) {
+        if (isOurs) throw new MalformedPayloadError("tokenBalanceChange");
+        continue;
+      }
+      if (change.userAccount === null) {
+        if (isOurs) throw new MalformedPayloadError("tokenBalanceChange.userAccount");
+        continue;
+      }
       if (change.userAccount !== address) continue;
       changes.push(readBalanceChange(change.record));
     }
@@ -570,7 +661,7 @@ function wsolLamportsIn(changes: readonly BalanceChange[]): bigint {
 function nativeLamportsFor(payload: EnhancedTx, address: string): bigint {
   let total = 0n;
   for (const account of accountEntries(payload)) {
-    if (account.account === address) {
+    if (account.account === address && account.record) {
       total += requireLamports(account.record.nativeBalanceChange, "nativeBalanceChange");
     }
   }
@@ -675,8 +766,10 @@ export function parseSwap(
 function candidateAddresses(payload: EnhancedTx): string[] {
   const addresses = new Set<string>();
   for (const account of accountEntries(payload)) {
-    addresses.add(account.account);
-    for (const change of account.changes) addresses.add(change.userAccount);
+    if (account.account !== null) addresses.add(account.account);
+    for (const change of account.changes ?? []) {
+      if (change.userAccount !== null) addresses.add(change.userAccount);
+    }
   }
   return [...addresses];
 }

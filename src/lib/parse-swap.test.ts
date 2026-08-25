@@ -64,6 +64,37 @@ function withUnreadablePoolLeg(payload: EnhancedTx): EnhancedTx {
 }
 
 /**
+ * Appends an untracked liquidity pool, then breaks its entry however
+ * `mutate` says. Nothing in it belongs to a tracked wallet.
+ */
+function withPoolAccount(payload: EnhancedTx, mutate: (entry: Record<string, unknown>) => void): EnhancedTx {
+  const pool = inventAddress();
+  const entry: Record<string, unknown> = {
+    account: pool,
+    nativeBalanceChange: 1_000_000_000,
+    tokenBalanceChanges: [
+      { userAccount: pool, mint: inventAddress(), rawTokenAmount: { tokenAmount: "-2000000", decimals: 6 } },
+    ],
+  };
+  mutate(entry);
+  payload.accountData.push(entry as unknown as (typeof payload.accountData)[number]);
+  return payload;
+}
+
+/** Breaks the identity of the wallet's own (first) balance change. */
+function setOwnUserAccount(payload: EnhancedTx, value: unknown): EnhancedTx {
+  (payload.accountData[0].tokenBalanceChanges[0] as unknown as Record<string, unknown>).userAccount = value;
+  return payload;
+}
+
+/** Sets the `tokenAmount` of the wallet's own (first) balance change. */
+function setOwnRawAmount(payload: EnhancedTx, value: unknown): EnhancedTx {
+  const amount = payload.accountData[0].tokenBalanceChanges[0].rawTokenAmount;
+  (amount as unknown as Record<string, unknown>).tokenAmount = value;
+  return payload;
+}
+
+/**
  * Everything `parsePending` reads on behalf of one wallet: its leg, plus the
  * transaction header a trade needs. Validation is narrow and lazy now, so a
  * malformed `timestamp` is only reached by a payload that produces a trade —
@@ -736,19 +767,112 @@ describe("parseSwap", () => {
     expect(trade.tokenAmount).toBeCloseTo(2, 9);
   });
 
-  it("still fails the row closed when an identity field is unreadable", () => {
-    // The deliberate exception to narrowing, stated as a test: `account` and
-    // `userAccount` decide *whose* leg a value is. An unreadable one may be
-    // hiding the tracked wallet's own leg, so it cannot be skipped — that
-    // would be a silent drop, the one failure this whole task exists to
-    // prevent.
-    const noUserAccount = cleanBuy();
-    delete (noUserAccount.accountData[0].tokenBalanceChanges[0] as Partial<TokenBalanceChange>).userAccount;
-    expect(() => evaluateSwap(noUserAccount, wallet)).toThrow(MalformedPayloadError);
+  it("bounds a raw token amount to the u64 an SPL amount actually is", () => {
+    // Review of 9b, the seventh instance of the unit defect and the only one
+    // that was not requeueable. A 321-digit tokenAmount on the token leg AND
+    // on a WSOL leg both became Infinity at Number(), so
+    // priceSol = Infinity / Infinity = NaN. Measured end to end against
+    // 4d401fb: trade{token_amount Infinity, sol_amount Infinity,
+    // price_sol NaN}, position dirty, parsed_at SET, parse_error NULL. The
+    // token leg alone gave price_sol 0.
+    const huge = "9".repeat(321);
+    expect(() => evaluateSwap(setOwnRawAmount(cleanBuy(), huge), wallet)).toThrow(MalformedPayloadError);
+    expect(() =>
+      evaluateSwap(
+        buildSwapPayload({
+          wallet: wallet.address,
+          mint,
+          decimals: 6,
+          nativeChangeLamports: -5_000,
+          tokenChangeRaw: huge,
+          feeLamports: 5_000,
+          isFeePayer: true,
+          extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: `-${huge}` }],
+        }),
+        wallet,
+      ),
+    ).toThrow(MalformedPayloadError);
 
-    const noAccount = cleanBuy();
-    delete (noAccount.accountData[0] as Partial<(typeof noAccount.accountData)[number]>).account;
-    expect(() => evaluateSwap(noAccount, wallet)).toThrow(MalformedPayloadError);
+    // The boundary is the u64 domain itself, not a digit count.
+    const u64Max = (2n ** 64n - 1n).toString();
+    expect(evaluateSwap(setOwnRawAmount(cleanBuy(), u64Max), wallet).outcome).toBe("trade");
+    expect(() => evaluateSwap(setOwnRawAmount(cleanBuy(), (2n ** 64n).toString()), wallet)).toThrow(
+      MalformedPayloadError,
+    );
+    expect(() => evaluateSwap(setOwnRawAmount(cleanBuy(), `-${2n ** 64n}`), wallet)).toThrow(MalformedPayloadError);
+  });
+
+  it("rejects a raw token amount that is a JSON number too large to be exact", () => {
+    // `12345678901234567890` as a JSON number is not one integer but a
+    // double standing for 12345678901234567000: accepting it re-rounds the
+    // amount without a word. Every sibling guard here uses
+    // Number.isSafeInteger; this one used Number.isInteger.
+    expect(() => evaluateSwap(setOwnRawAmount(cleanBuy(), 12345678901234567890), wallet)).toThrow(
+      MalformedPayloadError,
+    );
+    // The same digits as a *string* are exact and inside the u64 domain, so
+    // they are read as written. The distinction is exactness, not size.
+    const trade = parseSwap(setOwnRawAmount(cleanBuy(), "12345678901234567890"), wallet)!;
+    expect(trade.side).toBe("buy");
+    // A safe integer as a number is still fine.
+    expect(evaluateSwap(setOwnRawAmount(cleanBuy(), 2_000_000), wallet).outcome).toBe("trade");
+  });
+
+  it("treats an unreadable identity as not-ours and skips it, rather than failing the row", () => {
+    // `""`, `null` and a number can none of them equal a tracked address, so
+    // an entry carrying one is not this wallet's. Helius emits
+    // `userAccount: ""` for token accounts it cannot attribute; failing the
+    // row on one would take the feed quiet with nothing reporting it.
+    for (const identity of ["", null, 42, undefined]) {
+      const onPool = withPoolAccount(cleanBuy(), (entry) => {
+        (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = identity;
+      });
+      const trade = parseSwap(onPool, wallet)!;
+      expect(trade).not.toBeNull();
+      expect(trade.solAmount).toBeCloseTo(1, 9);
+
+      const poolAccount = withPoolAccount(cleanBuy(), (entry) => {
+        entry.account = identity;
+      });
+      expect(parseSwap(poolAccount, wallet)!.solAmount).toBeCloseTo(1, 9);
+    }
+
+    // An unreadable container on an untracked pool is skipped too.
+    for (const container of [undefined, null, "not-an-array", 7]) {
+      const payload = withPoolAccount(cleanBuy(), (entry) => {
+        entry.tokenBalanceChanges = container;
+      });
+      expect(parseSwap(payload, wallet)!.solAmount).toBeCloseTo(1, 9);
+    }
+
+    // And so is an accountData element that is not an object at all.
+    const junkEntry = cleanBuy();
+    (junkEntry.accountData as unknown as unknown[]).push("not-an-account");
+    expect(parseSwap(junkEntry, wallet)!.solAmount).toBeCloseTo(1, 9);
+  });
+
+  it("still fails closed when the unreadable identity is on the tracked wallet's own entry", () => {
+    // The distinction that is the point: on an entry that demonstrably
+    // belongs to this wallet (`account === address`), an unreadable change
+    // or identity may be hiding this wallet's own leg. Reporting less than
+    // the wallet actually did would be the silent drop this whole task
+    // exists to prevent, so the row is recorded and requeued instead.
+    for (const identity of ["", null, 42, undefined]) {
+      expect(() => evaluateSwap(setOwnUserAccount(cleanBuy(), identity), wallet)).toThrow(MalformedPayloadError);
+    }
+    for (const container of [undefined, null, "not-an-array", 7]) {
+      const payload = cleanBuy();
+      (payload.accountData[0] as unknown as Record<string, unknown>).tokenBalanceChanges = container;
+      expect(() => evaluateSwap(payload, wallet)).toThrow(MalformedPayloadError);
+    }
+    const junkChange = cleanBuy();
+    (junkChange.accountData[0].tokenBalanceChanges as unknown as unknown[])[0] = "not-a-change";
+    expect(() => evaluateSwap(junkChange, wallet)).toThrow(MalformedPayloadError);
+
+    // `accountData` itself is the one structural check that stays fatal: a
+    // payload with nothing readable there mentions no address at all, so
+    // skipping it would settle the row as "touches no tracked wallet".
+    expect(() => evaluateSwap(setField(cleanBuy(), "accountData", null), wallet)).toThrow(MalformedPayloadError);
   });
 });
 
@@ -1328,6 +1452,98 @@ describe("parsePending", () => {
     expect(raw.parse_error).toBeNull(); // nothing tracked was lost, so nothing to record
   });
 
+  it("never writes Infinity or NaN from an unbounded raw token amount", async () => {
+    // Review of 9b. Measured against 4d401fb with a 321-digit tokenAmount on
+    // the token leg and on a WSOL leg:
+    //   trade{token_amount: Infinity, sol_amount: Infinity, price_sol: NaN},
+    //   position dirty, parsed_at SET, parse_error NULL
+    // Silent AND unrequeueable — the row was settled with nothing recorded,
+    // the only defect in this task with no way back. The token leg alone
+    // gave price_sol 0.
+    const huge = "9".repeat(321);
+    const bothLegs = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -5_000,
+      tokenChangeRaw: huge,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: `-${huge}` }],
+    });
+    await storeRawTx({
+      signature: bothLegs.signature,
+      blockTime: new Date(),
+      slot: 1,
+      payload: bothLegs,
+      source: "webhook",
+    });
+
+    const tokenLegOnly = setOwnRawAmount(goodBuy(), huge);
+    await storeRawTx({
+      signature: tokenLegOnly.signature,
+      blockTime: new Date(),
+      slot: 2,
+      payload: tokenLegOnly,
+      source: "webhook",
+    });
+
+    await expect(parsePending()).resolves.toBe(2);
+
+    // Nothing written at all — and in particular no Infinity, no NaN.
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    expect(await query("SELECT kol_id FROM position")).toHaveLength(0);
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(rows.map((r) => r.parse_error)).toEqual(["malformed_payload", "malformed_payload"]);
+    // Requeueable, unlike the state this replaces.
+    expect(rows.every((r) => r.parsed_at === null)).toBe(true);
+  });
+
+  it("keeps a tracked wallet's trade when an untracked account's identity is unreadable", async () => {
+    // Helius emits `userAccount: ""` for token accounts it cannot attribute.
+    // Failing the row on one would make every delivery containing one
+    // `malformed_payload` — the feed goes quiet with nothing reporting it.
+    const payload = withPoolAccount(goodBuy(), (entry) => {
+      (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+      entry.account = null;
+    });
+    const second = withPoolAccount(goodBuy(), (entry) => {
+      delete entry.tokenBalanceChanges;
+      entry.account = 42;
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+    await storeRawTx({ signature: second.signature, blockTime: new Date(), slot: 2, payload: second, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(2);
+
+    const trades = await query<Record<string, unknown>>("SELECT sol_amount FROM trade");
+    expect(trades).toHaveLength(2); // both tracked-wallet trades survive
+    expect(trades.every((t) => Number(t.sol_amount) === 1)).toBe(true);
+
+    const rows = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(rows.every((r) => r.parse_error === null)).toBe(true);
+    expect(rows.every((r) => r.parsed_at !== null)).toBe(true);
+  });
+
+  it("records an unreadable identity on the tracked wallet's own entry rather than skipping it", async () => {
+    const bad = setOwnUserAccount(goodBuy(), "");
+    await storeRawTx({ signature: bad.signature, blockTime: new Date(), slot: 1, payload: bad, source: "webhook" });
+
+    await expect(parsePending()).resolves.toBe(1);
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("malformed_payload");
+    expect(raw.parsed_at).toBeNull();
+  });
+
   it("still writes one wallet's trade when another tracked wallet's own leg is unreadable", async () => {
     // The narrowing does not extend to a tracked wallet: if wallet B's own
     // leg cannot be read, that IS recorded on the row (and the row stays
@@ -1746,6 +1962,60 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       name: "an unreadable leg on an untracked account (must not cost this wallet its trade)",
       outcome: "trade",
       build: () => withUnreadablePoolLeg(invariantBuy()),
+    },
+    // Review of 9b: identity. An identity that cannot be read is not one of
+    // ours, so the entry is skipped — Helius emits `userAccount: ""` for
+    // token accounts it cannot attribute, and failing the row on one would
+    // take the feed quiet with nothing reporting it. The same shapes on the
+    // tracked wallet's own entry stay fatal, because there they could be
+    // hiding that wallet's own leg.
+    {
+      name: 'an unattributable userAccount ("") on an untracked pool',
+      outcome: "trade",
+      build: () =>
+        withPoolAccount(invariantBuy(), (entry) => {
+          (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
+        }),
+    },
+    {
+      name: "a missing tokenBalanceChanges on an untracked pool",
+      outcome: "trade",
+      build: () =>
+        withPoolAccount(invariantBuy(), (entry) => {
+          delete entry.tokenBalanceChanges;
+        }),
+    },
+    {
+      name: "a numeric account on an untracked pool",
+      outcome: "trade",
+      build: () =>
+        withPoolAccount(invariantBuy(), (entry) => {
+          entry.account = 42;
+        }),
+    },
+    {
+      name: "an unreadable userAccount on the tracked wallet's own entry",
+      outcome: "malformed_payload",
+      build: () => setOwnUserAccount(invariantBuy(), ""),
+    },
+    {
+      name: "a missing tokenBalanceChanges on the tracked wallet's own entry",
+      outcome: "malformed_payload",
+      build: () => {
+        const payload = invariantBuy();
+        delete (payload.accountData[0] as unknown as Record<string, unknown>).tokenBalanceChanges;
+        return payload;
+      },
+    },
+    {
+      name: "a 321-digit raw token amount (was: Infinity/NaN, settled and unrequeueable)",
+      outcome: "malformed_payload",
+      build: () => setOwnRawAmount(invariantBuy(), "9".repeat(321)),
+    },
+    {
+      name: "a raw token amount that is a JSON number too large to be exact",
+      outcome: "malformed_payload",
+      build: () => setOwnRawAmount(invariantBuy(), 12345678901234567890),
     },
   ];
 
