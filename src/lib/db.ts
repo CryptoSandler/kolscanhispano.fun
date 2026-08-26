@@ -100,6 +100,9 @@ export async function withTransaction<T>(fn: (tx: TxQuery) => Promise<T>): Promi
   }
 }
 
+/** Postgres's SQLSTATE for "the relation doesn't exist" -- see assertTestDatabaseMarker. */
+const UNDEFINED_TABLE = "42P01";
+
 /**
  * A sentinel that does not depend on parsing any connection string: a
  * database can only carry this marker if it was migrated with
@@ -107,17 +110,45 @@ export async function withTransaction<T>(fn: (tx: TxQuery) => Promise<T>): Promi
  * spelled. `runQuery` is injectable so this can be unit-tested against a
  * fake without a second, deliberately unmarked database.
  *
- * Fails closed on any error, including a genuine connectivity problem:
- * rethrowing the original driver error risks leaking a connection-string
- * fragment (a hostname, for example) into the message.
+ * Fails closed on any error -- but not with the same message for every one.
+ * "The marker table is genuinely absent" (never migrated) and "the database
+ * could not be reached at all" (a transient outage, a stale connection) are
+ * different problems with different remedies, and conflating them sent a
+ * reviewer chasing a migration that didn't need running when the real
+ * problem was a dead connection. They are told apart on the driver
+ * error's **`.code`** alone, never its `.message`: a `pg` error's `code` is
+ * a fixed five-character SQLSTATE (`42P01`, undefined_table, is Postgres's
+ * code for "no such relation") and cannot itself carry a hostname or any
+ * other connection detail the way a message string can. `code` is read
+ * defensively -- `runQuery` is injectable, so a caller's fake might throw
+ * anything -- and its absence is treated the same as a connection problem,
+ * which is the safer of the two given a code that can't be identified.
  */
 export async function assertTestDatabaseMarker(
   runQuery: (sql: string, params?: unknown[]) => Promise<unknown[]> = query
 ): Promise<void> {
+  let rows: unknown[];
   try {
-    const rows = await runQuery("SELECT stamped_at FROM test_database_marker LIMIT 1");
-    if (rows.length === 0) throw new Error("test_database_marker has no row");
-  } catch {
+    rows = await runQuery("SELECT stamped_at FROM test_database_marker LIMIT 1");
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : null;
+
+    if (code === UNDEFINED_TABLE) {
+      throw new Error(
+        "TEST_DATABASE_URL does not point at a stamped test database (test_database_marker is missing). " +
+          "Run `npm run db:migrate:test` to stamp one. If this fires unexpectedly, TEST_DATABASE_URL is " +
+          "pointing somewhere it should not."
+      );
+    }
+    throw new Error(
+      "Could not verify TEST_DATABASE_URL points at a stamped test database -- the query failed" +
+        (code ? ` (driver error code ${code})` : "") +
+        ". This looks like a connectivity problem, not a missing migration: check that the database is " +
+        "reachable before running `npm run db:migrate:test`."
+    );
+  }
+  if (rows.length === 0) {
     throw new Error(
       "TEST_DATABASE_URL does not point at a stamped test database (test_database_marker is missing). " +
         "Run `npm run db:migrate:test` to stamp one. If this fires unexpectedly, TEST_DATABASE_URL is " +

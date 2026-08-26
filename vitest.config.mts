@@ -5,7 +5,7 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
     setupFiles: ["./vitest.env.ts"],
     // Tests share one database and truncate between cases, so they cannot run
     // in parallel against each other.

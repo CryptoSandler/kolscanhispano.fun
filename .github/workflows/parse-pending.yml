@@ -1,0 +1,73 @@
+name: Parse pending trades
+
+# Turns stored webhook payloads into trade rows and marks the positions they
+# touch dirty. See src/lib/parse-swap.ts's parsePending, run here through
+# scripts/parse-pending.ts.
+#
+# This runs the work directly on a GitHub-hosted runner instead of calling an
+# HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
+# its work lives in a deployed app and Vercel Cron cannot send an auth
+# header. Here nothing is deployed and nothing may be deployed this batch,
+# and parsePending is pure database work with no HTTP surface — a runner
+# with DATABASE_URL does the work directly, with no endpoint to authenticate
+# and no deployment to depend on.
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub's scheduler is best-effort and can run late
+    # under load, so treat this as "roughly every 5 minutes". Nothing here is
+    # time-critical: parsePending derives every trade from whatever raw_tx
+    # rows are currently pending, so a late run does exactly what a punctual
+    # one would.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# A run that is still going when the next schedule fires should finish, not
+# be raced. scripts/parse-pending.ts also takes its own advisory lock
+# (withLock) for exactly this case — this concurrency group just avoids
+# spinning up a second runner that would only find that lock held and exit.
+concurrency:
+  group: parse-pending
+  cancel-in-progress: false
+
+jobs:
+  parse-pending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run parsePending
+        env:
+          # Repository secrets — see Task 2's report for what each is for.
+          # Never echoed: only checked for emptiness below.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WALLET_ENC_KEY: ${{ secrets.WALLET_ENC_KEY }}
+          WALLET_HMAC_KEY: ${{ secrets.WALLET_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::DATABASE_URL is not set. Add it under Settings -> Secrets and variables -> Actions -> Repository secrets."
+            exit 1
+          fi
+          if [ -z "${WALLET_ENC_KEY}" ]; then
+            echo "::error::WALLET_ENC_KEY is not set. Add it under Settings -> Secrets and variables -> Actions -> Repository secrets."
+            exit 1
+          fi
+          if [ -z "${WALLET_HMAC_KEY}" ]; then
+            echo "::error::WALLET_HMAC_KEY is not set. Add it under Settings -> Secrets and variables -> Actions -> Repository secrets."
+            exit 1
+          fi
+
+          npx tsx scripts/parse-pending.ts

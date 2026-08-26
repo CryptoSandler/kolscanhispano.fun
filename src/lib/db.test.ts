@@ -130,11 +130,18 @@ describe("db production guard", () => {
 describe("assertTestDatabaseMarker", () => {
   // Dependency-injected fake query, so these cases don't need a second,
   // deliberately unmarked database to prove the sentinel actually gates.
-  it("throws when the marker table does not exist", async () => {
+
+  /** Shaped like a real `pg` driver error: an Error with a SQLSTATE `.code`. */
+  function pgError(code: string, message: string): Error {
+    return Object.assign(new Error(message), { code });
+  }
+
+  it("throws a 'missing migration' message when the marker table does not exist (SQLSTATE 42P01)", async () => {
     const missingTable = async () => {
-      throw new Error('relation "test_database_marker" does not exist');
+      throw pgError("42P01", 'relation "test_database_marker" does not exist');
     };
     await expect(assertTestDatabaseMarker(missingTable)).rejects.toThrow(/stamped test database/);
+    await expect(assertTestDatabaseMarker(missingTable)).rejects.toThrow(/db:migrate:test/);
   });
 
   it("throws when the marker query returns no rows", async () => {
@@ -147,9 +154,28 @@ describe("assertTestDatabaseMarker", () => {
     await expect(assertTestDatabaseMarker(stamped)).resolves.toBeUndefined();
   });
 
-  it("never includes a connection-string fragment in its message", async () => {
+  it(
+    "throws a distinguishable 'connectivity problem' message -- not 'missing migration' -- " +
+      "for any driver error that isn't 42P01",
+    async () => {
+      const connectionRefused = async () => {
+        throw pgError("ECONNREFUSED", "connect ECONNREFUSED 203.0.113.1:5432");
+      };
+      await expect(assertTestDatabaseMarker(connectionRefused)).rejects.toThrow(/connectivity problem/);
+      await expect(assertTestDatabaseMarker(connectionRefused)).rejects.not.toThrow(/is missing/);
+    },
+  );
+
+  it("treats an error with no `.code` at all the same as a connectivity problem, not a missing table", async () => {
+    const noCode = async () => {
+      throw new Error("something the driver didn't shape like a pg error");
+    };
+    await expect(assertTestDatabaseMarker(noCode)).rejects.toThrow(/connectivity problem/);
+  });
+
+  it("never includes a connection-string fragment in its message, even though the code is reported", async () => {
     const failsWithHostname = async () => {
-      throw new Error("getaddrinfo ENOTFOUND ep-invented-branch.us-east-2.aws.neon.tech");
+      throw pgError("ENOTFOUND", "getaddrinfo ENOTFOUND ep-invented-branch.us-east-2.aws.neon.tech");
     };
     let caught: unknown;
     try {
@@ -158,6 +184,9 @@ describe("assertTestDatabaseMarker", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).not.toContain("neon.tech");
+    const message = (caught as Error).message;
+    expect(message).not.toContain("neon.tech");
+    expect(message).not.toContain("getaddrinfo"); // the driver's own message text, not just the hostname
+    expect(message).toContain("ENOTFOUND"); // the code alone is not a secret, and it is the useful part
   });
 });
