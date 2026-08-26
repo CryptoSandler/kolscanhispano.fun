@@ -6,7 +6,7 @@ import {
   type LeaderboardUnit,
 } from "@/lib/leaderboard";
 import { LEADERBOARD_WINDOWS, parseWindow, type LeaderboardWindow } from "@/lib/windows";
-import { LeaderboardTable } from "../leaderboard-table";
+import { LeaderboardTable, USD_CAVEAT } from "../leaderboard-table";
 
 /** The window is relative to now and the rows behind it change as trades land. */
 export const dynamic = "force-dynamic";
@@ -60,7 +60,7 @@ export default async function LeaderboardPage({
     `/leaderboard?window=${next.window ?? window}&unit=${next.unit ?? unit}`;
 
   return (
-    <section className="panel" style={{ marginTop: "var(--gutter)" }}>
+    <section className="panel" style={{ marginTop: "var(--stack)" }}>
       <div className="panel-head">
         <h1 className="headline">Clasificación</h1>
         <span className="label">PnL realizado</span>
@@ -95,39 +95,25 @@ export default async function LeaderboardPage({
       </div>
 
       {/*
-        Spec §4.9, and DESIGN.md's `segmented-window`: the footnote sits under
-        the control, because the reader who is choosing a window is the reader
+        The qualifier line: everything a reader needs to know about the figures
+        before reading them, directly above them.
+
+        `día UTC` is spec §4.9 and DESIGN.md's `segmented-window` — it sits
+        under the control because the reader choosing a window is the reader
         who needs to know where its boundary falls. The community spans UTC−6
         to UTC+1 and any local choice would hand the day to one country.
-      */}
-      <p className="label control-note">día UTC</p>
 
-      {/*
-        Spec §4.1 makes USD derived from the SOL price at each trade, and the
-        derivation has a hole: a trade whose block was not covered by a
-        `sol_price` row contributes nothing to the USD side, while a later,
-        priced sell of the same position still gives up its share of the cost.
-        The USD total is therefore overstated for anyone who traded through a
-        gap. SOL has no equivalent failure, so the caveat appears only where it
-        applies — and as text on the page, not as a tooltip: a figure whose
-        caveat is hidden behind a hover is a figure published without it.
+        The USD caveat is spec §4.1, and it is here **unconditionally**. It
+        used to be conditional on `unit === "usd"`, which left the secondary
+        USD column unlabelled on this page and the home panel's USD column
+        unlabelled entirely; this table always prints a USD amount, as the
+        ranked column or as the one in parentheses. See `USD_CAVEAT`.
       */}
-      {unit === "usd" && (
-        <p className="label control-note">
-          USD derivado del precio de SOL en el momento de cada operación; puede estar incompleto.
-        </p>
-      )}
+      <p className="label control-note">día UTC · {USD_CAVEAT}</p>
 
+      {/* Spec §4.8's definition is written by `LeaderboardTable`, beneath the
+          column it defines. */}
       <LeaderboardTable entries={leaderboard.entries} unit={unit} />
-
-      {/*
-        Spec §4.8: the definition, stated, rather than a bare percentage. A
-        position counts once, when 95 % of what was acquired has been sold, and
-        it is a win if that episode's realized PnL is positive.
-      */}
-      <p className="label table-note">
-        % ganadas = posiciones cerradas ganadoras / posiciones cerradas
-      </p>
     </section>
   );
 }

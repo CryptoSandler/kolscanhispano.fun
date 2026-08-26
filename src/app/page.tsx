@@ -2,7 +2,7 @@ import Link from "next/link";
 import { readFeedPage } from "@/lib/feed";
 import { LEADERBOARD_TOP, readLeaderboard } from "@/lib/leaderboard";
 import { FeedLive } from "./feed-live";
-import { LeaderboardTable } from "./leaderboard-table";
+import { LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
 
 /**
  * Spec §2: the home page is the live trade feed, newest first — and, beneath
@@ -35,33 +35,35 @@ export default async function HomePage() {
   ]);
 
   return (
-    <>
+    <div className="panel" style={{ marginTop: "var(--stack)" }}>
       <FeedLive initialTrades={feed.trades} />
 
-      <section className="panel" style={{ marginTop: "var(--gutter)" }}>
+      <section className="panel-section">
         <div className="panel-head">
           <h2 className="headline">Clasificación</h2>
           <span className="head-aside">
-            <span className="label">Diario · día UTC</span>
+            {/*
+              The qualifiers of the figures below, on the line above them: the
+              window, the UTC boundary (spec §4.9) and the USD caveat
+              (spec §4.1). The caveat is here rather than under the table
+              because the head already carries the other two, and because a
+              second caption line is 16px this page does not have — see the
+              note in `leaderboard-table.tsx`.
+            */}
+            <span className="label">Diario · día UTC · {USD_CAVEAT}</span>
             <Link className="panel-link" href="/leaderboard">
               Ver todo
             </Link>
           </span>
         </div>
 
-        <LeaderboardTable entries={leaderboard.entries} unit="sol" showHeader={false} />
-
         {/*
-          One caption instead of a header row: it names both count columns and
-          states spec §4.8's definition, which a bare `90 %` under a `%
-          ganadas` header would not. It also costs 25px less than the header
-          row, and the whole point of this page is what fits in 900px.
+          No header row: it costs 25px, and the caption `LeaderboardTable`
+          writes beneath itself names both count columns instead. The whole
+          point of this page is what fits in 900px.
         */}
-        <p className="label table-note">
-          Cerradas = ganadas / perdidas · % ganadas = posiciones cerradas ganadoras / posiciones
-          cerradas
-        </p>
+        <LeaderboardTable entries={leaderboard.entries} unit="sol" showHeader={false} />
       </section>
-    </>
+    </div>
   );
 }

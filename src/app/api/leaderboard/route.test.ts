@@ -291,12 +291,35 @@ describe("GET /api/leaderboard", () => {
     expect(entry.winRate).toBe("70.6"); // 12 / 17
   });
 
-  it("reads 0 with no closed positions rather than dividing by zero", async () => {
+  /**
+   * A percentage over an empty denominator is not zero — it is undefined, and
+   * `0 %` is the shape of a real result: it reads exactly like a KOL who
+   * closed nine positions and lost all nine. This is the same failure spec
+   * §4.6 forbids for an unpriceable bag rendered as −100 %. The route carries
+   * `null` and the screen says `sin cierres`.
+   */
+  it("has no win rate at all when nothing closed, rather than 0", async () => {
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([{ kolId: kol.id, day: "2026-08-25", sol: "2", usd: "300" }]);
     const [entry] = await entries("?window=diario");
     expect([entry.wins, entry.losses]).toEqual([0, 0]);
-    expect(entry.winRate).toBe("0");
+    expect(entry.winRate).toBeNull();
+  });
+
+  // The distinction the null exists to preserve: nothing closed, versus
+  // everything closed badly. Both have `wins = 0`.
+  it("distinguishes nothing closed from every closure lost", async () => {
+    const quieto = await insertKol({ slug: "quieto" });
+    const perdedor = await insertKol({ slug: "perdedor" });
+    await insertDaily([
+      { kolId: quieto.id, day: "2026-08-25", sol: "0", usd: "0" },
+      { kolId: perdedor.id, day: "2026-08-25", sol: "-5", usd: "-800", wins: 0, losses: 9 },
+    ]);
+    const bySlug = Object.fromEntries(
+      (await entries("?window=diario")).map((entry) => [entry.kol.slug, entry]),
+    );
+    expect(bySlug.quieto.winRate).toBeNull();
+    expect(bySlug.perdedor.winRate).toBe("0.0");
   });
 
   it("reads 100 when every closed position won", async () => {
@@ -376,7 +399,7 @@ describe("GET /api/leaderboard", () => {
     expect(daily.map((entry) => entry.kol.slug)).toEqual(["activo", "quieto"]);
     expect(daily[1].realizedSol).toBe("0");
     expect(daily[1].realizedUsd).toBe("0");
-    expect(daily[1].winRate).toBe("0");
+    expect(daily[1].winRate).toBeNull();
   });
 
   it("joins the cabal tag and keys the avatar by kol id", async () => {

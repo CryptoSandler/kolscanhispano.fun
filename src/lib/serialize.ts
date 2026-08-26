@@ -130,17 +130,20 @@ export type PublicLeaderboardEntry = {
    * Spec §4.8's figure, as a plain decimal string with at most one fractional
    * digit: *closed positions won / closed positions*, never per sell.
    *
-   * `"0"` when nothing has closed, which is what the row shows beside a
-   * visible `0 / 0`. A dash there would be the missing-data rendering
-   * DESIGN.md reserves for `state-unpriced`, and this is not missing data —
-   * the KOL genuinely closed no position in the window.
+   * **`null` when nothing closed in the window**, because a percentage over an
+   * empty denominator is not zero — it is undefined, and `0 %` is the shape of
+   * a real result. A KOL who closed nothing would read exactly like a KOL who
+   * closed nine positions and lost all nine. That is the same failure this
+   * project refuses elsewhere: spec §4.6 forbids rendering an unpriceable bag
+   * as −100 %, and DESIGN.md's `state-unpriced` exists so a missing number is
+   * said in words instead of being invented. The screen says `sin cierres`.
    */
-  winRate: string;
+  winRate: string | null;
 };
 
 /**
  * `wins / (wins + losses)` as a percentage with one decimal, in integer
- * arithmetic.
+ * arithmetic — or `null` when the denominator is empty.
  *
  * A count is not money, so a float here would not be the sin `decimal.ts`
  * exists to prevent — but `wins * 100 / closed` in doubles gives
@@ -148,9 +151,9 @@ export type PublicLeaderboardEntry = {
  * reason to accept that when `bigint` states the rounding rule outright.
  * Half away from zero, matching every other figure this product rounds.
  */
-function winRateOf(wins: number, losses: number): string {
+function winRateOf(wins: number, losses: number): string | null {
   const closed = BigInt(wins) + BigInt(losses);
-  if (closed <= 0n) return "0";
+  if (closed <= 0n) return null;
   const tenths = (BigInt(wins) * 2000n + closed) / (closed * 2n);
   return `${tenths / 10n}.${tenths % 10n}`;
 }

@@ -34,6 +34,12 @@
   --row-height: 36px;
   --gutter: 16px;
   --panel-padding: 14px;
+  /* Vertical rhythm between stacked blocks. DESIGN.md's `gutter` is the
+     12-column *column* gutter; the space between two panels is not that
+     measurement and does not have to equal it. At 1280x900 the page has
+     18 rows of content and about 250px for everything else, so the
+     difference is eight real pixels. */
+  --stack: 12px;
 
   --radius-sm: 2px;
   --radius-md: 4px;
@@ -87,10 +93,13 @@ a {
 
 /* ---------- layout ---------- */
 
+/* The bottom padding was 48px of dead air below the legal line. On a page
+   whose entire argument is that it fits in 900px, 48px is more than a
+   leaderboard row spent on nothing. */
 .shell {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 0 var(--gutter) 48px;
+  padding: 0 var(--gutter) 16px;
 }
 
 .topbar {
@@ -98,7 +107,7 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: var(--gutter);
-  height: 56px;
+  height: 48px;
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -164,10 +173,14 @@ a {
   background: var(--surface-2);
 }
 
+/* DESIGN.md's `label` token sets no line-height, so it was inheriting the
+   body's 1.45 — loose leading for an 11px uppercase caption, and two pixels a
+   line on a page counted in pixels. */
 .label {
   font-family: var(--font-body);
   font-size: 11px;
   font-weight: 500;
+  line-height: 1.3;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ink-subtle);
@@ -180,12 +193,24 @@ a {
   padding: var(--panel-padding);
 }
 
+/* The home page puts the feed and the leaderboard in **one** panel with a
+   hairline between them, rather than two cards each with its own padding and
+   border. DESIGN.md's depth model is surface steps and hairlines — a divided
+   instrument panel is more its idiom than two floating boxes — and it gives
+   back a padding pair, a border pair and a gap, which at 1280x900 is part of
+   the difference between fitting and not. */
+.panel-section + .panel-section {
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--stack);
+  margin-top: var(--stack);
+}
+
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 /* DESIGN.md's `headline` token, in full: the line-height is 1.2, not the
@@ -281,11 +306,11 @@ a {
 /* `día UTC`, and the USD caveat. Under the control, where the reader choosing
    a window is the reader who needs the boundary. */
 .control-note {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .table-note {
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 /* ---------- leaderboard ---------- */
@@ -448,6 +473,20 @@ a {
   color: var(--stale);
 }
 
+/* A win rate with no closed position behind it. `ink-subtle`, not
+   `semantic-stale`: nothing here is a price we have stopped trusting — there
+   is simply nothing to take a percentage of, and DESIGN.md's rule is that such
+   a cell is said in words rather than filled with a number that reads as a
+   result. */
+.state-none {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+}
+
 /* ---------- feed ---------- */
 
 /* The container reserves its height so the first trade of the session does not
@@ -591,7 +630,7 @@ a.row-age:hover {
 }
 
 .footnote {
-  margin-top: 12px;
+  margin-top: 8px;
   color: var(--ink-subtle);
   font-size: 11px;
   line-height: 1.6;

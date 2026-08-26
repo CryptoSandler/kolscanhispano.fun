@@ -39,47 +39,85 @@ export function LeaderboardTable({
   }
 
   return (
-    <table className="leaderboard">
-      <colgroup>
-        <col className="col-rank" />
-        <col className="col-kol" />
-        <col className="col-closed" />
-        <col className="col-rate" />
-        <col className="col-primary" />
-        <col className="col-secondary" />
-      </colgroup>
-      {showHeader && (
-        <thead>
-          <tr>
-            <th scope="col" className="label">
-              #
-            </th>
-            <th scope="col" className="label">
-              KOL
-            </th>
-            <th scope="col" className="label num-head">
-              Cerradas
-            </th>
-            <th scope="col" className="label num-head">
-              % ganadas
-            </th>
-            <th scope="col" className="label num-head">
-              {unit === "sol" ? "PnL realizado (SOL)" : "PnL realizado (USD)"}
-            </th>
-            <th scope="col" className="label num-head">
-              {unit === "sol" ? "USD" : "SOL"}
-            </th>
-          </tr>
-        </thead>
-      )}
-      <tbody>
-        {entries.map((entry) => (
-          <Row key={entry.kol.slug} entry={entry} unit={unit} />
-        ))}
-      </tbody>
-    </table>
+    <>
+      <table className="leaderboard">
+        <colgroup>
+          <col className="col-rank" />
+          <col className="col-kol" />
+          <col className="col-closed" />
+          <col className="col-rate" />
+          <col className="col-primary" />
+          <col className="col-secondary" />
+        </colgroup>
+        {showHeader && (
+          <thead>
+            <tr>
+              <th scope="col" className="label">
+                #
+              </th>
+              <th scope="col" className="label">
+                KOL
+              </th>
+              <th scope="col" className="label num-head">
+                Cerradas
+              </th>
+              <th scope="col" className="label num-head">
+                % ganadas
+              </th>
+              <th scope="col" className="label num-head">
+                {unit === "sol" ? "PnL realizado (SOL)" : "PnL realizado (USD)"}
+              </th>
+              <th scope="col" className="label num-head">
+                {unit === "sol" ? "USD" : "SOL"}
+              </th>
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {entries.map((entry) => (
+            <Row key={entry.kol.slug} entry={entry} unit={unit} />
+          ))}
+        </tbody>
+      </table>
+
+      {/*
+        Spec §4.8: the definition, stated, rather than a bare percentage. When
+        the header row is off, this line names the count columns as well.
+      */}
+      <p className="label table-note">
+        {showHeader
+          ? "% ganadas = posiciones cerradas ganadoras / posiciones cerradas"
+          : "Cerradas = ganadas / perdidas · % ganadas = posiciones cerradas ganadoras / posiciones cerradas"}
+      </p>
+
+    </>
   );
 }
+
+/**
+ * The USD caveat. One sentence, `es-ES`, and it goes on **every** surface that
+ * renders a USD figure — which is every leaderboard, because the table always
+ * prints a USD amount: as the ranked column when `unit === "usd"`, and as the
+ * secondary column in parentheses when it does not. It used to appear only on
+ * `/leaderboard?unit=usd`, which left the secondary column unlabelled there
+ * and the home panel's USD column unlabelled entirely. An unlabelled figure
+ * that is *systematically overstated* is the exact case the sentence exists
+ * for.
+ *
+ * Why it is overstated: spec §4.1 fixes the USD value of a trade at its block
+ * time. A trade whose block was not covered by a `sol_price` row contributes
+ * nothing to the USD side, while a later, priced sell of the same position
+ * still gives up its share of the cost. SOL has no equivalent failure.
+ *
+ * It is rendered by the callers rather than by this component, and both put it
+ * on the qualifier line **above** the table, beside the window and `día UTC`:
+ * those lines already exist, so the sentence costs no height, and the home
+ * page's whole argument is what fits in 900px. On the page, in DESIGN.md's
+ * `label` token, never behind a hover — a caveat you have to point at is a
+ * figure published without one.
+ */
+export const USD_CAVEAT =
+  "USD derivado del precio de SOL en el momento de cada operación; puede estar incompleto.";
 
 function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: LeaderboardUnit }) {
   const primaryText = unit === "sol" ? entry.realizedSol : entry.realizedUsd;
@@ -126,7 +164,20 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
       <td className="num closed">
         {entry.wins} / {entry.losses}
       </td>
-      <td className="num rate">{formatPercent(entry.winRate)}</td>
+      <td className={entry.winRate === null ? "rate" : "num rate"}>
+        {/*
+          Spec §4.8 counts closed positions, and a rate over none of them is
+          undefined rather than zero. `0 %` beside `0 / 0` looked consistent
+          and still said something false: it is the shape of a KOL who closed
+          nine positions and lost all nine. Said in words, the way DESIGN.md's
+          `state-unpriced` says a missing price.
+        */}
+        {entry.winRate === null ? (
+          <span className="state-none">sin cierres</span>
+        ) : (
+          formatPercent(entry.winRate)
+        )}
+      </td>
       <td className={`num-lg pnl ${direction}`}>{primary}</td>
       <td className="num secondary">({secondary})</td>
     </tr>

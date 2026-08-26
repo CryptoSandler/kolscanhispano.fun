@@ -109,7 +109,13 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
   }, []);
 
   return (
-    <section className="panel" style={{ marginTop: "var(--gutter)" }}>
+    /*
+      A section of a panel, not a panel. The home page wraps this and the
+      leaderboard in one card divided by a hairline; giving the feed its own
+      border and padding cost a padding pair, a border pair and a gap that the
+      900px budget does not have.
+    */
+    <section className="panel-section">
       <div className="panel-head">
         <span className="live">
           <span className="live-dot" aria-hidden="true" />
