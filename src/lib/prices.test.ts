@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { query } from "./db";
 import { buildDexPair, buildDexResponse, buildHeliusAssetResponse } from "./fixtures/dexscreener";
 import { inventAddress } from "./ids";
+import { realFetch } from "./network-guard";
 import { USDC_MINT, WSOL_MINT } from "./parse-swap";
 import {
   DEXSCREENER_BATCH_LIMIT,
@@ -401,8 +402,11 @@ describe("refreshSolPrice", () => {
   // The one live call this suite makes against a third party, per the task
   // brief: DexScreener needs no API key, so this does not depend on any
   // secret being configured. Everything else in this file runs on fixtures.
+  // Goes through the named escape hatch (network-guard.ts's realFetch)
+  // rather than the ambient `fetch`, which every test file's setup now
+  // replaces with one that throws.
   it("resolves a real SOL/USD rate from the live DexScreener API (network)", async () => {
-    const wrote = await refreshSolPrice(fetch, new Date());
+    const wrote = await refreshSolPrice(realFetch, new Date());
     expect(wrote).toBe(true);
     const usd = await solUsdAt(new Date());
     expect(usd).not.toBeNull();
