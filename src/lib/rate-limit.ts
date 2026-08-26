@@ -56,3 +56,41 @@ export async function hitLimit(
   );
   return rows[0].hits > limit;
 }
+
+/** Seven days. See {@link pruneRateLimit}. */
+const DEFAULT_RETENTION_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * Deletes rate-limit windows older than `retentionSeconds` and returns how
+ * many rows went. Nothing else deletes from this table, and the table is
+ * written on every request from every visitor, so without this it is the one
+ * place in the schema that grows without bound.
+ *
+ * Seven days by default: far longer than the longest window any bucket uses
+ * (the webhook's is a minute), short enough that the table stays small, and
+ * long enough that a week of abuse is still there if anyone ever looks. No
+ * caller reads a row this old -- `hitLimit` only ever touches the window it
+ * is in -- so the retention is about forensics, not correctness.
+ *
+ * Cut against `now()`, the server's clock, for the same reason `hitLimit`
+ * floors against it: the rows were written by that clock.
+ *
+ * The count comes back through a CTE rather than `RETURNING 1` so one row
+ * crosses the wire instead of one per deleted window -- the first prune of a
+ * table that has never been pruned is exactly the call where that difference
+ * is large.
+ */
+export async function pruneRateLimit(
+  retentionSeconds: number = DEFAULT_RETENTION_SECONDS,
+): Promise<number> {
+  const rows = await query<{ deleted: number }>(
+    `WITH gone AS (
+       DELETE FROM rate_limit
+        WHERE window_start < now() - make_interval(secs => $1::double precision)
+       RETURNING 1
+     )
+     SELECT count(*)::int AS deleted FROM gone`,
+    [retentionSeconds],
+  );
+  return rows[0].deleted;
+}

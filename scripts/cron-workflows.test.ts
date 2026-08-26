@@ -102,3 +102,38 @@ describe(".github/workflows/parse-pending.yml: pricing step", () => {
     }
   });
 });
+
+/**
+ * The recompute workflow gained a second step in Task 9: the rate_limit
+ * prune. Which workflow it is in and where in it are both properties, not
+ * arrangement. It is not in parse-pending.yml because parsing is the
+ * ingestion critical path, and it is after the recompute rather than before
+ * because a step that fails stops the ones behind it -- a prune that cannot
+ * delete week-old counters must not be able to stop a recompute.
+ */
+describe(".github/workflows/recompute-dirty.yml: prune step", () => {
+  const text = readFileSync(".github/workflows/recompute-dirty.yml", "utf8");
+  const parseText = readFileSync(".github/workflows/parse-pending.yml", "utf8");
+
+  it("runs the prune in the same workflow, after the recompute", () => {
+    const recomputeAt = text.indexOf("npx tsx scripts/recompute-dirty.ts");
+    const pruneAt = text.indexOf("npx tsx scripts/prune-rate-limit.ts");
+    expect(recomputeAt).toBeGreaterThan(-1);
+    expect(pruneAt).toBeGreaterThan(-1);
+    expect(pruneAt).toBeGreaterThan(recomputeAt);
+  });
+
+  it("keeps the prune off the ingestion critical path", () => {
+    expect(parseText).not.toContain("prune-rate-limit");
+  });
+
+  it("gives the prune step the one secret it needs, and no key it cannot use", () => {
+    // Everything from the prune step's own `env:` block to the end of the
+    // file, so a secret declared only on the *recompute* step cannot satisfy
+    // this -- nor be mistaken for one this step was granted.
+    const step = text.slice(text.indexOf("Prune expired rate_limit rows"));
+    expect(step).toMatch(/DATABASE_URL:\s*\$\{\{\s*secrets\.DATABASE_URL\s*\}\}/);
+    expect(step).not.toContain("WALLET_ENC_KEY");
+    expect(step).not.toContain("WALLET_HMAC_KEY");
+  });
+});

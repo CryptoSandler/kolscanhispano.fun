@@ -1,0 +1,21 @@
+-- An index for the only query that reads rate_limit by age:
+-- pruneRateLimit's `DELETE ... WHERE window_start < now() - retention`
+-- (src/lib/rate-limit.ts), run every 15 minutes by
+-- scripts/prune-rate-limit.ts.
+--
+-- 001's PRIMARY KEY (ip_hash, bucket, window_start) does not serve it.
+-- window_start is the third column of that index, so a predicate on it
+-- alone has no prefix to seek on and the delete degrades to a full scan of
+-- a table whose entire purpose is to be written by every request from every
+-- visitor -- which is exactly the table where a full scan gets more
+-- expensive the longer nobody prunes, i.e. precisely when the prune is
+-- needed most.
+--
+-- Deliberately not partial (no `WHERE window_start < ...` predicate): the
+-- cutoff moves with wall-clock time, so any constant baked in here would
+-- stop matching the query the day after it was written.
+--
+-- The write cost is one more index to maintain on a hot insert path. It is
+-- one narrow timestamp column, against an ON CONFLICT insert that is
+-- already probing a three-column primary key on every request.
+CREATE INDEX IF NOT EXISTS rate_limit_window_start_idx ON rate_limit (window_start);

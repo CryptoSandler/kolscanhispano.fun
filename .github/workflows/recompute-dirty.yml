@@ -4,6 +4,15 @@ name: Recompute dirty positions
 # src/lib/pnl.ts's recomputeDirty, run here through
 # scripts/recompute-dirty.ts.
 #
+# Then prunes rate_limit, through scripts/prune-rate-limit.ts. That job is
+# here rather than in parse-pending.yml because parsing is the ingestion
+# critical path and a failure to delete week-old counters has no business
+# standing between a webhook and a trade; it is the SECOND step here for the
+# mirror of the same reason, so a prune failure cannot prevent a recompute
+# either. It has no cadence needs of its own -- the retention is seven days,
+# so any cron that runs at all is often enough -- and the two scripts take
+# different advisory locks, so neither can block the other.
+#
 # This runs the work directly on a GitHub-hosted runner instead of calling an
 # HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
 # its work lives in a deployed app and Vercel Cron cannot send an auth
@@ -72,3 +81,22 @@ jobs:
           fi
 
           npx tsx scripts/recompute-dirty.ts
+
+      - name: Prune expired rate_limit rows
+        env:
+          # DATABASE_URL only, unlike every other step in this repo, and that
+          # is the accurate list rather than a shortened one: the script's
+          # whole import graph is env.ts, lock.ts, lock-key.ts, db.ts and
+          # rate-limit.ts, and the only WALLET_* read among them is inside
+          # rate-limit.ts's ipHash -- which pruneRateLimit never calls.
+          # wallets.ts, the module that asserts both keys at load time, is
+          # not on that graph at all. Handing this step keys it cannot use
+          # would only widen what a compromised step could exfiltrate.
+          #
+          # The emptiness guard lives on the recompute step above, which runs
+          # first in the same job with the same secret: if DATABASE_URL were
+          # missing, this step would never be reached.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npx tsx scripts/prune-rate-limit.ts

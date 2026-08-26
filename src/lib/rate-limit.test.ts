@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { query } from "./db";
-import { hitLimit, ipHash } from "./rate-limit";
+import { hitLimit, ipHash, pruneRateLimit } from "./rate-limit";
 
 beforeEach(async () => {
   await query("TRUNCATE rate_limit");
@@ -109,5 +109,73 @@ describe("hitLimit", () => {
          FROM rate_limit`,
     );
     expect(row.on_server_window).toBe(true);
+  });
+});
+
+/**
+ * `rate_limit` is the one table here that every request from every visitor
+ * writes to and nothing ever reads back beyond its own window, so these cases
+ * are about the only thing keeping it from growing without bound.
+ *
+ * Rows are inserted directly rather than through `hitLimit`, which can only
+ * ever write a window near the server's now(): what needs seeding is a row
+ * old enough to prune, and `now() - interval` says that in one statement
+ * without pretending the days in between happened.
+ */
+async function seedWindow(bucket: string, daysAgo: number): Promise<void> {
+  await query(
+    `INSERT INTO rate_limit (ip_hash, bucket, window_start, hits)
+     VALUES ($1, $2, now() - make_interval(days => $3::int), 1)`,
+    [ipHash("203.0.113.7"), bucket, daysAgo],
+  );
+}
+
+async function remainingBuckets(): Promise<string[]> {
+  const rows = await query<{ bucket: string }>("SELECT bucket FROM rate_limit ORDER BY bucket");
+  return rows.map((row) => row.bucket);
+}
+
+describe("pruneRateLimit", () => {
+  it("deletes the windows older than the retention it is given and reports how many", async () => {
+    await seedWindow("stale", 3);
+    await seedWindow("fresh", 1);
+
+    expect(await pruneRateLimit(2 * 24 * 3600)).toBe(1);
+    expect(await remainingBuckets()).toEqual(["fresh"]);
+  });
+
+  it("keeps a week when given no retention", async () => {
+    await seedWindow("eight-days", 8);
+    await seedWindow("six-days", 6);
+
+    expect(await pruneRateLimit()).toBe(1);
+    expect(await remainingBuckets()).toEqual(["six-days"]);
+  });
+
+  // The count is the whole output of the cron line, so a prune that silently
+  // deletes nothing and a prune that had nothing to delete must not be told
+  // apart by the caller having to guess.
+  // Not an EXPLAIN assertion: the planner will seq-scan a table this small
+  // whatever indexes exist, so a plan check here would pin the fixture size
+  // rather than the schema. What is worth pinning is that the index the
+  // delete needs at production size is actually in the database
+  // (migrations/007_rate_limit_prune_idx.sql) -- the PRIMARY KEY does not
+  // serve it, window_start being its third column, and nothing else here
+  // would ever notice it missing.
+  it("has an index the age predicate can range-scan", async () => {
+    const rows = await query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+        WHERE tablename = 'rate_limit' AND indexname = 'rate_limit_window_start_idx'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].indexdef).toContain("(window_start)");
+  });
+
+  it("deletes nothing and returns 0 when every window is inside the retention", async () => {
+    await seedWindow("yesterday", 1);
+    await seedWindow("two-days", 2);
+
+    expect(await pruneRateLimit()).toBe(0);
+    expect(await remainingBuckets()).toEqual(["two-days", "yesterday"]);
   });
 });
