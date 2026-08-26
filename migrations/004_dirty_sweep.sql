@@ -1,0 +1,14 @@
+-- One-off sweep, not a schema change. Batch 1's fee correction
+-- (src/lib/pnl.ts, applyTrade) changed what a replay computes -- a buy now
+-- costs sol_amount + fee_sol and a sell nets sol_amount - fee_sol -- but
+-- replayPosition clears `dirty` the moment it finishes. Every position
+-- already replayed before that fix is therefore clean, and
+-- scripts/recompute-dirty.ts's cron only ever looks at `WHERE dirty`: it
+-- will never revisit them on its own. Their realized_sol overstates by
+-- their trades' fees and a marginal round trip can be recorded as a win
+-- that was actually a loss.
+--
+-- Marking every position dirty here, once, is what makes the cron correct
+-- them. This file does nothing else, and it is never edited again once
+-- applied -- see scripts/migrate.mts.
+UPDATE position SET dirty = TRUE;
