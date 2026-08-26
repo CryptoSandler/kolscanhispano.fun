@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { query } from "./db";
-import { buildSwapPayload } from "./fixtures/swap";
+import { parseDecimal } from "./decimal";
+import { buildObservedSwapPayload, buildSwapPayload } from "./fixtures/swap";
 import { inventAddress, inventSignature } from "./ids";
 import { addWallet } from "./wallets";
 import {
@@ -242,7 +243,8 @@ function splitTokenSide(address: string, theMint: string): EnhancedTx {
 
 /**
  * A genuine two-leg swap whose second leg sits on its own `accountData`
- * entry. Truth: `unsupported_quote` — a swap this batch cannot price at all.
+ * entry. Both mints are ordinary tokens, so the truth is
+ * `unsupported_quote_token_token` — a swap this parser has no price for.
  */
 function twoLegViaAta(address: string, theMint: string, otherMint: string): EnhancedTx {
   const payload = buildSwapPayload({
@@ -508,7 +510,7 @@ describe("parseSwap", () => {
     expect(parseErrorFor("stable_rotation")).toBeNull();
   });
 
-  it("returns null for a token-to-token swap and flags it as an unsupported quote", () => {
+  it("returns null for a token-to-token swap and names it as its own unsupported quote", () => {
     const otherMint = inventAddress();
     const payload = buildSwapPayload({
       wallet: wallet.address,
@@ -522,7 +524,10 @@ describe("parseSwap", () => {
     });
 
     expect(parseSwap(payload, wallet)).toBeNull();
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+    // A named reason, distinct from the catch-all: neither leg is SOL/WSOL
+    // nor the stablecoin, so spec §4.3's implied-SOL-value close-and-open has
+    // no price to work from and no second index to store the open under.
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_token_token");
   });
 
   it("does not flag an ordinary single-mint swap as an unsupported quote", () => {
@@ -578,7 +583,7 @@ describe("parseSwap", () => {
       isFeePayer: true,
       extraTokenChanges: [{ mint: otherMint, decimals: 6, rawTokenAmount: "2" }],
     });
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_token_token");
   });
 
   it("still flags two comparably-sized legs as an unsupported quote", () => {
@@ -593,7 +598,7 @@ describe("parseSwap", () => {
       isFeePayer: true,
       extraTokenChanges: [{ mint: otherMint, decimals: 6, rawTokenAmount: "1500000" }],
     });
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_token_token");
   });
 
   it("does not fabricate a near-zero cost basis from a token<->token swap with a lopsided count ratio", () => {
@@ -620,7 +625,7 @@ describe("parseSwap", () => {
     });
 
     expect(parseSwap(payload, wallet)).toBeNull();
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_token_token");
   });
 
   it("does not fabricate a trade from a meme<->USDC swap with a ~200,000x count ratio", () => {
@@ -642,8 +647,12 @@ describe("parseSwap", () => {
       extraTokenChanges: [{ mint: USDC_MINT, decimals: 6, rawTokenAmount: "-50000000" }], // 50 USDC out
     });
 
+    // Task 7 gave this shape a valuation, and the property the test was
+    // written for is unchanged: the USDC leg is never dropped as "dust"
+    // relative to a much larger count. With no rate offered it is declined
+    // for the rate, not silently reduced to a one-leg trade.
     expect(parseSwap(payload, wallet)).toBeNull();
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_no_rate");
   });
 
   it("does not drop a sole 1-raw-unit leg: it can be the entire trade, not a router remainder", () => {
@@ -1238,10 +1247,12 @@ describe("parseSwap", () => {
     // its own entry:
     //   trade{token_amount 2, sol_amount 1, price_sol 0.5}, position dirty,
     //   parsed_at SET, parse_error NULL
-    // — a written trade where the truth is `unsupported_quote`, i.e. a swap
-    // this batch cannot price at all.
+    // — a written trade where the truth is `unsupported_quote_token_token`,
+    // i.e. a swap this parser has no price for.
     const otherMint = inventAddress();
-    expect(evaluateSwap(twoLegViaAta(wallet.address, mint, otherMint), wallet).outcome).toBe("unsupported_quote");
+    expect(evaluateSwap(twoLegViaAta(wallet.address, mint, otherMint), wallet).outcome).toBe(
+      "unsupported_quote_token_token",
+    );
 
     const hidden = breakAta(twoLegViaAta(wallet.address, mint, otherMint), (entry) => {
       (entry.tokenBalanceChanges as Record<string, unknown>[])[0].userAccount = "";
@@ -1491,6 +1502,239 @@ describe("two swaps of one mint in one transaction", () => {
     expect(trade.tokenAmount).toBeCloseTo(40, 9);
     expect(trade.solAmount).toBeCloseTo(0.3, 9);
     expect(trade.instructionIndex).toBe(0);
+  });
+});
+
+/**
+ * Spec §4.3's two remaining quote shapes. Every fixture here is built with
+ * `buildObservedSwapPayload`, in the layout task 6 measured Helius to emit —
+ * each balance change on its own `accountData` entry, the wallet named only
+ * in `userAccount`, and the wallet's own entry carrying lamports with an
+ * empty `tokenBalanceChanges`.
+ *
+ * `RATE` is 231.71 USD/SOL, chosen so the worked numbers are exact: 231.71
+ * USDC is one whole SOL at it, and 115.855 USDC is half of one. Nothing here
+ * relies on a rounding that happens to land, and the arithmetic is integer
+ * throughout (`raw * ONE * 1e9 / (10**decimals * solUsd)`), so "exact" is a
+ * claim the assertions can make with `toBe`, not `toBeCloseTo`.
+ */
+describe("stablecoin-quoted swaps (spec §4.3)", () => {
+  const RATE = parseDecimal("231.71");
+
+  /** The SOL-quoted buy every USDC-quoted one below is measured against: 1 SOL for 2 tokens. */
+  const solQuotedBuy = () =>
+    buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -1_000_005_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [{ mint, decimals: 6, rawTokenAmount: "2000000" }],
+    });
+
+  /** The same purchase paid for in USDC: 231.71 USDC out, 2 tokens in, gas only. */
+  const usdcQuotedBuy = (order: "token-first" | "stable-first" = "token-first") => {
+    const token = { mint, decimals: 6, rawTokenAmount: "2000000" };
+    const stable = { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" };
+    return buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000, // gas only; the quote side is the USDC leg
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: order === "token-first" ? [token, stable] : [stable, token],
+    });
+  };
+
+  it("values a USDC-quoted buy as the SOL-quoted buy of equal value, exactly", () => {
+    // The property: normalising at the block's rate must produce the trade
+    // the wallet would have got had it paid in SOL. Not "about the same" —
+    // the same object.
+    const viaUsdc = parseSwap(usdcQuotedBuy(), wallet, RATE);
+    const viaSol = parseSwap(solQuotedBuy(), wallet);
+
+    expect(viaUsdc).toEqual(viaSol);
+    expect(viaUsdc).toEqual({
+      mint,
+      side: "buy",
+      tokenAmount: 2,
+      solAmount: 1,
+      feeSol: 0.000005,
+      instructionIndex: 0,
+    });
+  });
+
+  it("does not depend on which leg the payload lists first", () => {
+    // `evaluateSwap` finds the stable leg by mint, not by position. A version
+    // that took `legs[0]` as the traded side would price the token leg as a
+    // stablecoin here and report `tokenAmount 231.71`.
+    expect(parseSwap(usdcQuotedBuy("stable-first"), wallet, RATE)).toEqual(
+      parseSwap(usdcQuotedBuy("token-first"), wallet, RATE),
+    );
+    expect(parseSwap(usdcQuotedBuy("stable-first"), wallet, RATE)!.tokenAmount).toBe(2);
+  });
+
+  it("values a USDC-quoted sell, with the proceeds on the right side", () => {
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-2000000" }, // 2 tokens out
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "231710000" }, // 231.71 USDC in
+      ],
+    });
+    expect(parseSwap(payload, wallet, RATE)).toEqual({
+      mint,
+      side: "sell",
+      tokenAmount: 2,
+      solAmount: 1,
+      feeSol: 0.000005,
+      instructionIndex: 0,
+    });
+  });
+
+  it("counts ATA rent in a stablecoin-quoted cost basis, exactly as it does in a SOL-quoted one", () => {
+    // Spec §4.4: the SOL side is the wallet's *actual net delta*, which is
+    // why the persistent-WSOL buy sums to 1.00203928 rather than 1. The
+    // stablecoin path reaches the same rule against the same quantity: the
+    // normalised stable value is summed into the native delta, never
+    // substituted for it.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(5_000 + 2_039_280), // gas + one ATA's rent
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+    expect(parseSwap(payload, wallet, RATE)!.solAmount).toBe(1.00203928);
+  });
+
+  it("sums both halves of a swap paid partly in SOL and partly in USDC", () => {
+    // The monotonicity trap in this file's header, in its newest form:
+    // taking only the stable half would halve the cost basis, and every
+    // check below it would still agree the result is a valid buy.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(500_000_000 + 5_000), // half a SOL, plus gas
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-115855000" }, // 115.855 USDC = the other half
+      ],
+    });
+    expect(parseSwap(payload, wallet, RATE)).toEqual(parseSwap(solQuotedBuy(), wallet));
+  });
+
+  it("declines a stablecoin-quoted swap with no rate, and never at a default", () => {
+    expect(parseSwap(usdcQuotedBuy(), wallet)).toBeNull();
+    expect(evaluateSwap(usdcQuotedBuy(), wallet).outcome).toBe("unsupported_quote_no_rate");
+    expect(evaluateSwap(usdcQuotedBuy(), wallet, null).outcome).toBe("unsupported_quote_no_rate");
+  });
+
+  it("declines a stablecoin-quoted swap at a rate that is not a positive number", () => {
+    // A zero rate would divide by zero; a negative one would flip the side
+    // of the trade. Neither is a rate, and neither is clamped into one.
+    expect(evaluateSwap(usdcQuotedBuy(), wallet, 0n).outcome).toBe("unsupported_quote_no_rate");
+    expect(evaluateSwap(usdcQuotedBuy(), wallet, parseDecimal("-231.71")).outcome).toBe(
+      "unsupported_quote_no_rate",
+    );
+  });
+
+  it("refuses a stablecoin leg worth less than a lamport rather than pricing the swap off ATA rent", () => {
+    // The batch-1 fabrication, reached through the new door. At an absurd
+    // rate the 2-raw-unit USDC leg normalises to exactly 0 lamports, which
+    // would leave the 2,039,280 lamports of ATA rent as the entire "SOL
+    // side" and write `buy tokenAmount 2, solAmount 0.00203928,
+    // price_sol 0.00101964` — the round-2 cost basis, with a stablecoin
+    // quote's name on it.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(5_000 + 2_039_280),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-2" }, // 2/1,000,000 USDC: above the dust floor
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, parseDecimal("1000000000000")).outcome).toBe("unsupported_quote");
+    expect(parseSwap(payload, wallet, parseDecimal("1000000000000"))).toBeNull();
+  });
+
+  it("rejects a stablecoin-quoted swap whose two legs moved the same way", () => {
+    // Tokens in and USDC in: not a swap between them at all. The direction
+    // rule is the same one a SOL-quoted swap meets, applied to the same
+    // summed quantity, so there is no second copy of it to drift.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "231710000" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, RATE).outcome).toBe("sol_leg_wrong_direction");
+  });
+
+  it("still treats a sole USDC leg as a rotation, rate or no rate (spec §4.3)", () => {
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -1_000_005_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [{ mint: USDC_MINT, decimals: 6, rawTokenAmount: "231710000" }],
+    });
+    expect(evaluateSwap(payload, wallet, RATE).outcome).toBe("stable_rotation");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("stable_rotation");
+  });
+
+  it("does not let a rate turn a token<->token swap into a valued trade", () => {
+    // A rate prices the stablecoin leg and nothing else. Neither of these
+    // mints is one, so the rate is irrelevant and the swap keeps its own
+    // named refusal.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "-3000000000" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, RATE).outcome).toBe("unsupported_quote_token_token");
+    expect(parseSwap(payload, wallet, RATE)).toBeNull();
+  });
+
+  it("does not pick a pair out of three legs, even when one of them is the stablecoin", () => {
+    // Two token legs and a USDC leg: any valuation would have to choose
+    // which token leg the USDC paid for, and nothing in the payload says.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "3000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, RATE).outcome).toBe("unsupported_quote");
+  });
+
+  it("names each refusal distinctly, and records all three", () => {
+    // The three ways a two-or-more-leg swap can be declined must be
+    // distinguishable on the row, not collapsed into one string.
+    expect(parseErrorFor("unsupported_quote")).toBe("unsupported_quote");
+    expect(parseErrorFor("unsupported_quote_no_rate")).toBe("unsupported_quote_no_rate");
+    expect(parseErrorFor("unsupported_quote_token_token")).toBe("unsupported_quote_token_token");
   });
 });
 
@@ -1803,7 +2047,7 @@ describe("parsePending", () => {
       "SELECT parsed_at, parse_error FROM raw_tx",
     );
     expect(raw.parsed_at).not.toBeNull(); // never retried again (task 9 scope note)
-    expect(raw.parse_error).toBe("unsupported_quote");
+    expect(raw.parse_error).toBe("unsupported_quote_token_token");
   });
 
   it("does not fabricate a trade end to end for a lopsided-count token<->token swap", async () => {
@@ -1828,7 +2072,7 @@ describe("parsePending", () => {
 
     expect(await query("SELECT id FROM trade")).toHaveLength(0);
     const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
-    expect(raw.parse_error).toBe("unsupported_quote");
+    expect(raw.parse_error).toBe("unsupported_quote_token_token");
     expect(raw.parse_error).not.toBeNull();
   });
 
@@ -1848,10 +2092,165 @@ describe("parsePending", () => {
 
     await parsePending();
 
+    // `sol_price` is truncated in `beforeEach`, so there is no rate for this
+    // block's minute and the stablecoin quote cannot be normalised. Declined
+    // for the rate — and requeueably, since a row for that minute can still
+    // arrive — never reduced to a one-leg trade priced off the gas.
     expect(await query("SELECT id FROM trade")).toHaveLength(0);
-    const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
-    expect(raw.parse_error).toBe("unsupported_quote");
-    expect(raw.parse_error).not.toBeNull();
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("unsupported_quote_no_rate");
+    expect(raw.parsed_at).toBeNull();
+  });
+
+  it("values a USDC-quoted buy at the block's own rate and conserves the value in USD", async () => {
+    const minute = new Date("2026-08-25T12:00:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [minute]);
+
+    const payload = buildObservedSwapPayload({
+      wallet: walletAddress,
+      nativeChangeLamports: -5_000, // gas only: the quote side is the USDC leg
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(minute.getTime() / 1000),
+      slot: 777,
+      legs: [
+        { mint: testMint, decimals: 6, rawTokenAmount: "2000000" }, // 2 tokens in
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" }, // 231.71 USDC out
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: minute, slot: 777, payload, source: "webhook" });
+
+    expect(await parsePending()).toBe(1);
+
+    const [trade] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(trade.mint).toBe(testMint); // the token leg, never the stablecoin one
+    expect(trade.side).toBe("buy");
+    // Exact stored strings: `numeric` columns, and the whole point of the
+    // path is that no double touches them.
+    expect(trade.token_amount).toBe("2");
+    expect(trade.sol_amount).toBe("1");
+    expect(trade.price_sol).toBe("0.5");
+    expect(trade.sol_usd).toBe("231.71");
+    // Conservation, and the sharpest assertion in this file: the trade was
+    // normalised USDC -> SOL at 231.71 and then valued SOL -> USD at 231.71,
+    // so `usd_amount` must come back to the exact number of USDC the wallet
+    // actually spent. A rate used on only one of the two legs, or a
+    // different rate on each, breaks this and nothing else would notice.
+    expect(trade.usd_amount).toBe("231.71");
+    expect(trade.price_usd).toBe("115.855");
+    expect(trade.instruction_index).toBe(0);
+
+    // One trade, not two: the stablecoin leg is folded into the token leg's
+    // SOL side, so the constant `instruction_index` still cannot collide.
+    expect(await query("SELECT id FROM trade")).toHaveLength(1);
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parsed_at).not.toBeNull();
+    expect(raw.parse_error).toBeNull();
+  });
+
+  it("declines a stablecoin quote whose minute has no rate, even with a rate five minutes earlier", async () => {
+    // The certainty check, end to end. `solUsdAt`'s `minute <= …` bound
+    // would answer this with the 11:55 row and write a cost basis at a rate
+    // measured five minutes before the block; `solUsdForMinute` asks for the
+    // containing minute and gets nothing, which is the truthful answer.
+    const minute = new Date("2026-08-25T12:00:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [
+      new Date("2026-08-25T11:55:00.000Z"),
+    ]);
+
+    const payload = buildObservedSwapPayload({
+      wallet: walletAddress,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(minute.getTime() / 1000),
+      legs: [
+        { mint: testMint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: minute, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("unsupported_quote_no_rate");
+    // Requeueable, not settled: the missing ingredient is a row in
+    // `sol_price`, and one can still arrive.
+    expect(raw.parsed_at).toBeNull();
+  });
+
+  it("parses a rate-declined stablecoin quote once the rate for its minute arrives", async () => {
+    const minute = new Date("2026-08-25T12:00:00.000Z");
+    const payload = buildObservedSwapPayload({
+      wallet: walletAddress,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(minute.getTime() / 1000),
+      legs: [
+        { mint: testMint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: minute, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+
+    // The rate for that minute lands (a per-minute series, a historical
+    // import), and the row is requeued the documented way: by clearing
+    // `parse_error`. `parsed_at` was never stamped, so nothing had to be
+    // undone.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [minute]);
+    await query("UPDATE raw_tx SET parse_error = NULL");
+
+    expect(await parsePending()).toBe(1);
+
+    const [trade] = await query<Record<string, unknown>>("SELECT * FROM trade");
+    expect(trade.sol_amount).toBe("1");
+    expect(trade.usd_amount).toBe("231.71");
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parsed_at).not.toBeNull();
+    expect(raw.parse_error).toBeNull();
+  });
+
+  it("does not read the transaction header for a row that produces no trade for anyone", async () => {
+    // The two-pass lookup reads `readTradeHeader` only once a wallet's leg is
+    // known to be a stablecoin quote. A row with an unreadable `timestamp`
+    // that concerns no tracked wallet must still parse without complaint —
+    // if it did not, every delivery carrying a broken header would become
+    // `malformed_payload` the moment task 7 shipped.
+    const payload = buildObservedSwapPayload({
+      wallet: inventAddress(), // nobody we track
+      nativeChangeLamports: -1_000_005_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+    delete (payload as Partial<EnhancedTx>).timestamp;
+    await storeRawTx({ signature: inventSignature(), blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBeNull();
+    expect(raw.parsed_at).not.toBeNull();
   });
 
   it("records a wrong-direction SOL leg without inserting a trade", async () => {
@@ -1965,7 +2364,7 @@ describe("parsePending", () => {
     expect(trades[0].kol_id).toBe(kolId); // wallet A's clean trade was written
 
     const [raw] = await query<{ parse_error: string | null }>("SELECT parse_error FROM raw_tx");
-    expect(raw.parse_error).toBe("unsupported_quote"); // wallet B's drop is not silent
+    expect(raw.parse_error).toBe("unsupported_quote_token_token"); // wallet B's drop is not silent
   });
 
   it("does not let a malformed row block a later good one from being parsed", async () => {
@@ -2624,7 +3023,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "token<->token swap (two comparable real legs)",
-      outcome: "unsupported_quote",
+      outcome: "unsupported_quote_token_token",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -2668,7 +3067,7 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
     },
     {
       name: "two real legs of lopsided count (no dust involved)",
-      outcome: "unsupported_quote",
+      outcome: "unsupported_quote_token_token",
       build: () =>
         buildSwapPayload({
           wallet: walletAddress,
@@ -2679,6 +3078,45 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
           feeLamports: 5_000,
           isFeePayer: true,
           extraTokenChanges: [{ mint: inventAddress(), decimals: 6, rawTokenAmount: "-500000" }],
+        }),
+    },
+    {
+      // Task 7. `sol_price` is truncated in this block's `beforeEach`, so
+      // there is no rate for the block's minute and §4.3's normalisation has
+      // nothing to normalise at. The shape that must NOT happen here is the
+      // USDC leg being dropped and the remaining token leg priced off the
+      // 2,039,280 lamports of ATA rent below it.
+      name: "USDC-quoted buy with no sol_price row for the block's minute",
+      outcome: "unsupported_quote_no_rate",
+      build: () =>
+        buildObservedSwapPayload({
+          wallet: walletAddress,
+          nativeChangeLamports: -(5_000 + 2_039_280),
+          feeLamports: 5_000,
+          isFeePayer: true,
+          legs: [
+            { mint: inventAddress(), decimals: 6, rawTokenAmount: "2000000" },
+            { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-300000000" },
+          ],
+        }),
+    },
+    {
+      // The catch-all keeps a shape of its own now that the two named
+      // refusals have theirs: three genuine legs, which no rule here can
+      // pair up.
+      name: "three genuine legs (no rule can say which pair is the swap)",
+      outcome: "unsupported_quote",
+      build: () =>
+        buildObservedSwapPayload({
+          wallet: walletAddress,
+          nativeChangeLamports: -5_000,
+          feeLamports: 5_000,
+          isFeePayer: true,
+          legs: [
+            { mint: inventAddress(), decimals: 6, rawTokenAmount: "2000000" },
+            { mint: inventAddress(), decimals: 6, rawTokenAmount: "-1000000" },
+            { mint: inventAddress(), decimals: 6, rawTokenAmount: "-3000000" },
+          ],
         }),
     },
     {
@@ -3155,8 +3593,13 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       const wroteTrade = trades.length > 0;
       const hasError = raw.parse_error !== null;
 
-      // An unreadable payload stays requeueable; everything else is settled.
-      expect(raw.parsed_at === null).toBe(outcome === "malformed_payload");
+      // Requeueable — `parsed_at` left NULL — for exactly the two outcomes
+      // whose missing ingredient can still arrive: a payload a parser fix may
+      // be able to read, and a stablecoin quote waiting on a `sol_price` row
+      // for its minute. Everything else is a decision about the payload
+      // itself and is settled.
+      const requeueable = outcome === "malformed_payload" || outcome === "unsupported_quote_no_rate";
+      expect(raw.parsed_at === null).toBe(requeueable);
 
       // The standing invariant: a shape ends as a trade, or as a recorded
       // error, or in one of the few outcomes that are silent by design and
@@ -3183,6 +3626,8 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       stable_rotation: true,
       no_sol_leg: true,
       unsupported_quote: true,
+      unsupported_quote_no_rate: true,
+      unsupported_quote_token_token: true,
       sol_leg_wrong_direction: true,
     };
     const covered = new Set<string>(shapes.map((s) => s.outcome));

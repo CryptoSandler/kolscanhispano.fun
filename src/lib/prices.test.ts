@@ -9,6 +9,7 @@ import {
   parseHeliusAsset,
   refreshSolPrice,
   solUsdAt,
+  solUsdForMinute,
   tokenMetadata,
   tryParsePair,
   valueTrade,
@@ -345,6 +346,42 @@ describe("solUsdAt", () => {
 
     expect(await solUsdAt(new Date("2026-01-01T00:02:00.000Z"))).toBe(100n * 10n ** 18n);
     expect(await solUsdAt(new Date("2026-01-01T00:10:00.000Z"))).toBe(120n * 10n ** 18n);
+  });
+});
+
+describe("solUsdForMinute", () => {
+  it("returns the rate recorded for the containing minute itself", async () => {
+    const minute = new Date("2026-01-01T00:05:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '120')", [minute]);
+
+    // Any instant inside the minute resolves to it: the query truncates the
+    // argument the same way `refreshSolPrice` truncates what it writes.
+    expect(await solUsdForMinute(minute)).toBe(120n * 10n ** 18n);
+    expect(await solUsdForMinute(new Date("2026-01-01T00:05:59.999Z"))).toBe(120n * 10n ** 18n);
+  });
+
+  it("returns null for a minute with no row of its own, however recent the last one is", async () => {
+    // The whole reason this exists beside `solUsdAt`. Here `solUsdAt` answers
+    // 100 for every one of these minutes, from a row measured up to five
+    // minutes earlier. That is fine for `usd_amount`, which re-renders an
+    // already-exact SOL figure, and not fine for `parse-swap.ts`'s
+    // stablecoin normalisation, where the rate *becomes* the SOL figure, the
+    // cost basis and the leaderboard rank. A miss must be a miss.
+    const early = new Date("2026-01-01T00:00:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '100')", [early]);
+
+    expect(await solUsdForMinute(new Date("2026-01-01T00:01:00.000Z"))).toBeNull();
+    expect(await solUsdForMinute(new Date("2026-01-01T00:05:00.000Z"))).toBeNull();
+    expect(await solUsdAt(new Date("2026-01-01T00:05:00.000Z"))).toBe(100n * 10n ** 18n);
+
+    expect(await solUsdForMinute(early)).toBe(100n * 10n ** 18n);
+  });
+
+  it("never reaches forward to a later row either", async () => {
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '100')", [
+      new Date("2026-01-01T00:10:00.000Z"),
+    ]);
+    expect(await solUsdForMinute(new Date("2026-01-01T00:05:00.000Z"))).toBeNull();
   });
 });
 

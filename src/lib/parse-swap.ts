@@ -3,10 +3,40 @@
  * Spec §4.3 (what counts as a trade) and §4.4 (fees) are the binding
  * authority for the arithmetic here.
  *
- * Batch 1 parses SOL-quoted swaps only. A swap whose non-token side is not
- * SOL/WSOL is recorded on the `raw_tx` row as `parse_error = 'unsupported_quote'`
- * rather than guessed at (stablecoin- and token-to-token-quoted swaps get their
- * own task).
+ * Batch 1 parsed SOL-quoted swaps only. Batch 2 task 7 adds spec §4.3's
+ * **stablecoin-quoted** swap: a USDC leg against a token leg is normalised to
+ * SOL at the SOL/USD rate recorded for the block's own minute, and from there
+ * it is the same trade a SOL-quoted swap of equal value would have been.
+ * Everything else with two or more legs is still refused rather than guessed
+ * at, each with its own named reason (see `SwapOutcome`).
+ *
+ * **The rate that valuation is allowed to use, and the one it is not.** It
+ * comes from `prices.ts`'s `solUsdForMinute` — the row for the block's
+ * *containing* minute, spec §5.7's own words — never from `solUsdAt`, whose
+ * `minute <= …` bound answers with whatever row happened to be most recent.
+ * The difference is what the number becomes: `solUsdAt` feeds `usd_amount`, a
+ * second rendering of a SOL figure already measured exactly, where a stale
+ * rate is slightly off and nothing else moves; here the rate *is* the SOL
+ * figure, and a stale one writes a cost basis, a `price_sol`, a position and
+ * a leaderboard rank off a price no source reported for that block. So a
+ * missing row is a refusal (`unsupported_quote_no_rate`), left requeueable so
+ * a later per-minute series can fill it in. Nothing is written from a rate
+ * this parser had to reach backwards in time for.
+ *
+ * **Token ↔ token stays declined, and not for want of trying.** Spec §4.3
+ * would have it close leg A and open leg B at the implied SOL value, and two
+ * independent things block that here. There is no price for either leg *at
+ * the block*: this project stores one mutable current price per mint
+ * (`token.price_sol`, with an `updated_at` that moves), no history, so valuing
+ * an old block from it would make the same row parse to different numbers
+ * depending on when the parser happened to run — a guess that also breaks the
+ * idempotent reparse. And the two trades it would produce cannot both be
+ * stored: the unique index is `(signature_hmac, instruction_index, wallet_id)`
+ * and task 6 measured that the payload carries no per-instruction detail to
+ * index by, so the second row would either collide and be silently dropped by
+ * `ON CONFLICT DO NOTHING` or be written under an invented index. Recorded as
+ * `unsupported_quote_token_token`, which is a distinct, countable reason
+ * rather than a shrug.
  *
  * **Read this first: every classification in this file is monotone under
  * dropped data, so no check anywhere can substitute for measuring the
@@ -111,7 +141,7 @@ import { aadFor, decrypt, encrypt } from "./crypto";
 import { ONE, formatDecimal, mulDiv, parseDecimal } from "./decimal";
 import { query, withTransaction } from "./db";
 import { USDC_MINT, WSOL_MINT } from "./mints";
-import { solUsdAt, valueTrade } from "./prices";
+import { solUsdAt, solUsdForMinute, valueTrade } from "./prices";
 import { findWalletByAddress, type WalletRow } from "./wallets";
 
 /**
@@ -124,6 +154,9 @@ export { USDC_MINT, WSOL_MINT } from "./mints";
 
 /** SOL, and therefore WSOL, has 9 decimals: one raw WSOL unit is one lamport. */
 const LAMPORT_DECIMALS = 9;
+
+/** Lamports in one SOL, as an exact integer. Every SOL quantity here is lamports. */
+const LAMPORTS_PER_SOL = 10n ** BigInt(LAMPORT_DECIMALS);
 
 /**
  * Upper bound on a payload-reported `decimals` before it is treated as
@@ -237,14 +270,30 @@ export type ParsedTrade = {
  *   delta is exactly zero, so spec §4.3's "SOL/WSOL balance moves against a
  *   SPL token balance" is not satisfied — a transfer or an airdrop, not a
  *   swap. Not a trade, no error.
- * - `unsupported_quote`: a real swap this batch does not parse (stablecoin-
- *   or token-to-token-quoted), or two-or-more genuine legs the parser has no
- *   price data to arbitrate between.
+ * - `unsupported_quote`: three or more genuine legs, which no rule here can
+ *   arbitrate between; or a stablecoin leg whose normalised value is under
+ *   one lamport, so the only SOL left to price the swap with would be
+ *   residue. The catch-all of the refusals, and deliberately the *narrowest*
+ *   of them now that the two shapes below have names of their own.
+ * - `unsupported_quote_no_rate`: a stablecoin-quoted swap at a block whose
+ *   minute has no `sol_price` row, so §4.3's "normalised to SOL at the rate
+ *   of that block" has no rate to normalise at. **Requeueable** (see
+ *   `REQUEUEABLE_ERRORS`): unlike every other refusal here, the missing
+ *   ingredient can still arrive.
+ * - `unsupported_quote_token_token`: a two-leg swap where neither leg is
+ *   SOL/WSOL or a stablecoin. Spec §4.3 asks for a close and an open at the
+ *   implied SOL value; this project has no price for either mint *at the
+ *   block* (only a mutable current one), and the unique index
+ *   `(signature_hmac, instruction_index, wallet_id)` has nothing to
+ *   distinguish the two rows with. Declined rather than half-written.
  * - `sol_leg_wrong_direction`: the SOL/WSOL leg moved the same way as the
  *   token leg (review round 1, finding 2) — e.g. a sell whose proceeds were
  *   more than eaten by a priority-fee tip, so the net SOL delta is still
  *   negative. Booking that as a positive `solAmount` would manufacture
  *   realized profit out of a loss, so it is rejected rather than guessed at.
+ *   A stablecoin-quoted swap reaches the same check against the same
+ *   quantity, since its normalised stable value is summed into the SOL side
+ *   before the sign is looked at.
  */
 export type SwapOutcome =
   | "trade"
@@ -253,18 +302,37 @@ export type SwapOutcome =
   | "stable_rotation"
   | "no_sol_leg"
   | "unsupported_quote"
+  | "unsupported_quote_no_rate"
+  | "unsupported_quote_token_token"
   | "sol_leg_wrong_direction";
 
 /** The outcomes that are recorded on the `raw_tx` row rather than passed over in silence. */
-export type SwapParseError = "unsupported_quote" | "sol_leg_wrong_direction";
+export type SwapParseError =
+  | "unsupported_quote"
+  | "unsupported_quote_no_rate"
+  | "unsupported_quote_token_token"
+  | "sol_leg_wrong_direction";
 
 /**
  * The single mapping from an outcome to the `parse_error` it records, so the
  * set of silent-by-design outcomes is stated once and can be asserted
  * directly by tests instead of being re-derived at each call site.
+ *
+ * A `switch` rather than a boolean chain so the compiler narrows `outcome`
+ * to `SwapParseError` on the way out: the name recorded on the row is the
+ * outcome's own name, with no cast that a later renamed member could slip
+ * through.
  */
 export function parseErrorFor(outcome: SwapOutcome): SwapParseError | null {
-  return outcome === "unsupported_quote" || outcome === "sol_leg_wrong_direction" ? outcome : null;
+  switch (outcome) {
+    case "unsupported_quote":
+    case "unsupported_quote_no_rate":
+    case "unsupported_quote_token_token":
+    case "sol_leg_wrong_direction":
+      return outcome;
+    default:
+      return null;
+  }
 }
 
 export type SwapEvaluation =
@@ -869,10 +937,155 @@ function readableNativeFor(payload: EnhancedTx, address: string): bigint {
 }
 
 /**
+ * A stablecoin leg's value **in lamports**, at a SOL/USD rate.
+ *
+ * Spec §4.3: a USDC-quoted swap is "normalised to SOL at the `sol_usd` rate
+ * of that block". USDC *is* the unit `sol_usd` is quoted in — `prices.ts`
+ * reads it from the solana SOL/**USDC** pair specifically, filtered to that
+ * quote before ranking — so `raw / 10**decimals` is a USD figure by
+ * construction, not by an assumption about the peg holding.
+ *
+ * One exact integer division, not three. `raw / 10**d` USD, divided by
+ * `solUsd / ONE` SOL-per-USD, times `LAMPORTS_PER_SOL`, is
+ * `raw * ONE * LAMPORTS_PER_SOL / (10**d * solUsd)` — and doing it as one
+ * division is what keeps this off the "two numbers of different kinds" list
+ * in the header. Dividing step by step would truncate a 6-decimal USDC
+ * amount to whole USD before it ever reached the rate.
+ *
+ * BigInt division truncates toward zero, so the magnitude only ever rounds
+ * *down*, symmetrically for a buy and a sell. `solUsd` is required positive
+ * by the caller; `decimals` has already been through `requireDecimals`.
+ */
+function stableLamportsFor(leg: TokenLeg, solUsd: bigint): bigint {
+  return (leg.raw * ONE * LAMPORTS_PER_SOL) / (powTen(leg.decimals) * solUsd);
+}
+
+/**
+ * The last step of every trade: one token leg against a SOL side, in
+ * lamports, with the direction check between them.
+ *
+ * `quoteLamports` is the part of the SOL side that the payload did not state
+ * natively — `0n` for a SOL-quoted swap, and a stablecoin leg's normalised
+ * value for a stablecoin-quoted one. It is **summed** with the wallet's real
+ * native+WSOL delta rather than replacing it, for two reasons. Spec §4.4
+ * makes the SOL side the wallet's actual net delta, which is why an ATA rent
+ * payment is already part of a SOL-quoted trade's cost (the persistent-WSOL
+ * buy that sums to 1.00203928). And a wallet that paid partly in SOL and
+ * partly in USDC has both halves in the payload: taking only the stable one
+ * would halve the cost basis exactly the way the header's monotonicity note
+ * describes, with every check below still agreeing.
+ *
+ * Because the sum happens before the sign is looked at, a stablecoin-quoted
+ * swap gets the identical `no_sol_leg` and `sol_leg_wrong_direction` rules a
+ * SOL-quoted one does, against the identical quantity. There is no second
+ * copy of the direction rule to drift.
+ */
+function settleTrade(
+  payload: EnhancedTx,
+  address: string,
+  changes: readonly BalanceChange[],
+  leg: TokenLeg,
+  quoteLamports: bigint,
+): SwapEvaluation {
+  const { mint, raw, decimals } = leg;
+  const side: "buy" | "sell" = raw > 0n ? "buy" : "sell";
+  const tokenAmount = Number(raw < 0n ? -raw : raw) / 10 ** decimals;
+
+  // Read at the point of use, once this wallet is known to have a leg: a
+  // wallet with no leg and no lamport movement of its own never touches
+  // these, so a malformed one cannot cost it anything. Order on this path is
+  // `feePayer` -> `fee` -> `nativeBalanceChange`, unchanged since the fields
+  // were first guarded.
+  const { isFeePayer, fee, solDelta } = solSideFor(payload, address, changes);
+
+  // Both terms are lamports by construction: `solDelta` from
+  // `nativeLamportsFor`/`toLamports`, `quoteLamports` from
+  // `stableLamportsFor`.
+  const solSide = solDelta + quoteLamports;
+
+  if (solSide === 0n) return { outcome: "no_sol_leg" };
+
+  const wrongDirection = side === "buy" ? solSide > 0n : solSide < 0n;
+  if (wrongDirection) return { outcome: "sol_leg_wrong_direction" };
+
+  return {
+    outcome: "trade",
+    trade: {
+      mint,
+      side,
+      tokenAmount,
+      solAmount: Number(solSide < 0n ? -solSide : solSide) / 1e9,
+      feeSol: isFeePayer ? Number(fee) / 1e9 : 0,
+      // **Always 0, and measured rather than assumed.** The unique index is
+      // (signature_hmac, instruction_index, wallet_id), so a constant here is
+      // only safe if one wallet can produce at most one trade per transaction.
+      // It can, for two independent reasons.
+      //
+      // First, the payload has no per-instruction detail to index by. Measured
+      // against six real mainnet enhanced transactions (four `SWAP`, from
+      // `JUPITER` and `PUMP_AMM`): `accountData` carries one entry per unique
+      // account address, and each entry's `tokenBalanceChanges` carries one
+      // change per (token account, mint). In one `PUMP_AMM` swap a token
+      // account touched by *four* separate `tokenTransfers` produced exactly
+      // one balance-change entry whose raw value was the exact net of those
+      // four (-228412 at 9 decimals, against a transfer net of -0.000228412);
+      // a `JUPITER` swap did the same for four transfers (-90326) and for two
+      // (9307). `instructions[]` exists but carries only `accounts`, base58
+      // `data`, `programId` and `innerInstructions` — no amounts, and no link
+      // from a balance change to an instruction. `tokenTransfers` and
+      // `nativeTransfers` carry no index either, and `events.swap` is one
+      // object for the whole transaction. (The one Helius surface that does
+      // carry `instructionIdx` is `getTransfersByAddress`, a different RPC
+      // endpoint, not the enhanced payload this project ingests.) A derived
+      // index would therefore be invented, and an invented index that looks
+      // authoritative is worse than an honest constant.
+      //
+      // Second, nothing upstream can call this twice for one wallet.
+      // `evaluateSwap` returns a single evaluation, and `parsePending`
+      // resolves a deduplicated address set against a UNIQUE `address_hmac`,
+      // so `insertTrade` runs at most once per (wallet, transaction). The
+      // (kol_id, mint) fan-out of a multi-wallet transaction is safe for the
+      // same reason it always was: `wallet_id` differs per wallet.
+      //
+      // The stablecoin-quoted path added by task 7 keeps both reasons intact:
+      // it produces one trade, on the token leg, with the stable leg folded
+      // into that trade's SOL side. A token↔token swap is the one shape that
+      // would need two rows for one wallet, and it is exactly the shape that
+      // stays declined — `unsupported_quote_token_token` — rather than being
+      // given a second, invented index to be stored under. Had it been
+      // written, `ON CONFLICT (signature_hmac, instruction_index, wallet_id)
+      // DO NOTHING` would have swallowed the second row in silence.
+      //
+      // What this does *not* fix, because no index could: Helius nets a buy
+      // and a sell of one mint in the same transaction before delivery, so a
+      // round trip arrives as a single net token amount (exactly zero for a
+      // full one, which lands as `no_token_leg`) and the realized leg is
+      // invisible. See the `two swaps of one mint in one transaction` block in
+      // the tests, which pins both halves.
+      instructionIndex: 0,
+    },
+  };
+}
+
+/**
  * Evaluates one wallet's role in a Helius enhanced transaction. This is the
- * single source of truth for the SOL-quoted-swap arithmetic; `parseSwap`
- * below is a thin projection of it onto its historical `ParsedTrade | null`
- * contract.
+ * single source of truth for the swap arithmetic; `parseSwap` below is a thin
+ * projection of it onto its historical `ParsedTrade | null` contract.
+ *
+ * **`solUsd` is the block's own rate, or `null`.** Scaled 18 decimals, as
+ * `decimal.ts` defines it. It is a parameter rather than a lookup because
+ * this function is synchronous, total and pure, and every test in the suite
+ * depends on it staying that way. The contract on the caller is precise: pass
+ * the rate `prices.ts`'s `solUsdForMinute` returns for this transaction's
+ * *containing* minute, or `null`. Passing `solUsdAt`'s answer instead would
+ * satisfy the type and silently build cost bases out of a rate from another
+ * minute. `parsePending` reads it only once a first, rate-free evaluation has
+ * said the row actually contains a stablecoin-quoted swap for this wallet,
+ * which is what keeps the header read (and its `MalformedPayloadError`) off
+ * rows that never needed it.
+ *
+ * A `null`, zero or negative rate is not a rate: the swap is declined as
+ * `unsupported_quote_no_rate`, never valued at some default.
  *
  * The SOL/WSOL side is spec §4.3's "one quantity": native lamports and a
  * persistent WSOL token account are always summed, never treated as
@@ -898,6 +1111,7 @@ function readableNativeFor(payload: EnhancedTx, address: string): bigint {
 export function evaluateSwap(
   payload: EnhancedTx,
   wallet: { id: string; kolId: string; address: string },
+  solUsd: bigint | null = null,
 ): SwapEvaluation {
   const { changes, unattributable } = balanceChangesFor(payload, wallet.address);
   const allLegs = tokenLegsIn(changes);
@@ -941,82 +1155,73 @@ export function evaluateSwap(
     }
     return { outcome: "no_token_leg" };
   }
-  if (legs.length >= 2) return { outcome: "unsupported_quote" };
+  // Three or more genuine legs: no rule here can say which pair of them is
+  // the swap, and the parser has no price data to arbitrate with. Refused,
+  // exactly as it was before task 7 — nothing below widens this.
+  if (legs.length > 2) return { outcome: "unsupported_quote" };
 
-  const { mint, raw, decimals } = legs[0];
-  if (mint === USDC_MINT) return { outcome: "stable_rotation" }; // spec §4.3: not a trade
+  if (legs.length === 2) {
+    // Spec §4.3's two remaining quote shapes, told apart by one question:
+    // is one of the legs the stablecoin `sol_usd` is quoted in?
+    const stableIndex = legs.findIndex((leg) => leg.mint === USDC_MINT);
 
-  const side: "buy" | "sell" = raw > 0n ? "buy" : "sell";
-  const tokenAmount = Number(raw < 0n ? -raw : raw) / 10 ** decimals;
+    // Neither leg is SOL/WSOL (those never reach `tokenLegsIn`) nor the
+    // stablecoin. §4.3 would close leg A and open leg B at the implied SOL
+    // value; see the file header for the two independent reasons that cannot
+    // be done honestly here — no price for either mint *at the block*, and no
+    // second index to store the second row under. Declined with its own name
+    // so it can be counted, rather than folded into the catch-all.
+    if (stableIndex === -1) return { outcome: "unsupported_quote_token_token" };
 
-  // Read at the point of use, once this wallet is known to have a leg: a
-  // wallet with no leg and no lamport movement of its own never touches
-  // these, so a malformed one cannot cost it anything. Order on this path is
-  // `feePayer` -> `fee` -> `nativeBalanceChange`, unchanged since the fields
-  // were first guarded.
-  const { isFeePayer, fee, solDelta } = solSideFor(payload, wallet.address, changes);
+    const stable = legs[stableIndex];
+    const token = legs[1 - stableIndex];
 
-  if (solDelta === 0n) return { outcome: "no_sol_leg" };
+    // No rate for this block's own minute, or a rate that is not a positive
+    // number: §4.3's normalisation has nothing to normalise at. Never a
+    // default, never the last rate that happened to be lying around.
+    if (solUsd === null || solUsd <= 0n) return { outcome: "unsupported_quote_no_rate" };
 
-  const wrongDirection = side === "buy" ? solDelta > 0n : solDelta < 0n;
-  if (wrongDirection) return { outcome: "sol_leg_wrong_direction" };
+    const stableLamports = stableLamportsFor(stable, solUsd);
 
-  return {
-    outcome: "trade",
-    trade: {
-      mint,
-      side,
-      tokenAmount,
-      solAmount: Number(solDelta < 0n ? -solDelta : solDelta) / 1e9,
-      feeSol: isFeePayer ? Number(fee) / 1e9 : 0,
-      // **Always 0, and measured rather than assumed.** The unique index is
-      // (signature_hmac, instruction_index, wallet_id), so a constant here is
-      // only safe if one wallet can produce at most one trade per transaction.
-      // It can, for two independent reasons.
-      //
-      // First, the payload has no per-instruction detail to index by. Measured
-      // against six real mainnet enhanced transactions (four `SWAP`, from
-      // `JUPITER` and `PUMP_AMM`): `accountData` carries one entry per unique
-      // account address, and each entry's `tokenBalanceChanges` carries one
-      // change per (token account, mint). In one `PUMP_AMM` swap a token
-      // account touched by *four* separate `tokenTransfers` produced exactly
-      // one balance-change entry whose raw value was the exact net of those
-      // four (-228412 at 9 decimals, against a transfer net of -0.000228412);
-      // a `JUPITER` swap did the same for four transfers (-90326) and for two
-      // (9307). `instructions[]` exists but carries only `accounts`, base58
-      // `data`, `programId` and `innerInstructions` — no amounts, and no link
-      // from a balance change to an instruction. `tokenTransfers` and
-      // `nativeTransfers` carry no index either, and `events.swap` is one
-      // object for the whole transaction. (The one Helius surface that does
-      // carry `instructionIdx` is `getTransfersByAddress`, a different RPC
-      // endpoint, not the enhanced payload this project ingests.) A derived
-      // index would therefore be invented, and an invented index that looks
-      // authoritative is worse than an honest constant.
-      //
-      // Second, nothing upstream can call this twice for one wallet.
-      // `evaluateSwap` returns a single evaluation, and `parsePending`
-      // resolves a deduplicated address set against a UNIQUE `address_hmac`,
-      // so `insertTrade` runs at most once per (wallet, transaction). The
-      // (kol_id, mint) fan-out of a multi-wallet transaction is safe for the
-      // same reason it always was: `wallet_id` differs per wallet.
-      //
-      // What this does *not* fix, because no index could: Helius nets a buy
-      // and a sell of one mint in the same transaction before delivery, so a
-      // round trip arrives as a single net token amount (exactly zero for a
-      // full one, which lands as `no_token_leg`) and the realized leg is
-      // invisible. See the `two swaps of one mint in one transaction` block in
-      // the tests, which pins both halves.
-      instructionIndex: 0,
-    },
-  };
+    // The stable leg is worth less than one lamport, so normalising it gives
+    // nothing and the SOL side would be whatever native residue the payload
+    // happens to carry — ATA rent, a tip. That is the exact fabrication
+    // review round 2 removed (`price_sol` off 0.00203928 of rent), reached
+    // through a different door, so it is refused rather than settled.
+    // Unreachable at any real SOL price: the dust floor already puts the
+    // smallest surviving USDC leg at 2/1,000,000 USDC, which is 8 lamports at
+    // a few hundred dollars a SOL. It is cheap, and it is the door.
+    if (stableLamports === 0n) return { outcome: "unsupported_quote" };
+
+    return settleTrade(payload, wallet.address, changes, token, stableLamports);
+  }
+
+  const sole = legs[0];
+  // spec §4.3: a SOL <-> stablecoin rotation is not a trade and is not
+  // indexed. Checked on the *sole* leg only — a stablecoin leg with a token
+  // leg beside it is a quote, handled above, not a rotation.
+  if (sole.mint === USDC_MINT) return { outcome: "stable_rotation" };
+
+  return settleTrade(payload, wallet.address, changes, sole, 0n);
 }
 
-/** Reads one wallet's leg of a SOL-quoted swap. See `evaluateSwap` for the full classification. */
+/**
+ * Reads one wallet's leg of a swap. A thin projection of `evaluateSwap` onto
+ * its historical `ParsedTrade | null` contract — see there for the full
+ * classification.
+ *
+ * It takes the optional rate for the same reason `evaluateSwap` does, and
+ * with the same contract: the block's *containing* minute or nothing.
+ * Omitting it collapses every stablecoin-quoted swap to `null`, which is a
+ * silent drop — which is why `parsePending` does not go through this function
+ * and nothing that records outcomes should.
+ */
 export function parseSwap(
   payload: EnhancedTx,
   wallet: { id: string; kolId: string; address: string },
+  solUsd: bigint | null = null,
 ): ParsedTrade | null {
-  const result = evaluateSwap(payload, wallet);
+  const result = evaluateSwap(payload, wallet, solUsd);
   return result.outcome === "trade" ? result.trade : null;
 }
 
@@ -1139,18 +1344,50 @@ export type RowParseError = SwapParseError | "malformed_payload";
  * Priority used when two different tracked wallets in the same transaction
  * hit two different non-trade outcomes.
  *
- * `malformed_payload` outranks both, because it is the only one that leaves
- * the row requeueable (`parsed_at` NULL): losing it to a lower-priority
- * error would settle the row for good and drop that wallet's leg forever. A
- * wrong-direction leg then outranks an unsupported quote — it is a rejected
- * trade with real money on it, which matters more to surface than a quote
- * this batch simply doesn't parse yet.
+ * **Every requeueable error outranks every settled one**, which is the rule
+ * the ordering below is derived from rather than a coincidence of it. A
+ * requeueable error losing to a settled one would stamp `parsed_at` on a row
+ * whose missing ingredient can still arrive, dropping that wallet's leg for
+ * good. So `malformed_payload` (a parser fix can read it later) and
+ * `unsupported_quote_no_rate` (a `sol_price` row for that minute can still
+ * land) take the top two places, in that order — an unreadable payload is the
+ * stronger statement, since the row cannot even be classified.
+ *
+ * Below them, among the settled refusals: a wrong-direction leg outranks the
+ * unsupported quotes, being a rejected trade with real money on it, and
+ * `unsupported_quote_token_token` outranks the bare `unsupported_quote`
+ * because it names a specific shape where the catch-all names none.
  */
 const ERROR_PRIORITY: Record<RowParseError, number> = {
-  malformed_payload: 3,
-  sol_leg_wrong_direction: 2,
+  malformed_payload: 5,
+  unsupported_quote_no_rate: 4,
+  sol_leg_wrong_direction: 3,
+  unsupported_quote_token_token: 2,
   unsupported_quote: 1,
 };
+
+/**
+ * The errors that leave `parsed_at` NULL, so a later fix can reprocess the
+ * row without spending another Helius credit (spec §5.2). Clearing
+ * `parse_error` is what actually requeues a row — the pending query filters
+ * on `parse_error IS NULL` — so this set is about honesty in the column
+ * rather than about the loop: a row marked `parsed_at` says the parser is
+ * finished with it, and for these two that is not true.
+ *
+ * - `malformed_payload`: a parser fix may be able to read it.
+ * - `unsupported_quote_no_rate`: nothing about the payload is wrong. The
+ *   `sol_price` row for its minute simply did not exist when it was read,
+ *   and one can still arrive — from a per-minute series (spec §5.7) or a
+ *   historical import. Settling it would throw a readable, valuable swap
+ *   away over a table's contents at one moment.
+ *
+ * Everything else is a decision about the payload itself, which no later
+ * data changes.
+ */
+const REQUEUEABLE_ERRORS: ReadonlySet<RowParseError> = new Set<RowParseError>([
+  "malformed_payload",
+  "unsupported_quote_no_rate",
+]);
 
 function higherPriorityError(a: RowParseError | null, b: RowParseError): RowParseError {
   if (a === null) return b;
@@ -1186,10 +1423,14 @@ function higherPriorityError(a: RowParseError | null, b: RowParseError): RowPars
  * wallet in the same transaction still gets its trade — and the reparse
  * that follows a parser fix will not duplicate it, since the trade insert
  * is `ON CONFLICT DO NOTHING`.
- * `unsupported_quote` and `sol_leg_wrong_direction` are the opposite:
- * both are cases this parser version deliberately never guesses at, not bugs
- * a future deploy might fix on retry, so they also set `parsed_at`. Either
- * way, the pending-rows query below excludes any row with `parse_error` set,
+ * `unsupported_quote`, `unsupported_quote_token_token` and
+ * `sol_leg_wrong_direction` are the opposite: all three are cases this parser
+ * deliberately never guesses at, not bugs a future deploy might fix on retry,
+ * so they also set `parsed_at`. `unsupported_quote_no_rate` sits with
+ * `malformed_payload` instead and leaves `parsed_at` null, because the thing
+ * it is waiting for is a row in `sol_price`, not a code change — see
+ * `REQUEUEABLE_ERRORS`. Either way, the pending-rows query below excludes
+ * any row with `parse_error` set,
  * so a run of bad rows cannot crowd a later good delivery out of the queue
  * (review round 1, finding 5) — clearing `parse_error` is what makes a row
  * reprocessable again, independent of `parsed_at`.
@@ -1256,7 +1497,34 @@ export async function parsePending(limit = 100): Promise<number> {
       const wallet = { id: walletRow.id, kolId: walletRow.kol_id, address };
       let result: SwapEvaluation;
       try {
+        // Two passes, and only for the one shape that needs a second.
+        //
+        // `evaluateSwap` is synchronous and pure, and the SOL/USD rate a
+        // stablecoin-quoted swap normalises at lives in Postgres, keyed by the
+        // block time — which is in the transaction *header*, behind a
+        // `readTradeHeader` that raises on an unreadable `timestamp`,
+        // `signature` or `slot`. Reading the header up front to break that
+        // circle would make an unreadable one fatal for rows that never
+        // needed it: today a payload with a broken header that produces no
+        // trade for any tracked wallet is parsed without complaint, and it
+        // must stay that way.
+        //
+        // So: classify first with no rate at all. `unsupported_quote_no_rate`
+        // is precisely the answer "this is a stablecoin-quoted swap for this
+        // wallet and I was given no rate" — the only outcome that a rate can
+        // change — and only then is the header worth reading and the rate
+        // worth a round trip. Re-evaluating is free of side effects because
+        // the function is pure, and the second pass is skipped entirely when
+        // the lookup comes back empty, so the refusal is preserved verbatim.
         result = evaluateSwap(payload, wallet);
+        if (result.outcome === "unsupported_quote_no_rate") {
+          header ??= readTradeHeader(payload);
+          // `solUsdForMinute`, never `solUsdAt`: the containing minute's own
+          // row, or nothing. See its doc comment for why a cost basis may not
+          // be built from the `<=` lookup that `usd_amount` uses.
+          const solUsd = await solUsdForMinute(header.blockTime);
+          if (solUsd !== null) result = evaluateSwap(payload, wallet, solUsd);
+        }
         if (result.outcome === "trade") header ??= readTradeHeader(payload);
       } catch (error) {
         // Only an unreadable payload is recorded. A database failure raised
@@ -1278,10 +1546,11 @@ export async function parsePending(limit = 100): Promise<number> {
       if (error) rowError = higherPriorityError(rowError, error);
     }
 
-    if (rowError === "malformed_payload") {
+    if (rowError !== null && REQUEUEABLE_ERRORS.has(rowError)) {
       // Requeueable: parse_error set so the row stops being re-selected and
       // cannot stall the queue, parsed_at left NULL so clearing parse_error
-      // after a parser fix reprocesses it without spending another Helius
+      // after a parser fix — or after a `sol_price` row for the missing
+      // minute arrives — reprocesses it without spending another Helius
       // credit (spec §5.2). A trade already written for another wallet in
       // the same row survives that reparse untouched — the insert is
       // ON CONFLICT DO NOTHING.

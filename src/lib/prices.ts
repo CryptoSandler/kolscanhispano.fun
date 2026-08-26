@@ -85,12 +85,51 @@ export type PriceState = "priced" | "stale" | "unpriced";
  * of off-by-one that produces a plausible wrong number rather than a failure.
  * Both callers now come through here, so one mutation of this query is
  * visible to every test that depends on it.
+ *
+ * **This bound is for the USD *view* of a trade, never for its cost basis.**
+ * `usd_amount`, `sol_usd` and `price_usd` are a second rendering of a SOL
+ * figure that was already measured exactly, so a rate a few minutes old
+ * makes them slightly off; the SOL side, the leaderboard and every position
+ * are untouched. Deriving the SOL side *itself* from a rate is a different
+ * question with a different answer — see {@link solUsdForMinute}.
  */
 export async function solUsdAt(minute: Date): Promise<bigint | null> {
   const [row] = await query<{ usd: string }>(
     `SELECT usd FROM sol_price
       WHERE minute <= date_trunc('minute', $1::timestamptz)
       ORDER BY minute DESC LIMIT 1`,
+    [minute],
+  );
+  return row ? parseDecimal(row.usd) : null;
+}
+
+/**
+ * The SOL/USD rate recorded **for the containing minute itself**, or `null`
+ * if `sol_price` has no row for that exact minute. Spec §5.7: *"SOL/USD from
+ * a single source once per minute into `sol_price`; trades resolve their rate
+ * from the containing minute"*.
+ *
+ * The `=`, and the whole reason this exists beside {@link solUsdAt}: this is
+ * the lookup a **cost basis** is allowed to be built from. `parse-swap.ts`
+ * normalises a stablecoin-quoted swap to SOL at this rate (spec §4.3), so the
+ * rate stops being a display figure and becomes `sol_amount`, `price_sol`,
+ * the position's `cost_sol` and the leaderboard's ranking. `solUsdAt`'s `<=`
+ * bound would answer that question with whatever row happened to be most
+ * recent — in this deployment, up to five minutes old, since nothing writes
+ * `sol_price` once a minute yet (`scripts/backfill-prices.ts` writes one row
+ * per run and the parse cron runs every five minutes). SOL's move over those
+ * minutes is unknown and unmeasured, so a basis built on it is a number no
+ * source ever reported for that block.
+ *
+ * A miss is therefore a refusal, not a fallback: `parse-swap.ts` declines the
+ * swap and records it requeueably, so a `sol_price` row arriving later — a
+ * historical import, a per-minute cron — can still fill it in. That is the
+ * §4.6 distinction ("we don't know right now" leaves it alone) applied to a
+ * rate rather than a token price.
+ */
+export async function solUsdForMinute(minute: Date): Promise<bigint | null> {
+  const [row] = await query<{ usd: string }>(
+    `SELECT usd FROM sol_price WHERE minute = date_trunc('minute', $1::timestamptz)`,
     [minute],
   );
   return row ? parseDecimal(row.usd) : null;
