@@ -1,0 +1,327 @@
+/*
+ * DESIGN.md, direction B ("Instrumento"), is the binding authority for every
+ * value in this file. The tokens below are transcribed from its front matter;
+ * changing one here without changing it there makes the design system a lie.
+ *
+ * Three rules from that document are load-bearing and easy to break by
+ * accident:
+ *   1. Cyan is the only chromatic accent and never touches a figure.
+ *   2. Green and red mean direction of money and nothing else — no status,
+ *      no validation, no chart series.
+ *   3. Every number is JetBrains Mono with tabular figures.
+ */
+
+:root {
+  --canvas: #08090a;
+  --surface-1: #101113;
+  --surface-2: #16181b;
+  --surface-3: #1c1f22;
+  --hairline: #212429;
+  --hairline-strong: #2f333a;
+
+  --ink: #f2f4f5;
+  --ink-muted: #a8aeb4;
+  --ink-subtle: #6b7178;
+
+  --accent: #22d3ee;
+  --on-accent: #04191d;
+  --accent-hover: #67e8f9;
+
+  --gain: #2ea043;
+  --loss: #e5484d;
+  --stale: #8a6d3b;
+
+  --row-height: 36px;
+  --gutter: 16px;
+  --panel-padding: 14px;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  --data-in: 120ms ease-out;
+  --hover: 90ms linear;
+
+  /* next/font supplies these; the stacks are the fallback while a face loads
+     and on a build that could not fetch one. */
+  --font-body: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), system-ui, sans-serif;
+  --font-numeric: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+h1,
+p,
+ul {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+/* ---------- layout ---------- */
+
+.shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 48px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gutter);
+  height: 56px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Spec §11: a typographic wordmark, one accent colour, dark background. The
+   accent lands on the mark — which is not a figure — and nowhere else here. */
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  text-decoration: none;
+}
+
+.wordmark .tld {
+  color: var(--accent);
+}
+
+.label {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+}
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: var(--panel-padding);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.headline {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: none;
+}
+
+/* ---------- numbers ---------- */
+
+.num {
+  font-family: var(--font-numeric);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.gain {
+  color: var(--gain);
+}
+
+.loss {
+  color: var(--loss);
+}
+
+/* DESIGN.md `state-unpriced`: a price we do not have is said in words. Never a
+   dash, which reads as zero, and never a red −100 %, which reads as a loss the
+   data does not support. */
+.state-unpriced {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--stale);
+}
+
+/* ---------- feed ---------- */
+
+/* The container reserves its height so the first trade of the session does not
+   grow the page under the reader's cursor, and so the empty state occupies the
+   space the rows will. */
+.feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-height: calc(12 * var(--row-height));
+}
+
+.row-feed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--row-height);
+  padding: 0 2px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* DESIGN.md motion: 120ms, functional, and never on position — a row that
+   slid into place would announce itself, and would also be the one thing the
+   document forbids animating. Opacity only. */
+.row-feed.is-new {
+  animation: feed-in var(--data-in);
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-feed.is-new {
+    animation: none;
+  }
+}
+
+.avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--surface-3), var(--surface-2));
+  border: 1px solid var(--hairline-strong);
+  color: var(--ink-subtle);
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.row-sentence {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kol-name {
+  font-weight: 500;
+}
+
+.symbol {
+  font-weight: 500;
+}
+
+.price {
+  color: var(--ink-muted);
+}
+
+/* DESIGN.md `chip-cabal`: a 2px chip, hairline border, muted ink. Not a
+   colour, because colour in this system already means something. */
+.chip-cabal {
+  font-size: 10px;
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+}
+
+/* DESIGN.md `chip-hidden-wallets`. Spec §7: this is the only thing that
+   appears where an address would have. */
+.chip-hidden-wallets {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+
+/* Fixed width: the age column is the one thing on the row that changes every
+   second, and a column that reflows as it ticks would move the sentence beside
+   it. */
+.row-age {
+  flex: none;
+  width: 84px;
+  text-align: right;
+  color: var(--ink-subtle);
+}
+
+a.row-age:hover {
+  color: var(--ink-muted);
+  transition: color var(--hover);
+}
+
+.feed-empty {
+  color: var(--ink-subtle);
+  padding: 12px 2px;
+}
+
+.footnote {
+  margin-top: 12px;
+  color: var(--ink-subtle);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

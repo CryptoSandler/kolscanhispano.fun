@@ -73,6 +73,14 @@ const SECURITY_HEADERS = [
 const nextConfig: NextConfig = {
   poweredByHeader: false,
 
+  // `next dev` otherwise appends a block about this Next version to the
+  // repository's CLAUDE.md and re-appends it on every run, so a tracked,
+  // hand-written instructions file is edited by a build tool and the working
+  // tree is dirty before anyone has typed anything. The guidance it adds is
+  // real — read `node_modules/next/dist/docs/` for this version's APIs — but
+  // it belongs in a file a person owns.
+  agentRules: false,
+
   async headers() {
     return [
       { source: "/:path*", headers: SECURITY_HEADERS },
