@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { query } from "./db";
 import { buildDexPair, buildDexResponse, buildHeliusAssetResponse } from "./fixtures/dexscreener";
 import { inventAddress } from "./ids";
-import { realFetch } from "./network-guard";
 import { USDC_MINT, WSOL_MINT } from "./parse-swap";
 import {
   DEXSCREENER_BATCH_LIMIT,
@@ -399,22 +398,7 @@ describe("refreshSolPrice", () => {
     expect(Number(count)).toBe(0);
   });
 
-  // The one live call this suite makes against a third party, per the task
-  // brief: DexScreener needs no API key, so this does not depend on any
-  // secret being configured. Everything else in this file runs on fixtures.
-  // Goes through the named escape hatch (network-guard.ts's realFetch)
-  // rather than the ambient `fetch`, which every test file's setup now
-  // replaces with one that throws.
-  it("resolves a real SOL/USD rate from the live DexScreener API (network)", async () => {
-    const wrote = await refreshSolPrice(realFetch, new Date());
-    expect(wrote).toBe(true);
-    const usd = await solUsdAt(new Date());
-    expect(usd).not.toBeNull();
-    // Sanity bounds, not a pinned value: SOL has traded well within this
-    // range for years, and the point is only to prove a real number came
-    // back, not to assert what it currently is.
-    const asNumber = Number(usd) / 1e18;
-    expect(asNumber).toBeGreaterThan(1);
-    expect(asNumber).toBeLessThan(100_000);
-  }, 15_000);
+  // The one live call against a third party this file used to make lives in
+  // prices.contract.test.ts now, run separately via `npm run test:contract`
+  // rather than the blocking `npm test` gate. See that file for why.
 });

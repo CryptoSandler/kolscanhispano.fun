@@ -13,6 +13,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:watch": "vitest",
+    "test:contract": "vitest run --config vitest.contract.config.mts",
     "db:migrate": "tsx scripts/migrate.mts",
     "db:migrate:test": "tsx scripts/migrate.mts --test",
     "db:seed": "tsx scripts/seed-dev.ts",

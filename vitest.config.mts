@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
@@ -6,6 +6,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
+    // Contract checks (real third-party calls, e.g. prices.contract.test.ts)
+    // run separately via `npm run test:contract` — see vitest.contract.config.mts.
+    // `npm test` is the blocking gate every task must pass to ship, and a
+    // check that can fail because a third party is slow or down does not
+    // belong on it.
+    exclude: [...configDefaults.exclude, "**/*.contract.test.ts"],
     setupFiles: ["./vitest.env.ts"],
     // Holds a run-scoped advisory lock so a second suite queues behind this
     // one instead of truncating its fixtures mid-run. See the file itself.
