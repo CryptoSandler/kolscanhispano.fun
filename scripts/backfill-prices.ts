@@ -11,6 +11,17 @@
  * cycle never looks at a `raw_tx` row twice. This script is the only thing
  * that revisits them.
  *
+ * **What the opening refresh does and does not reach.** `refreshSolPrice`
+ * writes one row, at the *current* minute, and `solUsdAt` bounds its search
+ * at `minute <= block_time`. So this run's own refresh covers a trade only if
+ * that trade's `block_time` falls in the same minute or later — in practice,
+ * a trade from the minute this run started. Every older trade is filled from
+ * a row an *earlier* run wrote, which is what the 5-minute cadence in
+ * `.github/workflows/parse-pending.yml` is for: after the first cycle,
+ * `sol_price` carries a row every five minutes and each new trade lands after
+ * one of them. Trades older than the very first row are never reachable at
+ * all — see below.
+ *
  * **What it will not do.** It never re-prices a trade at today's rate. Spec
  * §4.1 is explicit: USD rankings sum the value *at trade time* and never
  * re-price, so a trade older than the earliest `sol_price` row has no rate
@@ -23,8 +34,18 @@
  * Re-runnable by construction. The work queue is `usd_amount IS NULL`, so a
  * second run over the same rows fills nothing and marks nothing dirty; a row
  * whose minute is only covered by a `sol_price` row written later is picked
- * up on the next run, which is exactly why the queue is not narrowed by
+ * up on the next run, which is exactly why the queue is not *narrowed* by
  * `priced_at`.
+ *
+ * It is **ordered** by it, though, and that is what keeps the queue from
+ * starving. Trades older than the earliest `sol_price` row can never be
+ * filled and are also the oldest rows there are, so ordering by `block_time`
+ * alone would park a permanently unfillable prefix at the front: past one
+ * `LIMIT`'s worth of them, every run would re-examine the same rows and never
+ * reach a newer trade a rate does cover. `priced_at NULLS FIRST` puts every
+ * never-attempted trade ahead of every attempted one, so a new arrival always
+ * jumps a stamped backlog, and the backlog is retried least-recent-first with
+ * whatever budget is left. See migration 006.
  */
 import { loadEnvLocal } from "../src/lib/env";
 loadEnvLocal();
@@ -65,22 +86,29 @@ function minuteOf(blockTime: Date): Date {
 }
 
 export async function backfillPrices(
-  options: { fetchImpl?: typeof fetch; limit?: number; refresh?: boolean } = {},
+  options: { fetchImpl?: typeof fetch; limit?: number; refresh?: boolean; now?: Date } = {},
 ): Promise<BackfillResult> {
-  const { fetchImpl = fetch, limit = DEFAULT_LIMIT, refresh = true } = options;
+  const { fetchImpl = fetch, limit = DEFAULT_LIMIT, refresh = true, now = new Date() } = options;
 
-  // Ask DexScreener for the current rate first. It cannot help a trade older
-  // than now, but it is what covers the common live case: a trade parsed
-  // seconds ago into an empty `sol_price`. `refreshSolPrice` writes nothing at
-  // all when the request fails, so a DexScreener outage costs this run the
-  // newest minute and nothing else.
-  const rateRefreshed = refresh ? await refreshSolPrice(fetchImpl) : false;
+  // Ask DexScreener for the current rate first, so `sol_price` carries a row
+  // for this minute and the *next* run's trades resolve against something at
+  // most one cycle old. `refreshSolPrice` writes nothing at all when the
+  // request fails, so a DexScreener outage costs this run the newest minute
+  // and leaves every earlier rate resolvable.
+  //
+  // `now` is injectable only so a test can pin which minute gets written;
+  // production never passes it.
+  const rateRefreshed = refresh ? await refreshSolPrice(fetchImpl, now) : false;
 
+  // `priced_at NULLS FIRST` before `block_time`: see the file header and
+  // migration 006. ASC defaults to NULLS LAST in Postgres, so it is spelled
+  // out, and `trade_unpriced_queue_idx` is declared the same way so it can
+  // serve this sort.
   const candidates = await query<Candidate>(
     `SELECT id, kol_id, mint, sol_amount, price_sol, block_time
        FROM trade
       WHERE usd_amount IS NULL
-      ORDER BY block_time
+      ORDER BY priced_at ASC NULLS FIRST, block_time
       LIMIT $1`,
     [limit],
   );

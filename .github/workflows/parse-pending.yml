@@ -10,14 +10,25 @@ name: Parse pending trades
 # block time, and nothing else writes sol_price, so without a rate writer on
 # the parser's own cadence every new trade is recorded with a NULL
 # usd_amount -- which is the state the whole table was in. The backfill's
-# first act is refreshSolPrice (one free DexScreener request, no Helius
-# credits, no key), so the rate it writes for the current minute covers the
-# trades this run has just parsed and fills them in the same cycle.
+# first act is refreshSolPrice: one free DexScreener request, no Helius
+# credits, no key.
 #
-# The order is parse-then-backfill and not the reverse. A rate written before
-# the parse would be one cycle stale by the time the trades exist, and the
-# backfill is the thing that revisits a trade -- nothing ever revisits a
-# parsed raw_tx row.
+# What that refresh actually reaches, stated precisely because an earlier
+# version of this comment overstated it: refreshSolPrice writes ONE row, at
+# the CURRENT minute, and solUsdAt bounds its search at
+# `minute <= block_time`. So this run's refresh covers only a trade whose
+# block time falls in that same minute. Every other trade -- which is nearly
+# all of them -- is filled from a row an EARLIER run wrote. That is what the
+# cadence buys: after the first cycle sol_price carries a row every five
+# minutes, so each new trade lands after one of them and is filled by the
+# next run at the latest. A rate is never back-dated onto a trade that
+# happened before it (spec 4.1: USD is the value at trade time, never
+# re-priced), so trades older than the very first sol_price row stay NULL
+# permanently and the backfill counts them out loud.
+#
+# The order is parse-then-backfill and not the reverse. The backfill is the
+# only thing that revisits a trade -- nothing ever revisits a parsed raw_tx
+# row -- so it has to run after the rows it is meant to price exist.
 #
 # The two scripts take different advisory locks, so the second cannot be
 # blocked by the first, and each exits non-zero on its own failure.

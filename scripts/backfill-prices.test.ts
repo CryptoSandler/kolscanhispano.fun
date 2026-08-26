@@ -319,6 +319,64 @@ describe("backfillPrices", () => {
     expect((await tradeRow(late)).usd_amount).toBe("400");
   });
 
+  it("a newly arrived trade jumps a backlog of permanently unfillable ones", async () => {
+    // The starvation this ordering exists to prevent. Trades older than the
+    // earliest `sol_price` row can never be filled and are also the oldest
+    // rows in the queue, so `ORDER BY block_time` alone parks them at the
+    // front forever: past one LIMIT's worth, every run re-examines the same
+    // prefix and a newer, fillable trade is never reached.
+    //
+    // `limit: 2` stands in for the real 5,000 — the property is the ordering,
+    // not the number.
+    const stale = inventAddress();
+    await insertUnpricedTrade({
+      kolId, walletId, mint: stale, blockTime: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    await insertUnpricedTrade({
+      kolId, walletId, mint: stale, blockTime: new Date("2020-01-02T00:00:00.000Z"),
+    });
+
+    // Run once: the backlog is examined, fills nothing, and gets stamped.
+    const first = await backfillPrices({ fetchImpl: offlineFetch, limit: 2 });
+    expect(first.examined).toBe(2);
+    expect(first.filled).toBe(0);
+
+    // Now a real trade arrives, with a rate that covers it. Under block_time
+    // ordering it sorts *behind* both 2020 rows and, at limit 2, is never
+    // reached — the second run would report examined 2, filled 0, forever.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '100')", [
+      new Date("2026-08-01T12:00:00.000Z"),
+    ]);
+    const fresh = await insertUnpricedTrade({
+      kolId, walletId, mint, blockTime: new Date("2026-08-01T12:30:00.000Z"),
+    });
+
+    const second = await backfillPrices({ fetchImpl: offlineFetch, limit: 2 });
+
+    expect(second.filled).toBe(1);
+    expect((await tradeRow(fresh)).usd_amount).toBe("100");
+  });
+
+  it("still retries a stamped trade, so a rate arriving later is not locked out", async () => {
+    // The other side of the same decision: the queue is *ordered* by
+    // priced_at, never *narrowed* by it. Narrowing would bound starvation by
+    // making an attempted-and-failed row unreachable for good, which would
+    // silently discard any sol_price row imported after the fact.
+    const id = await insertUnpricedTrade({
+      kolId, walletId, mint, blockTime: new Date("2026-08-01T12:30:00.000Z"),
+    });
+
+    expect((await backfillPrices({ fetchImpl: offlineFetch })).filled).toBe(0);
+    expect((await tradeRow(id)).priced_at).not.toBeNull(); // stamped: it has been looked at
+
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '100')", [
+      new Date("2026-08-01T12:00:00.000Z"),
+    ]);
+
+    expect((await backfillPrices({ fetchImpl: offlineFetch })).filled).toBe(1);
+    expect((await tradeRow(id)).usd_amount).toBe("100");
+  });
+
   it("does not touch a trade that already carries a USD amount", async () => {
     await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '999')", [
       new Date("2026-08-01T12:00:00.000Z"),
@@ -337,21 +395,62 @@ describe("backfillPrices", () => {
     expect(Number((await tradeRow(id)).usd_amount)).toBe(42);
   });
 
-  it("refreshes the SOL/USD rate first, so a trade parsed into an empty sol_price is covered", async () => {
-    const now = new Date();
-    // Block time a few seconds ago: no rate existed when it was parsed.
+  it("refreshes the rate first, covering a trade from the same minute as the refresh", async () => {
+    // The narrowest true statement about this run's own refresh.
+    // `refreshSolPrice` writes one row at the current minute and `solUsdAt`
+    // bounds at `minute <= block_time`, so the only trades this run's refresh
+    // can reach are the ones inside that same minute.
+    //
+    // `now` is pinned rather than taken from the clock: with a real `new
+    // Date()` this case passes or fails depending on whether the trade and
+    // the refresh land either side of a minute boundary. An earlier draft of
+    // this test hid that by giving the trade a block time 30 seconds in the
+    // *future* under a comment claiming it was in the past — a fixture no
+    // real trade can have, proving a property no real trade enjoys.
+    const now = new Date("2026-08-01T12:00:45.000Z");
     const id = await insertUnpricedTrade({
       kolId,
       walletId,
       mint,
-      blockTime: new Date(now.getTime() + 30_000),
+      blockTime: new Date("2026-08-01T12:00:10.000Z"), // earlier than `now`, same minute
     });
 
-    const result = await backfillPrices({ fetchImpl: dexFetch("150") });
+    const result = await backfillPrices({ fetchImpl: dexFetch("150"), now });
 
     expect(result.rateRefreshed).toBe(true);
     expect(result.filled).toBe(1);
     expect((await tradeRow(id)).usd_amount).toBe("150");
+  });
+
+  it("does not reach a trade from a minute before the refresh, and does not back-date one to it", async () => {
+    // The other half, and the one that governs every real trade: a trade from
+    // an earlier minute is *not* covered by this run's refresh. It waits for
+    // a row an earlier cycle wrote — which is what the 5-minute cadence
+    // provides in steady state — and if none exists it stays NULL rather than
+    // being valued at a rate from after it happened (spec §4.1: never
+    // re-price).
+    const now = new Date("2026-08-01T12:05:00.000Z");
+    const id = await insertUnpricedTrade({
+      kolId,
+      walletId,
+      mint,
+      blockTime: new Date("2026-08-01T12:04:30.000Z"), // one minute earlier
+    });
+
+    const result = await backfillPrices({ fetchImpl: dexFetch("150"), now });
+
+    expect(result.rateRefreshed).toBe(true);
+    expect(result.filled).toBe(0);
+    expect(result.stillUnpriced).toBe(1);
+    expect((await tradeRow(id)).usd_amount).toBeNull();
+
+    // ...and the cycle after next fills it, because by then a row predates it.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '140')", [
+      new Date("2026-08-01T12:00:00.000Z"),
+    ]);
+    const later = await backfillPrices({ fetchImpl: offlineFetch, now });
+    expect(later.filled).toBe(1);
+    expect((await tradeRow(id)).usd_amount).toBe("140");
   });
 
   it("a DexScreener outage still fills everything the stored rates cover", async () => {

@@ -1502,6 +1502,54 @@ describe("parsePending", () => {
     expect(trade.price_usd).toBe("11.5855");
   });
 
+  it("computes price_sol exactly, not as a float division", async () => {
+    // The sibling of the test above, and it was missing: `usd_amount` is a
+    // multiplication and `price_sol` is a *division*, and an operand that
+    // makes one inexact says nothing about the other. Every price_sol
+    // assertion in this diff was 1/2 or 0.1/2 — binary-exact halvings — so
+    // reverting price_sol to `trade.solAmount / trade.tokenAmount` left all
+    // 125 tests green.
+    //
+    // Measured rather than assumed. In node 26, `0.1 / 7` is
+    // 0.014285714285714287; exact division truncated on decimal.ts's
+    // 18-decimal grid is 0.014285714285714285. They differ in the value of
+    // the last digit, not merely its length, so neither a `toBeCloseTo` nor
+    // a shorter-string comparison can tell them apart.
+    //
+    //   node -e 'console.log(0.1/7, (0.1/7)*231.71, 0.1*231.71)'
+    //   0.014285714285714287 3.3101428571428575 23.171000000000003
+    //
+    // and exactly, as integers scaled by 10^18:
+    //   price_sol  0.014285714285714285
+    //   price_usd  3.310142857142856977
+    //   usd_amount 23.171
+    const minute = new Date("2026-08-25T12:00:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [minute]);
+
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -100_005_000, // 0.1 SOL out, plus the fee
+      tokenChangeRaw: "7000000", // 7 tokens in — a divisor that is not a power of two
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(minute.getTime() / 1000),
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: minute, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    const [trade] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(trade.sol_amount).toBe("0.1");
+    expect(trade.token_amount).toBe("7");
+    expect(trade.price_sol).toBe("0.014285714285714285");
+    // price_usd is derived from price_sol, so a float price_sol poisons it
+    // too — asserted here so the chain is covered, not just its first link.
+    expect(trade.price_usd).toBe("3.310142857142856977");
+    expect(trade.usd_amount).toBe("23.171");
+  });
+
   it("resolves the rate for the trade's own minute, not the newest rate in the table", async () => {
     // A rate before the block and a rate after it. Taking the newest row, or
     // dropping the `<=` bound, gives 400 — a number that looks every bit as

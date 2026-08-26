@@ -93,7 +93,7 @@ describe("FeedRow", () => {
     expect(html).not.toContain("sin precio");
   });
 
-  it("shows `sin precio` on a zero price too, rather than treating 0 as a real quote", () => {
+  it("renders a stored zero as the real quote `US$0,00`, which is why NULL is never written as 0", () => {
     // A zero is what a "helpful" default writes where a rate was missing, and
     // this is what the screen would then say: `US$0,00`, a real quote, in the
     // slot `sin precio` belongs in. It is the concrete reason `insertTrade`
