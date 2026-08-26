@@ -1953,12 +1953,15 @@ describe("a SOL side that is only account rent", () => {
   });
 
   /**
-   * The `accountData` entry a token account gets in the observed layout is
-   * `accountData[1 + legIndex]` (see `buildObservedSwapPayload`). A closed
-   * token account reports its own emptying there, as a negative
-   * `nativeBalanceChange`; the wallet's entry reports the matching credit.
+   * Sets the native movement a token account reports on **its own**
+   * `accountData` entry, which in the observed layout is
+   * `accountData[1 + legIndex]` (see `buildObservedSwapPayload`). A token
+   * account moves lamports for exactly one reason: it was opened, and reports
+   * the rent it received, or it was closed, and reports the rent it gave back.
+   * The wallet's own entry carries the matching movement with the opposite
+   * sign.
    */
-  const closeAta = (payload: EnhancedTx, legIndex: number, lamports: unknown): EnhancedTx => {
+  const setAtaNative = (payload: EnhancedTx, legIndex: number, lamports: unknown): EnhancedTx => {
     (payload.accountData[1 + legIndex] as unknown as Record<string, unknown>).nativeBalanceChange = lamports;
     return payload;
   };
@@ -1972,7 +1975,7 @@ describe("a SOL side that is only account rent", () => {
     // `trade{sell, 500, solAmount 0.00207408}`, parse_error NULL.
     const sale = (lamports: number) =>
       evaluateSwap(
-        closeAta(
+        setAtaNative(
           buildObservedSwapPayload({
             wallet: wallet.address,
             nativeChangeLamports: lamports - 5_000,
@@ -2012,7 +2015,7 @@ describe("a SOL side that is only account rent", () => {
     // account's own entry says what it refunded, and that is exact.
     const sale = (lamports: number) =>
       evaluateSwap(
-        closeAta(
+        setAtaNative(
           buildObservedSwapPayload({
             wallet: wallet.address,
             nativeChangeLamports: lamports - 5_000,
@@ -2030,6 +2033,40 @@ describe("a SOL side that is only account rent", () => {
     expect(sale(2_157_600 + 1).outcome).toBe("trade");
   });
 
+  it("reads that rent on a BUY too, where the account is opened rather than closed", () => {
+    // Round 4, ruling E, and the mirror of the Token-2022 test above. Ruling A
+    // was written from a sell-side probe and stated the term as
+    // `max(0, -nativeBalanceChange)`, which reads a refund and is blind to a
+    // payment — so the same 182-byte account *opened* by a buy, reporting
+    // `+2157600` on its own entry, fell back to the floor and escaped it by
+    // 83,520 lamports. Measured at 4f4bbd6:
+    //   trade{buy, 500, solAmount 0.0021576} — 100% rent, parse_error NULL.
+    // Sign carries no information here: a token account's own lamports move
+    // for exactly one reason, and it is rent either way.
+    const purchase = (lamports: number) =>
+      evaluateSwap(
+        setAtaNative(
+          buildObservedSwapPayload({
+            wallet: wallet.address,
+            nativeChangeLamports: -(lamports + 5_000),
+            feeLamports: 5_000,
+            isFeePayer: true,
+            legs: [{ mint, decimals: 6, rawTokenAmount: "500000000" }],
+          }),
+          0,
+          // The ATA states the rent it was funded with, and it is the same
+          // 2,157,600 whatever else the wallet spent.
+          2_157_600,
+        ),
+        wallet,
+      );
+    expect(2_157_600).toBeGreaterThan(ATA_FLOOR); // the floor would not have covered it
+    expect(purchase(2_157_600).outcome).toBe("sol_leg_is_residue");
+    // One lamport of real spending on top of the rent, and it is a trade
+    // again — the same boundary the sell side is pinned at.
+    expect(purchase(2_157_600 + 1).outcome).toBe("trade");
+  });
+
   it("falls back to the floor when the stated rent cannot be read, and does not refuse the row", () => {
     // The exact term reads untrusted payload data on a path that decides an
     // outcome, so it goes through `requireLamports` — but an entry that is not
@@ -2038,7 +2075,7 @@ describe("a SOL side that is only account rent", () => {
     // one contributes nothing and leaves the floor exactly where it was.
     const sale = (lamports: number) =>
       evaluateSwap(
-        closeAta(
+        setAtaNative(
           buildObservedSwapPayload({
             wallet: wallet.address,
             nativeChangeLamports: lamports - 5_000,
@@ -2074,8 +2111,8 @@ describe("a SOL side that is only account rent", () => {
         { mint: USDC_MINT, decimals: 6, rawTokenAmount: "2" },
       ],
     });
-    closeAta(payload, 0, -RENT);
-    closeAta(payload, 1, -RENT);
+    setAtaNative(payload, 0, -RENT);
+    setAtaNative(payload, 1, -RENT);
     // The third account: closed, already empty, so no balance change at all.
     payload.accountData.push({ account: inventAddress(), nativeBalanceChange: -RENT, tokenBalanceChanges: [] });
     expect(2n * BigInt(ATA_FLOOR)).toBeLessThan(3n * BigInt(RENT)); // the floor does not reach it

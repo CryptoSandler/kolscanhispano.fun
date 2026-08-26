@@ -1082,20 +1082,33 @@ function stableLamportsFor(leg: TokenLeg, solUsd: bigint): bigint {
  * The rent this payload **states outright** for the token accounts of the
  * wallet's own legs, in lamports.
  *
- * A closed token account's `accountData` entry reports its own emptying as a
- * negative `nativeBalanceChange` — the exact refund, whatever that account's
- * size happened to be. Summing those over the entries that carry one of this
- * wallet's balance changes gives the part of the SOL side that is provably
- * bookkeeping, with no guess at an account size anywhere in it. That is what
- * `LARGEST_ATA_RENT_LAMPORTS * n` is standing in for whenever the payload
- * does not state it, and a stand-in is only ever a floor: an account bigger
- * than an ordinary ATA (a Token-2022 mint with several extensions, say) is
- * closed at a refund this term reads exactly and the floor underestimates.
+ * A token account's `accountData` entry reports its own lamport movement, and
+ * that is the exact rent of that account whatever its size happened to be.
+ * Summing those over the entries that carry one of this wallet's balance
+ * changes gives the part of the SOL side that is provably bookkeeping, with no
+ * guess at an account size anywhere in it. That is what
+ * `LARGEST_ATA_RENT_LAMPORTS * n` is standing in for whenever the payload does
+ * not state it, and a stand-in is only ever a floor: an account bigger than an
+ * ordinary ATA (a Token-2022 mint with several extensions, say) moves a rent
+ * this term reads exactly and the floor underestimates.
  *
- * Only *refunds* count (`max(0, -nativeBalanceChange)`). An account being
- * opened reports the same rent with the opposite sign, and it reaches the
- * wallet's SOL side through the wallet's own entry, where the floor already
- * covers it; reading it here would be reading the same lamports twice.
+ * **The magnitude, not the sign, and the sign carries no information here.** A
+ * token account's own lamports move for exactly one reason: it was opened and
+ * funded to rent-exemption, or it was closed and gave that rent back. Same
+ * quantity, opposite signs, and the wallet's SOL side has it with the sign
+ * flipped again either way — so `abs` is the reading and a directional one is
+ * half a rule. It was written directionally first, as
+ * `max(0, -nativeBalanceChange)`, from a sell-side probe, and the buy was
+ * blind: measured at `4f4bbd6`, a 182-byte Token-2022 account *opened* by a
+ * buy reports `+2157600` here, contributed 0, fell back to the floor and was
+ * written as `trade{buy, 500, solAmount 0.0021576}` — 100% rent,
+ * `parse_error` NULL. That is the same fabrication as the sell-side one this
+ * rule was built for, arriving through the other door.
+ *
+ * There is no double-counting to fear from reading both directions. This term
+ * and the wallet's own `nativeBalanceChange` are two different accounts'
+ * entries; `nativeLamportsFor` sums only entries whose `account` is the
+ * wallet's, and the exclusion below keeps this one off that same entry.
  *
  * **The wallet's own entry is excluded, and that is load-bearing.** The term
  * is the rent of *token accounts*, and a wallet's address is not one. Task 6
@@ -1131,7 +1144,8 @@ function identifiableRentFor(payload: EnhancedTx, address: string): bigint {
       if (!(error instanceof MalformedPayloadError)) throw error;
       continue; // not readable, therefore not identifiable: the floor stands
     }
-    if (native < 0n) total -= native;
+    // Magnitude: rent paid and rent refunded are the same bookkeeping.
+    total += native < 0n ? -native : native;
   }
   return total;
 }
@@ -1191,8 +1205,9 @@ function settleTrade(
   // touched, or it is not a price.**
   //
   // The bound is the larger of two statements about the same thing. The
-  // payload's own, `identifiableRentFor`: the refunds it reports on the token
-  // accounts carrying this wallet's legs, exact and size-agnostic. And a
+  // payload's own, `identifiableRentFor`: the rent it reports on the token
+  // accounts carrying this wallet's legs, opened or closed, exact and
+  // size-agnostic. And a
   // floor, for the accounts whose rent it does not state: the number of token
   // accounts this wallet demonstrably moved anything in (task 6: one balance
   // change per (token account, mint)), each of which could have been opened
