@@ -108,24 +108,19 @@
  * silent drop, and not requeueable.
  */
 import { aadFor, decrypt, encrypt } from "./crypto";
+import { ONE, formatDecimal, mulDiv, parseDecimal } from "./decimal";
 import { query, withTransaction } from "./db";
+import { USDC_MINT, WSOL_MINT } from "./mints";
+import { solUsdAt, valueTrade } from "./prices";
 import { findWalletByAddress, type WalletRow } from "./wallets";
 
 /**
- * Wrapped SOL mint. Spec §4.3: "A trade is a swap where the wallet's SOL/WSOL
- * balance moves against a SPL token balance" — WSOL is treated as part of the
- * SOL side, never as the traded token. Public well-known mint address,
- * allowlisted in hygiene.ts.
+ * Re-exported so every existing importer of `WSOL_MINT`/`USDC_MINT` keeps
+ * working. The definitions moved to `mints.ts` when this file began importing
+ * `prices.ts`: `prices.ts` needs both mints, and reading them from here would
+ * have made the two modules a cycle.
  */
-export const WSOL_MINT = "So11111111111111111111111111111111111111112";
-
-/**
- * USDC mint. Spec §4.3: "SOL ↔ stablecoin rotation is not a trade and is not
- * indexed" — a wallet swapping SOL directly for USDC (or back) is excluded
- * entirely, not recorded even as `unsupported_quote`. Public well-known mint
- * address, allowlisted in hygiene.ts.
- */
-export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+export { USDC_MINT, WSOL_MINT } from "./mints";
 
 /** SOL, and therefore WSOL, has 9 decimals: one raw WSOL unit is one lamport. */
 const LAMPORT_DECIMALS = 9;
@@ -1017,6 +1012,29 @@ function candidateAddresses(payload: EnhancedTx): string[] {
  * row left `parsed_at NULL, parse_error NULL` — the same permanent stall,
  * one door over, and reached only by rows that hold a real trade for a
  * tracked wallet.
+ *
+ * **The USD side, and the two things it must never do.** The rate comes from
+ * `solUsdAt` — the one place that lookup is written — and the arithmetic from
+ * `valueTrade`, on the exact 18-decimal grid.
+ *
+ * 1. When `solUsdAt` returns `null` there is no rate, and `usd_amount`,
+ *    `sol_usd` and `price_usd` are all written NULL. **Never `0`.** A zero is
+ *    a number the leaderboard sums and the feed renders; it is
+ *    indistinguishable from a trade that really was worth nothing, and spec
+ *    §4.1's honest gap (an unpriced buy understates `costUsd` while a priced
+ *    sell still removes a share of it, so `realized_usd` is *overstated*)
+ *    would become invisible instead of merely known. `priced_at` is stamped
+ *    on both paths, which is what keeps "we looked and there was no rate"
+ *    distinguishable from "nothing has ever looked at this row" — the
+ *    distinction `scripts/backfill-prices.ts` reports on.
+ * 2. Nothing on this path goes through a double. `Number(rate.usd)` and
+ *    `solAmount * solUsd` were the previous implementation and they wrote
+ *    values like `23.170000000000002` into a `numeric` column.
+ *
+ * `token_amount`, `sol_amount` and `fee_sol` are still `number`s on
+ * `ParsedTrade`, which is batch 1's shape and is not this task's to change;
+ * they are converted here, once, at the boundary, so at least nothing
+ * *downstream* of this write compounds them.
  */
 async function insertTrade(
   signatureHmac: Buffer,
@@ -1027,16 +1045,18 @@ async function insertTrade(
   const id = crypto.randomUUID();
   const signatureEnc = encrypt(header.signature, aadFor("trade", "signature", id));
   const blockTime = header.blockTime;
-  const priceSol = trade.solAmount / trade.tokenAmount;
 
-  const [rate] = await query<{ usd: string }>(
-    `SELECT usd FROM sol_price WHERE minute <= date_trunc('minute', $1::timestamptz)
-     ORDER BY minute DESC LIMIT 1`,
-    [blockTime],
-  );
-  const solUsd = rate ? Number(rate.usd) : null;
-  const usdAmount = solUsd === null ? null : trade.solAmount * solUsd;
-  const priceUsd = solUsd === null ? null : priceSol * solUsd;
+  const tokenAmount = parseDecimal(String(trade.tokenAmount));
+  const solAmount = parseDecimal(String(trade.solAmount));
+  // `evaluateSwap`'s dust floor keeps `tokenAmount` above 1e-6 of a token, so
+  // a zero here is unreachable — but `mulDiv` throws on a zero divisor and an
+  // uncaught throw out of `parsePending` is the permanent head-of-line stall
+  // this whole file is written against. A row with no per-token price is a
+  // recorded, readable trade; a stalled queue is not.
+  const priceSol = tokenAmount === 0n ? null : mulDiv(solAmount, ONE, tokenAmount);
+
+  const rate = await solUsdAt(blockTime);
+  const valued = rate === null ? null : valueTrade(solAmount, priceSol, rate);
 
   // Both writes or neither. The trade is the source of truth and the dirty
   // mark is the only thing that will ever cause it to be read: a crash
@@ -1048,8 +1068,8 @@ async function insertTrade(
     await tx(
       `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
                           mint, side, token_amount, sol_amount, usd_amount, sol_usd, price_sol,
-                          price_usd, fee_sol, block_time, slot)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                          price_usd, fee_sol, block_time, slot, priced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
        ON CONFLICT (signature_hmac, instruction_index, wallet_id) DO NOTHING`,
       [
         id,
@@ -1060,12 +1080,12 @@ async function insertTrade(
         wallet.id,
         trade.mint,
         trade.side,
-        trade.tokenAmount,
-        trade.solAmount,
-        usdAmount,
-        solUsd,
-        priceSol,
-        priceUsd,
+        formatDecimal(tokenAmount),
+        formatDecimal(solAmount),
+        valued?.usdAmount ?? null,
+        valued?.solUsd ?? null,
+        priceSol === null ? null : formatDecimal(priceSol),
+        valued?.priceUsd ?? null,
         trade.feeSol,
         blockTime,
         header.slot,

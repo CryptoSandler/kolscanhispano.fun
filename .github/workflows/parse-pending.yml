@@ -4,6 +4,24 @@ name: Parse pending trades
 # touch dirty. See src/lib/parse-swap.ts's parsePending, run here through
 # scripts/parse-pending.ts.
 #
+# Then prices what it just wrote, through scripts/backfill-prices.ts. The two
+# steps are one workflow because they are one cadence and one dependency:
+# insertTrade values a trade from the newest sol_price row at or before its
+# block time, and nothing else writes sol_price, so without a rate writer on
+# the parser's own cadence every new trade is recorded with a NULL
+# usd_amount -- which is the state the whole table was in. The backfill's
+# first act is refreshSolPrice (one free DexScreener request, no Helius
+# credits, no key), so the rate it writes for the current minute covers the
+# trades this run has just parsed and fills them in the same cycle.
+#
+# The order is parse-then-backfill and not the reverse. A rate written before
+# the parse would be one cycle stale by the time the trades exist, and the
+# backfill is the thing that revisits a trade -- nothing ever revisits a
+# parsed raw_tx row.
+#
+# The two scripts take different advisory locks, so the second cannot be
+# blocked by the first, and each exits non-zero on its own failure.
+#
 # This runs the work directly on a GitHub-hosted runner instead of calling an
 # HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
 # its work lives in a deployed app and Vercel Cron cannot send an auth
@@ -71,3 +89,15 @@ jobs:
           fi
 
           npx tsx scripts/parse-pending.ts
+
+      - name: Price the trades it wrote
+        env:
+          # Same three secrets. backfill-prices.ts reads DATABASE_URL through
+          # db.ts and decrypts nothing, but wallets.ts is on its import graph
+          # and asserts both keys at load time.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WALLET_ENC_KEY: ${{ secrets.WALLET_ENC_KEY }}
+          WALLET_HMAC_KEY: ${{ secrets.WALLET_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          npx tsx scripts/backfill-prices.ts

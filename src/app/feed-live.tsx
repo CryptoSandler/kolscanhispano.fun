@@ -146,8 +146,13 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
  * time right-aligned, and sign colour on the verb and the amount only. The row
  * reads as a sentence, so the amount sits inside the prose rather than in a
  * column.
+ *
+ * Exported only so a test can render it. It takes no props but a
+ * `PublicTrade`, holds no state and reads no context, which is what lets
+ * `renderToStaticMarkup` prove DESIGN.md's `state-unpriced` rule directly
+ * instead of a test asserting against the source text of this file.
  */
-function FeedRow({
+export function FeedRow({
   trade,
   now,
   isNew,

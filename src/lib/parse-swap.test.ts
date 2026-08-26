@@ -1388,10 +1388,15 @@ describe("parsePending", () => {
     expect(Number(trade.token_amount)).toBeCloseTo(2, 9);
     expect(Number(trade.sol_amount)).toBeCloseTo(1, 9);
     expect(Number(trade.fee_sol)).toBeCloseTo(0.000005, 9);
-    expect(Number(trade.sol_usd)).toBe(150);
-    expect(Number(trade.usd_amount)).toBeCloseTo(150, 9);
-    expect(Number(trade.price_sol)).toBeCloseTo(0.5, 9);
-    expect(Number(trade.price_usd)).toBeCloseTo(75, 9);
+    // Exact stored strings, not `Number(...)`: the columns are `numeric` and
+    // the point of the valuation path is that no double ever touches them.
+    expect(trade.sol_usd).toBe("150");
+    expect(trade.usd_amount).toBe("150");
+    expect(trade.price_sol).toBe("0.5");
+    expect(trade.price_usd).toBe("75");
+    // Stamped on every write, priced or not: it is what distinguishes "we
+    // looked and there was no rate" from "nothing has ever looked".
+    expect(trade.priced_at).not.toBeNull();
     expect(String(trade.slot)).toBe("555");
     expect(trade.instruction_index).toBe(0);
 
@@ -1451,7 +1456,79 @@ describe("parsePending", () => {
     expect(trade.sol_usd).toBeNull();
     expect(trade.usd_amount).toBeNull();
     expect(trade.price_usd).toBeNull();
+    // Spelled out because `0` is the failure this guards: it is falsy, it
+    // survives `Number()`, and a leaderboard sums it as if it were a
+    // measurement. `toBeNull` alone already excludes it, but a later change
+    // that "helpfully" defaults the column would have to delete this line
+    // rather than merely slip past a loose assertion.
+    expect(trade.usd_amount).not.toBe("0");
+    expect(trade.usd_amount).not.toBe(0);
+    // Looked, found nothing — a state the row now records, so the honest gap
+    // spec §4.1 names stays countable instead of merely absent.
+    expect(trade.priced_at).not.toBeNull();
     expect(Number(trade.sol_amount)).toBeCloseTo(1, 9); // the SOL side is still recorded
+  });
+
+  it("computes usd_amount exactly, not as a product of two doubles", async () => {
+    // 0.1 SOL at 231.71 USD/SOL. Measured in node 26, `0.1 * 231.71` is
+    // 23.171000000000003 and `0.05 * 231.71` is 11.585500000000001 — and
+    // `Number(rate.usd) * trade.solAmount`, the implementation this
+    // replaced, wrote exactly those strings into `numeric` columns. Both
+    // operands are ordinary money: no "close to" assertion can tell the two
+    // implementations apart, which is why this one is exact. The rate is
+    // 231.71 rather than 231.70 because 231.70 multiplies cleanly in doubles
+    // and the first draft of this test therefore proved nothing.
+    const minute = new Date("2026-08-25T12:00:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [minute]);
+
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -100_005_000, // 0.1 SOL out, plus the fee
+      tokenChangeRaw: "2000000", // 2 tokens in
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(minute.getTime() / 1000),
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: minute, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    const [trade] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(trade.sol_amount).toBe("0.1");
+    expect(trade.usd_amount).toBe("23.171");
+    expect(trade.price_sol).toBe("0.05");
+    expect(trade.price_usd).toBe("11.5855");
+  });
+
+  it("resolves the rate for the trade's own minute, not the newest rate in the table", async () => {
+    // A rate before the block and a rate after it. Taking the newest row, or
+    // dropping the `<=` bound, gives 400 — a number that looks every bit as
+    // reasonable as 100 on a screen.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1,'100'), ($2,'400')", [
+      new Date("2026-08-25T12:00:00.000Z"),
+      new Date("2026-08-25T14:00:00.000Z"),
+    ]);
+    const blockTime = new Date("2026-08-25T13:00:00.000Z");
+
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(blockTime.getTime() / 1000),
+    });
+    await storeRawTx({ signature: payload.signature, blockTime, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    const [trade] = await query<Record<string, unknown>>("SELECT sol_usd, usd_amount FROM trade");
+    expect(trade.sol_usd).toBe("100");
+    expect(trade.usd_amount).toBe("100");
   });
 
   it("records an unsupported quote without inserting a trade", async () => {

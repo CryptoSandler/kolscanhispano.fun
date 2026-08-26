@@ -11,8 +11,10 @@ import {
   solUsdAt,
   tokenMetadata,
   tryParsePair,
+  valueTrade,
   type ParsedPair,
 } from "./prices";
+import { ONE, parseDecimal } from "./decimal";
 
 beforeEach(async () => {
   await query("TRUNCATE token, sol_price CASCADE");
@@ -401,4 +403,50 @@ describe("refreshSolPrice", () => {
   // The one live call against a third party this file used to make lives in
   // prices.contract.test.ts now, run separately via `npm run test:contract`
   // rather than the blocking `npm test` gate. See that file for why.
+});
+
+// ---------------------------------------------------------------------------
+// valueTrade — the USD arithmetic, shared by insertTrade and the backfill
+// ---------------------------------------------------------------------------
+
+describe("valueTrade", () => {
+  const usd = (text: string) => parseDecimal(text);
+
+  it("multiplies exactly, where a double would not", () => {
+    // The operands are chosen from a measurement, not from intuition. In
+    // node 26: `0.1 * 231.71` is 23.171000000000003 and `0.05 * 231.71` is
+    // 11.585500000000001. (`231.7` — the first rate this test used — happens
+    // to multiply cleanly, so the test passed against a deliberately
+    // float-based implementation. That is the shape of green test this batch
+    // exists to stop writing.)
+    const valued = valueTrade(usd("0.1"), usd("0.05"), usd("231.71"));
+    expect(valued.usdAmount).toBe("23.171");
+    expect(valued.priceUsd).toBe("11.5855");
+    expect(valued.solUsd).toBe("231.71");
+  });
+
+  it("keeps price_usd null when there is no price_sol, rather than deriving one", () => {
+    const valued = valueTrade(usd("1"), null, usd("150"));
+    expect(valued.usdAmount).toBe("150");
+    expect(valued.priceUsd).toBeNull();
+  });
+
+  it("returns a zero amount only for a zero amount", () => {
+    // The distinction the whole task rests on: `0` is a legitimate output for
+    // a zero input and for nothing else. A missing rate never reaches here —
+    // callers hold NULL instead of calling with a substitute.
+    expect(valueTrade(0n, 0n, usd("150")).usdAmount).toBe("0");
+    expect(valueTrade(usd("1"), null, usd("150")).usdAmount).not.toBe("0");
+  });
+
+  it("carries the sign of the amount", () => {
+    expect(valueTrade(-usd("2"), null, usd("150")).usdAmount).toBe("-300");
+  });
+
+  it("stays on the 18-decimal grid rather than accumulating a residue", () => {
+    // One third of a SOL at 1 USD: truncated on the grid, not rounded up and
+    // not carrying a float's tail.
+    const third = ONE / 3n;
+    expect(valueTrade(third, null, ONE).usdAmount).toBe("0.333333333333333333");
+  });
 });

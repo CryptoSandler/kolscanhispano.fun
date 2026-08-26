@@ -38,9 +38,9 @@
  * threshold comparison and for display, never added to or multiplied against
  * anything.
  */
-import { formatDecimal, parseDecimal } from "./decimal";
+import { ONE, formatDecimal, mulDiv, parseDecimal } from "./decimal";
 import { query } from "./db";
-import { USDC_MINT, WSOL_MINT } from "./parse-swap";
+import { USDC_MINT, WSOL_MINT } from "./mints";
 
 /** DexScreener's own limit on a `/tokens/{mints}` call. Exceeding it 400s the request. */
 export const DEXSCREENER_BATCH_LIMIT = 30;
@@ -76,10 +76,15 @@ export type PriceState = "priced" | "stale" | "unpriced";
  *
  * The `<=` bound, not `=`, is what makes a trade minutes or hours after the
  * last successful `refreshSolPrice` still resolve to a real rate instead of
- * `null` — the exact continuity a cache-miss-tolerant design needs. This
- * mirrors the inline query `parse-swap.ts`'s `insertTrade` already runs; it
- * is kept here as the one place that logic is written, for anything besides
- * trade-writing that needs the same lookup.
+ * `null` — the exact continuity a cache-miss-tolerant design needs.
+ *
+ * This is the **only** place that lookup is written. `parse-swap.ts`'s
+ * `insertTrade` used to run its own copy inline and `scripts/backfill-prices.ts`
+ * would have been a third; a rate lookup written three times is a rule that
+ * can disagree with itself, and "which minute's rate" is precisely the kind
+ * of off-by-one that produces a plausible wrong number rather than a failure.
+ * Both callers now come through here, so one mutation of this query is
+ * visible to every test that depends on it.
  */
 export async function solUsdAt(minute: Date): Promise<bigint | null> {
   const [row] = await query<{ usd: string }>(
@@ -89,6 +94,49 @@ export async function solUsdAt(minute: Date): Promise<bigint | null> {
     [minute],
   );
   return row ? parseDecimal(row.usd) : null;
+}
+
+/**
+ * One trade's USD figures at a given SOL/USD rate. Decimal strings, ready for
+ * a `numeric` column — never `number`s.
+ */
+export type TradeValuation = {
+  solUsd: string;
+  usdAmount: string;
+  priceUsd: string | null;
+};
+
+/**
+ * Values one trade at `solUsd`. Every argument is scaled `BigInt` (see
+ * `decimal.ts`) and every result is a decimal string, so no USD figure this
+ * project stores passes through a double.
+ *
+ * That is not a stylistic preference here. The previous implementation lived
+ * inline in `insertTrade` and read `Number(rate.usd)` off the `numeric` `pg`
+ * hands back, then multiplied two doubles. Measured in node 26:
+ * `0.1 * 231.71` is `23.171000000000003` and `0.05 * 231.71` is
+ * `11.585500000000001` — both written straight into a `numeric` column, and
+ * the leaderboard sums thousands of them. (`0.1 * 231.7`, an earlier draft's
+ * example, is exactly `23.17` in doubles; the artefact depends on the
+ * operands, which is precisely why "it looked right in the test I tried" is
+ * not evidence.) `mulDiv` divides once and truncates on the 18-decimal grid,
+ * eleven orders of magnitude below a lamport.
+ *
+ * `priceSol` is nullable because `price_usd` is derived from it: a trade with
+ * no per-token price has no per-token USD price either, and inventing one
+ * from `usdAmount` alone would be a fabricated number of exactly the kind
+ * `parse-swap.ts`'s header exists to forbid.
+ */
+export function valueTrade(
+  solAmount: bigint,
+  priceSol: bigint | null,
+  solUsd: bigint,
+): TradeValuation {
+  return {
+    solUsd: formatDecimal(solUsd),
+    usdAmount: formatDecimal(mulDiv(solAmount, solUsd, ONE)),
+    priceUsd: priceSol === null ? null : formatDecimal(mulDiv(priceSol, solUsd, ONE)),
+  };
 }
 
 /**

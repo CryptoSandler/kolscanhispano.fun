@@ -72,3 +72,33 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     expect(text).not.toMatch(/WALLET_(ENC|HMAC)_KEY\s*[:=]\s*["']?[A-Za-z0-9+/]{20,}={0,2}["']?\s*$/m);
   });
 });
+
+/**
+ * The parse workflow gained a second step in Task 5: the backfill, which is
+ * the only thing that writes `sol_price` and therefore the only reason a new
+ * trade carries a USD amount at all. The order is the property — a rate
+ * written before the parse would be one cycle stale by the time the trades
+ * exist, and nothing ever revisits a parsed `raw_tx` row.
+ */
+describe(".github/workflows/parse-pending.yml: pricing step", () => {
+  const text = readFileSync(".github/workflows/parse-pending.yml", "utf8");
+
+  it("runs the backfill in the same workflow, after the parse", () => {
+    const parseAt = text.indexOf("npx tsx scripts/parse-pending.ts");
+    const backfillAt = text.indexOf("npx tsx scripts/backfill-prices.ts");
+    expect(parseAt).toBeGreaterThan(-1);
+    expect(backfillAt).toBeGreaterThan(-1);
+    expect(backfillAt).toBeGreaterThan(parseAt);
+  });
+
+  it("gives the backfill step the secrets it needs to connect and to load wallets.ts", () => {
+    // Everything from the backfill step's own `env:` block to the end of the
+    // file, so a secret declared only on the *parse* step cannot satisfy this.
+    const step = text.slice(text.indexOf("Price the trades it wrote"));
+    for (const name of REQUIRED_SECRETS) {
+      expect(step, `${name} on the pricing step`).toMatch(
+        new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`),
+      );
+    }
+  });
+});
