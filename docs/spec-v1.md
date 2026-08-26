@@ -117,8 +117,17 @@ position       kol_id, mint, qty numeric, cost_sol numeric, avg_cost_sol numeric
                basis enum(known, unknown), dirty bool
                pk (kol_id, mint)
 
+pnl_position_daily
+               kol_id, mint, day date, realized_sol, realized_usd, wins, losses
+               pk (kol_id, mint, day)
+               -- The replay is scoped to one (kol, mint), so realized PnL accumulates per
+               -- position first. A per-mint replay writing kol-level daily rows directly
+               -- would overwrite every other mint's contribution to that day.
+
 pnl_daily      kol_id, day date, realized_sol, realized_usd, wins, losses
                pk (kol_id, day)
+               -- Derived: the sum of pnl_position_daily over the KOL's mints for that day,
+               -- excluding positions whose basis is unknown (§4.5).
 
 token          mint pk, symbol, name, decimals, image_url, price_usd, price_sol, liquidity_usd,
                price_state enum(priced, stale, unpriced), pair_url, updated_at
@@ -221,7 +230,14 @@ Never a single blended number. kolscan.io blends them per token and its own page
 ### 4.8 Win rate
 
 Per **closed position**, not per sell. A position counts once, when ≥ `CLOSED_POSITION_THRESHOLD`
-(default 95 %) of the acquired quantity has been sold; it is a win if its realized PnL is positive.
+(default 95 %) of the acquired quantity has been sold; it is a win if **that episode's** realized
+PnL is positive — the realized total since the position last reopened, never the cumulative one.
+A position that reopens after closing can close again, and counts again.
+
+Deciding on the cumulative total would mean that once a position had ever been in profit, every
+later closure counted as a win: a day whose own realized PnL is negative would carry a win, which
+is the contradiction §4.7 objects to in the reference site.
+
 Counting per sell rewards whoever exits in twelve tranches. The UI states the definition:
 *posiciones cerradas ganadoras / posiciones cerradas*.
 
