@@ -632,11 +632,17 @@ export function parseHeliusAsset(json: unknown): HeliusMetadata | null {
  * when `HELIUS_API_KEY` is not configured, on any request failure, on a
  * non-OK response, or when the response cannot be parsed.
  *
- * This environment has no `HELIUS_API_KEY`, so the no-key branch is what
- * actually runs in production right now; it is exercised directly by this
- * file's test suite. The request-shape and response-parsing branches are
- * exercised against fixtures with a stubbed key, never against a live DAS
- * call.
+ * The no-key branch returns `null` and is exercised directly by this file's
+ * test suite. The request-shape and response-parsing branches are exercised
+ * against fixtures with a stubbed key, never against a live DAS call — the
+ * suite's per-file network guard sees to that, and a DAS call costs 10
+ * credits every time it is made.
+ *
+ * This comment used to assert that the key was absent here and that the
+ * no-key branch was therefore what production ran. Both halves were wrong: a
+ * key is present in this working tree, and one machine's environment says
+ * nothing about production's. Which branch runs where is a deployment fact,
+ * not a fact this file can know.
  *
  * Never logs the caught error object on a request failure: a `fetch`
  * rejection's `message` or `cause` can carry the request URL, and the URL
