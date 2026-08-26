@@ -38,6 +38,16 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     expect(text).toContain(`npx tsx ${script}`);
   });
 
+  it("hands the job a read-only GITHUB_TOKEN", () => {
+    // Declared at workflow level, so it applies to every job and every step
+    // rather than to whichever one someone remembered. Without it the token
+    // is whatever the repository default grants -- write-scoped on a public
+    // repo by default -- handed to a job that only checks out code and talks
+    // to Neon. Nothing here uses the token for anything at all; `contents:
+    // read` is what actions/checkout needs and not one scope more.
+    expect(text).toMatch(/^permissions:\s*\n\s+contents:\s*read\s*$/m);
+  });
+
   it("wires all three required secrets into the job env", () => {
     for (const name of REQUIRED_SECRETS) {
       expect(text).toMatch(new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));

@@ -51,6 +51,15 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+# The GITHUB_TOKEN this workflow gets, declared at workflow level so it
+# covers every job and step rather than whichever one someone remembers.
+# Undeclared, it is whatever the repository default grants -- which on a
+# public repo can be write-scoped -- handed to a job that only checks out
+# code and connects to Neon. Nothing here uses the token for anything but
+# the checkout, and `contents: read` is exactly what the checkout needs.
+permissions:
+  contents: read
+
 # A run that is still going when the next schedule fires should finish, not
 # be raced. scripts/parse-pending.ts also takes its own advisory lock
 # (withLock) for exactly this case — this concurrency group just avoids
