@@ -15,6 +15,24 @@ import { lockKey } from "./lock-key";
  * calling `fn` when another session already holds the lock; otherwise runs
  * `fn` and returns its result.
  *
+ * **`null` is a sentinel, and nothing distinguishes it from an `fn` that
+ * returns `null` itself.** "The lock was held, `fn` never ran" and "`fn` ran
+ * and resolved to `null`" arrive at the call site as the same value, and the
+ * type says `T | null` either way. Every caller today is safe by accident of
+ * what it passes -- `parsePending`, `recomputeDirty` and `pruneRateLimit` all
+ * resolve to a `number` -- so the ambiguity is latent, not a live bug. What
+ * makes it worth writing down is the shape of the failure: a caller whose
+ * `fn` later gains a legitimate `null` result reads that result as contention
+ * and silently skips the work, on a path that logs "did nothing" and exits 0.
+ * Nothing about it looks wrong from outside.
+ *
+ * A caller that needs the two apart should not widen this signature for it.
+ * Wrapping is enough and is local: `withLock(name, async () => ({ value: await
+ * fn() }))` returns `null` only for contention, since an object literal never
+ * is one. Changing `withLock` to return a discriminated result instead would
+ * be the right call only once several callers need it at once -- it is an
+ * edit to every call site in the repo for a problem none of them has.
+ *
  * This is deliberately not a table row: it needs no migration, and it cannot
  * leave stale state behind if a runner is killed -- Postgres drops the lock
  * the moment the holding connection closes, no cleanup query required.
