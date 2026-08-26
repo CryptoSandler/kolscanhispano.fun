@@ -149,6 +149,28 @@ be reported, since it needs no key.
 
 ---
 
+### Task 4b — A network guard in the test harness
+
+**Files:** the vitest setup (`vitest.globalSetup.ts` / `vitest.env.ts`), its test.
+
+Replace `fetch` for the duration of the suite with one that **throws, naming the host**, so no test
+can reach the network by accident. A test that needs Helius or DexScreener mocks it explicitly.
+
+**Why, concretely.** Task 4 shipped four tests written against the belief that no `HELIUS_API_KEY`
+existed. One does. Those tests would have made real, credit-spending DAS calls on every `vitest
+run`. They were fixed by stubbing the key per test — that stays, but it must stop being the only
+barrier, because it depends on every future test author remembering. A guard in the harness does
+not depend on anyone remembering.
+
+**Properties to prove.** A test that calls `fetch` fails, and the failure names the host it tried
+to reach — a guard whose message does not say what was called teaches nothing. A test that mocks
+`fetch` is unaffected. The guard is in force for every test file, not only the ones that opt in.
+The one place a live call is legitimate — Task 4's single DexScreener call — either goes through an
+explicit, named escape hatch or moves to a fixture; decide which and say why.
+
+**The mutation that matters:** remove the guard and confirm a test that should be blocked now
+passes. A guard that has never been shown to block anything is decoration.
+
 ### Task 5 — Value every new trade, and backfill the old ones
 
 **Files:** `src/lib/parse-swap.ts` (valuation call site), `scripts/backfill-prices.ts`.
@@ -212,24 +234,40 @@ do not assume.
 
 ### Task 8 — Shadow measurement of `userAccount: ""`
 
-**Files:** `scripts/measure-user-account.ts`, a written finding in the report.
+**Files:** `scripts/sombra-user-account.ts`, `src/lib/fixtures/helius/` (cached payloads), a
+written finding in the report.
 
 Nine review rounds in batch 1 rest on the premise that Helius emits `userAccount: ""` rarely. The
 premise is asserted nowhere, and the blunt rule built on it — an unattributable non-zero balance
 change makes the row malformed — refuses real traffic if the shape is common.
 
-Measure two numbers over at least a few hundred real enhanced SWAP payloads: the fraction of
-deliveries carrying a non-zero balance change with an empty or unreadable `userAccount`, and the
-`malformed_payload` rate the current parser would produce on them. Report against the thresholds
-already recorded: **2 % and 10 %**.
+**A `HELIUS_API_KEY` exists in `.env.local` and works** — verified 2026-08-26 with `getHealth`
+returning `{"result":"ok"}`. An earlier version of this plan said there was none; that was an
+unverified claim and it was wrong. This task is therefore executable.
+
+**This is a script, not a test.** Nothing that spends credits belongs in a suite that runs on every
+change.
+
+**A hard budget, enforced in the client and not by discipline.** `HELIUS_SHADOW_MAX_REQUESTS`,
+default 50, counted in the client itself; on reaching it the run aborts rather than continuing. At
+the end it prints requests used and estimated credits.
+
+**Check what the endpoint actually costs** in Helius's own documentation before reporting a credit
+figure — do not assume 10. Different endpoints cost differently and the number goes in the report.
+
+**Cache every raw response** to `src/lib/fixtures/helius/<signature>.json`. Re-running then costs
+nothing, and the payloads become real fixtures for the parser — which is worth more than the
+measurement, because every parser fixture in the repository today was reconstructed from
+documentation.
+
+**Never print the key**, on any path, including an error.
+
+**Report:** how many transactions were examined, the percentage carrying a non-zero balance change
+with an empty or unreadable `userAccount`, measured against the thresholds already recorded — **2 %
+and 10 %** — and, for each batch 1 parser decision that rested on this premise, whether the number
+confirms it or refutes it.
 
 **Measure only. Do not change the parser on the strength of this** — bring the number back.
-
-**This task needs a `HELIUS_API_KEY` and there is none.** If it is absent, this is a blocked task:
-say so, skip it, and continue. Do not substitute synthetic payloads and call the result a
-measurement — the entire point is that synthetic payloads are what created the doubt.
-
----
 
 ### Task 9 — The two deferrals that bite first
 

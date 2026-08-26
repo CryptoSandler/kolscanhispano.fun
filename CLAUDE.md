@@ -79,3 +79,18 @@ next reader knows it was a decision and not an oversight:
 Four things are never simplified away, at any level: input validation at trust boundaries,
 security, error handling that prevents data loss, and accessibility basics. Laziness governs
 how much code gets written. It never governs what that code is allowed to skip.
+
+## Verify an environment fact before writing it into a brief
+
+A claim about this environment — a key being present or absent, a service being reachable, a
+version, a table existing — is verified with a command before it is written down, and the command
+goes in beside the claim. It is never asserted from memory or inference.
+
+This rule exists because it was broken. A batch 2 brief stated "there is no `HELIUS_API_KEY` in
+this environment". There was one, and it worked. Four tests were written against the false premise
+and would have made real, credit-spending Helius calls on every `vitest run` — the subagent caught
+it, not the author. An unverified environment fact in a brief propagates into tests that pass while
+resting on it, which is the most expensive shape a wrong assumption can take here.
+
+    # verified 2026-08-26: key present, 36 chars, getHealth -> {"result":"ok"}
+
