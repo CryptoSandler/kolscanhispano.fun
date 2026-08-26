@@ -91,6 +91,88 @@ export type PublicTrade = {
   signature: string | null;
 };
 
+/**
+ * One ranked KOL, as the leaderboard query produces it.
+ *
+ * `address` is optional and the query never selects it, for the same reason
+ * {@link FeedRow} carries one: it lets the invariant test hand this function a
+ * row that really does contain an address.
+ */
+export type LeaderboardRow = {
+  kol_id: string;
+  slug: string;
+  display_name: string;
+  x_handle: string;
+  cabal_tag: string | null;
+  realized_sol: string;
+  realized_usd: string;
+  wins: number;
+  losses: number;
+  address?: string | null;
+};
+
+/** Everything a public response may carry about a ranked KOL, and nothing more. */
+export type PublicLeaderboardEntry = {
+  rank: number;
+  kol: {
+    slug: string;
+    name: string;
+    /** The public persona spec §2 puts the `𝕏` link on. Not a wallet. */
+    xHandle: string;
+    cabalTag: string | null;
+    avatarUrl: string;
+  };
+  realizedSol: string;
+  realizedUsd: string;
+  wins: number;
+  losses: number;
+  /**
+   * Spec §4.8's figure, as a plain decimal string with at most one fractional
+   * digit: *closed positions won / closed positions*, never per sell.
+   *
+   * `"0"` when nothing has closed, which is what the row shows beside a
+   * visible `0 / 0`. A dash there would be the missing-data rendering
+   * DESIGN.md reserves for `state-unpriced`, and this is not missing data —
+   * the KOL genuinely closed no position in the window.
+   */
+  winRate: string;
+};
+
+/**
+ * `wins / (wins + losses)` as a percentage with one decimal, in integer
+ * arithmetic.
+ *
+ * A count is not money, so a float here would not be the sin `decimal.ts`
+ * exists to prevent — but `wins * 100 / closed` in doubles gives
+ * `33.33333333333333` and then rounds through another float, and there is no
+ * reason to accept that when `bigint` states the rounding rule outright.
+ * Half away from zero, matching every other figure this product rounds.
+ */
+function winRateOf(wins: number, losses: number): string {
+  const closed = BigInt(wins) + BigInt(losses);
+  if (closed <= 0n) return "0";
+  const tenths = (BigInt(wins) * 2000n + closed) / (closed * 2n);
+  return `${tenths / 10n}.${tenths % 10n}`;
+}
+
+export function serializeLeaderboardEntry(row: LeaderboardRow, rank: number): PublicLeaderboardEntry {
+  return {
+    rank,
+    kol: {
+      slug: row.slug,
+      name: row.display_name,
+      xHandle: row.x_handle,
+      cabalTag: row.cabal_tag,
+      avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
+    },
+    realizedSol: row.realized_sol,
+    realizedUsd: row.realized_usd,
+    wins: row.wins,
+    losses: row.losses,
+    winRate: winRateOf(row.wins, row.losses),
+  };
+}
+
 export function serializeTrade(row: FeedRow): PublicTrade {
   return {
     id: row.id,

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Inter, Inter_Tight, JetBrains_Mono } from "next/font/google";
+import { AffiliateSlot } from "./affiliate-slot";
+import { SiteNav } from "./site-nav";
 import "./globals.css";
 
 /**
@@ -26,6 +28,14 @@ export const metadata: Metadata = {
   description: "Operaciones en vivo de KOLs hispanohablantes en Solana.",
 };
 
+/**
+ * The affiliate slot reads a `setting` row, so the shell is rendered per
+ * request. Every route under it is `force-dynamic` already; saying so here
+ * keeps a future statically-rendered page from trying to reach Postgres at
+ * build time.
+ */
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     /*
@@ -41,15 +51,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="shell">
           <header className="topbar">
-            <Link className="wordmark" href="/">
-              kolscanhispano<span className="tld">.fun</span>
-            </Link>
+            <div className="brand">
+              <Link className="wordmark" href="/">
+                kolscanhispano<span className="tld">.fun</span>
+              </Link>
+              <SiteNav />
+            </div>
             {/*
               Spec §1.9: the affiliate slot is configurable from the admin and
               empty at launch, where it renders nothing. The admin that
               configures it is a later task; an empty slot is the correct
               rendering of its launch state, not a placeholder.
             */}
+            <AffiliateSlot />
           </header>
           <main>{children}</main>
           <p className="footnote">

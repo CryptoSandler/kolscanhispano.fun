@@ -105,6 +105,50 @@ export function formatUsdPrice(text: string): string {
   return `US$${formatAmount(text, 4)}`;
 }
 
+/** `+`, the typographic minus, or nothing at all for zero. */
+function signOf(value: bigint): string {
+  if (value > 0n) return "+";
+  return value < 0n ? MINUS : "";
+}
+
+function absolute(value: bigint): bigint {
+  return value < 0n ? -value : value;
+}
+
+/**
+ * A leaderboard total in SOL: `+18,42 SOL`, `−3,10 SOL`, `0,00 SOL`.
+ *
+ * **Exactly two decimals, always** — unlike {@link formatSol}, which lets a
+ * feed row be honest about the size of one trade. DESIGN.md's rule is that a
+ * column of figures aligns on the decimal for its whole height, and a variable
+ * number of decimals cannot do that. A window's realized total is also never
+ * dust: it is the sum of a day's or a month's round trips.
+ *
+ * The sign is explicit on a gain because the leaderboard's whole subject is
+ * direction, and `18,42` next to `−3,10` reads as an absolute value until the
+ * eye finds the colour.
+ */
+export function formatSignedSol(text: string): string {
+  const value = parseDecimal(text);
+  return `${signOf(value)}${renderEs(roundTo(absolute(value), 2), 2)} SOL`;
+}
+
+/** The same total in USD: `+US$1.802,40`. The sign goes outside the symbol. */
+export function formatSignedUsd(text: string): string {
+  const value = parseDecimal(text);
+  return `${signOf(value)}US$${renderEs(roundTo(absolute(value), 2), 2)}`;
+}
+
+/**
+ * A win rate: `68,4 %`, `100 %`, `0 %`. Three significant digits with no
+ * decimal floor, so a whole percentage is not padded to `100,0 %`.
+ *
+ * The space before `%` is `es-ES`, not a typo.
+ */
+export function formatPercent(text: string): string {
+  return `${renderAmount(parseDecimal(text), 3, 0)} %`;
+}
+
 /** Scaled by 10^18, so dividing the scaled value by these divides the real one. */
 const MILLION = 10n ** 6n;
 const TRILLION = 10n ** 12n;

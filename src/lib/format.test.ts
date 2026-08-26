@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { formatRelative, formatSol, formatTokenAmount, formatUsdPrice } from "./format";
+import {
+  formatPercent,
+  formatRelative,
+  formatSignedSol,
+  formatSignedUsd,
+  formatSol,
+  formatTokenAmount,
+  formatUsdPrice,
+} from "./format";
 
 describe("formatSol", () => {
   it("uses the es-ES decimal comma", () => {
@@ -122,5 +130,58 @@ describe("formatRelative", () => {
   it("never renders a negative age", () => {
     expect(formatRelative(ago(-30), now)).toBe("ahora");
     expect(formatRelative(ago(0), now)).toBe("ahora");
+  });
+});
+
+describe("formatSignedSol", () => {
+  // DESIGN.md: a column of figures aligns on the decimal for its whole height.
+  // The feed row may vary its precision; a leaderboard column may not.
+  it("always renders exactly two decimals, whatever the magnitude", () => {
+    expect(formatSignedSol("18.42")).toBe("+18,42 SOL");
+    expect(formatSignedSol("1802.4")).toBe("+1.802,40 SOL");
+    expect(formatSignedSol("0.004")).toBe("+0,00 SOL");
+    expect(formatSignedSol("7")).toBe("+7,00 SOL");
+  });
+
+  it("marks a gain with a plus and a loss with the typographic minus", () => {
+    expect(formatSignedSol("-3.1")).toBe("\u22123,10 SOL");
+    expect(formatSignedSol("-1802.456")).toBe("\u22121.802,46 SOL");
+  });
+
+  // Neither a gain nor a loss: a window in which nothing was realized carries
+  // no sign, and no colour either (DESIGN.md reserves green and red for
+  // direction of money).
+  it("gives zero no sign at all, however it is spelled", () => {
+    expect(formatSignedSol("0")).toBe("0,00 SOL");
+    expect(formatSignedSol("0.000")).toBe("0,00 SOL");
+    expect(formatSignedSol("-0")).toBe("0,00 SOL");
+  });
+
+  it("rounds half away from zero, in both directions", () => {
+    expect(formatSignedSol("1.005")).toBe("+1,01 SOL");
+    expect(formatSignedSol("-1.005")).toBe("\u22121,01 SOL");
+  });
+});
+
+describe("formatSignedUsd", () => {
+  it("puts the sign outside the currency symbol", () => {
+    expect(formatSignedUsd("1802.4")).toBe("+US$1.802,40");
+    expect(formatSignedUsd("-227")).toBe("\u2212US$227,00");
+    expect(formatSignedUsd("0")).toBe("US$0,00");
+  });
+});
+
+describe("formatPercent", () => {
+  it("renders a win rate the way es-ES does, space included", () => {
+    expect(formatPercent("70.6")).toBe("70,6 %");
+    expect(formatPercent("42.9")).toBe("42,9 %");
+  });
+
+  // No decimal floor: `100,0 %` and `0,0 %` say nothing the shorter form does
+  // not, and both sit in a column beside `70,6 %`.
+  it("does not pad a whole percentage", () => {
+    expect(formatPercent("100.0")).toBe("100 %");
+    expect(formatPercent("0")).toBe("0 %");
+    expect(formatPercent("50.0")).toBe("50 %");
   });
 });
