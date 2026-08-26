@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertTestDatabaseMarker, query } from "./db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertTestDatabaseMarker, pool, query, withTransaction } from "./db";
 
 describe("db", () => {
   it("connects to the test database and runs a query", async () => {
@@ -15,6 +15,64 @@ describe("db", () => {
   it("has applied the bootstrap migration", async () => {
     const rows = await query<{ version: string }>("SELECT version FROM schema_migrations");
     expect(rows.map((r) => r.version)).toContain("000_bootstrap");
+  });
+});
+
+describe("withTransaction", () => {
+  const key = "withTransaction-probe";
+
+  beforeEach(async () => {
+    await query("DELETE FROM setting WHERE key = $1", [key]);
+  });
+
+  const stored = () => query<{ key: string }>("SELECT key FROM setting WHERE key = $1", [key]);
+  const write = (tx: (sql: string, params?: unknown[]) => Promise<unknown[]>) =>
+    tx("INSERT INTO setting (key, value) VALUES ($1, '1'::jsonb)", [key]);
+
+  it("commits the work and returns what the function returned", async () => {
+    const result = await withTransaction(async (tx) => {
+      await write(tx);
+      return "done";
+    });
+
+    expect(result).toBe("done");
+    expect(await stored()).toHaveLength(1);
+  });
+
+  it("rolls the work back when the function throws", async () => {
+    await expect(
+      withTransaction(async (tx) => {
+        await write(tx);
+        throw new Error("the caller's failure");
+      }),
+    ).rejects.toThrow("the caller's failure");
+
+    expect(await stored()).toHaveLength(0);
+  });
+
+  it("rolls back a statement that failed inside the transaction", async () => {
+    await expect(
+      withTransaction(async (tx) => {
+        await write(tx);
+        await tx("INSERT INTO setting (key, value) VALUES ($1, '2'::jsonb)", [key]);
+      }),
+    ).rejects.toThrow();
+
+    // The duplicate key aborted the second statement; the first must not survive.
+    expect(await stored()).toHaveLength(0);
+  });
+
+  it("releases the client whether it committed or threw", async () => {
+    // The pool is max: 1. A client that is not released is not merely leaked —
+    // it takes the whole process's database access with it, so the assertion
+    // that matters is that the next query still runs at all.
+    await withTransaction(async (tx) => write(tx));
+    expect(pool.idleCount).toBe(1);
+
+    await expect(withTransaction(async () => Promise.reject(new Error("no")))).rejects.toThrow("no");
+    expect(pool.idleCount).toBe(1);
+
+    expect((await query<{ one: number }>("SELECT 1::int AS one"))[0].one).toBe(1);
   });
 });
 
