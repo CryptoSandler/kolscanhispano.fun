@@ -1,20 +1,22 @@
 import { Client } from "pg";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { query } from "./db";
 import { lockKey, withLock } from "./lock";
 
-// withLock borrows the module pool's one and only connection (max: 1, see
-// db.ts) for the whole call. A rival "other process" in these tests
-// therefore cannot be another call routed through that same pool -- it
-// would just queue behind the first `pool.connect()` and never actually
-// contend; by the time it got a client the first call would already have
-// released it. A rival has to be a second, independent connection instead,
-// which also matches the real scenario this task defends against: a
-// scheduled cron run and a manual dispatch are two separate processes, each
-// with a connection of its own.
+// withLock opens its own dedicated connection per call (see lock.ts), not
+// the shared, max: 1 pool -- so two concurrent calls to withLock itself
+// would now genuinely race for the same advisory lock rather than being
+// forced to serialize on one connection. These tests still use a rival held
+// on a separate, manually-controlled connection, because that gives a case
+// deterministic control: assert the lock is held ("returns null"), then
+// explicitly release it and assert `withLock` succeeds -- instead of
+// leaving a real race's winner to chance. This also matches the real
+// scenario this task defends against: a scheduled cron run and a manual
+// dispatch are two separate processes, each with a connection of its own.
 //
-// A second wrinkle beyond `max: 1`: both DATABASE_URL and TEST_DATABASE_URL
-// point at Neon's pooled (`-pooler`) endpoint, so a rival's lock has to be a
+// A second, independent reason a rival needs its own connection: both
+// DATABASE_URL and TEST_DATABASE_URL point at Neon's pooled (`-pooler`)
+// endpoint, so a rival's lock has to be a
 // `pg_try_advisory_xact_lock` held inside an explicit, still-open
 // transaction -- exactly what withLock itself does (see lock.ts) -- or
 // PgBouncer's transaction pooling is free to hand the rival's later
@@ -139,6 +141,42 @@ describe("withLock", () => {
     }
     expect(acquired).toBe("ran");
   });
+
+  it("closes its dedicated connection when done, success or failure", async () => {
+    // withLock's own client is never shared or pooled by this codebase, so
+    // a leaked one doesn't block a later call the way a leaked pool client
+    // would -- each call just opens another fresh connection. That means
+    // none of the behavioral assertions above would notice if `client.end()`
+    // stopped being called; only a direct check that it happened does.
+    const endSpy = vi.spyOn(Client.prototype, "end");
+    const before = endSpy.mock.calls.length;
+
+    await withLock("withLock-closes-on-success", async () => "done");
+    expect(endSpy.mock.calls.length).toBe(before + 1);
+
+    await expect(
+      withLock("withLock-closes-on-failure", async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(endSpy.mock.calls.length).toBe(before + 2);
+
+    endSpy.mockRestore();
+  });
+
+  it("lets fn use the shared pool without deadlocking", async () => {
+    // The real calling shape (Task 2): withLock(name, () => parsePending()),
+    // and parsePending is nothing but queries through the shared pool. An
+    // earlier version of withLock held that pool's one (max: 1) connection
+    // for the whole call, so this query waited for a connection withLock
+    // itself was holding and hung instead of completing. withLock now holds
+    // its lock on a dedicated connection of its own, so fn is free to use
+    // the shared pool normally.
+    const result = await withLock("withLock-pool-probe", () =>
+      query<{ one: number }>("SELECT 1::int AS one"),
+    );
+    expect(result).toEqual([{ one: 1 }]);
+  }, 10_000);
 });
 
 describe("lockKey", () => {

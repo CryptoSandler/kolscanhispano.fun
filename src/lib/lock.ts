@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { pool } from "./db";
+import { Client } from "pg";
+import { resolveConnectionString } from "./db";
 
 /**
  * Hashes `name` to a signed 64-bit integer, returned as a decimal string so
@@ -26,7 +27,22 @@ export function lockKey(name: string): string {
  * leave stale state behind if a runner is killed -- Postgres drops the lock
  * the moment the holding connection closes, no cleanup query required.
  *
- * **Transaction-scoped, not session-scoped, and that is load-bearing here.**
+ * **A dedicated connection, not the shared pool -- on purpose, and do not
+ * "simplify" this back to `pool.connect()`.** The module pool in `db.ts` is
+ * `max: 1`. An earlier version of this function borrowed that pool's one
+ * client and held it for the whole call. Since the intended caller is
+ * exactly `withLock(name, () => someQueryHeavyJob())` -- Task 2's cron
+ * scripts are nothing but queries -- any query `fn` made through the shared
+ * `pool`/`query` would wait for the very connection this call was holding,
+ * and hang forever rather than fail. Confirmed directly:
+ * `withLock("x", () => query("SELECT 1"))` timed out instead of completing.
+ * A lock that can silently deadlock the work it's supposed to guard is worse
+ * than not having one, so `withLock` opens its own `Client`, wholly separate
+ * from `pool`, and closes it when done -- `fn` is then free to use the
+ * shared pool normally. One extra connection per call is the cost, against
+ * a pooled endpoint that exists for exactly that.
+ *
+ * **Transaction-scoped, not session-scoped, and that is load-bearing too.**
  * Both `DATABASE_URL` and `TEST_DATABASE_URL` point at Neon's pooled
  * (`-pooler`) endpoint, which multiplexes client connections over Postgres
  * backends in PgBouncer transaction-pooling mode: outside an explicit
@@ -34,21 +50,19 @@ export function lockKey(name: string): string {
  * same client connection can land on two different backends. A session-level
  * `pg_try_advisory_lock` acquired in one statement is then not reliably the
  * same session that later calls `pg_advisory_unlock`, or that a rival's
- * `pg_try_advisory_lock` is checked against. Wrapping the whole call in one
- * `BEGIN` / `COMMIT`/`ROLLBACK` keeps one backend pinned for its entire
- * duration, and `pg_try_advisory_xact_lock` releases automatically at the
- * matching `COMMIT` or `ROLLBACK` -- including the one Postgres performs on
- * its own when a backend's connection drops, so a killed runner still
- * releases the lock with no unlock call needed.
+ * `pg_try_advisory_lock` is checked against -- confirmed directly: a second
+ * client could acquire a lock the first client still held. Wrapping the
+ * whole call in one `BEGIN` / `COMMIT`/`ROLLBACK` keeps one backend pinned
+ * for its entire duration, and `pg_try_advisory_xact_lock` releases
+ * automatically at the matching `COMMIT` or `ROLLBACK` -- including the one
+ * Postgres performs on its own when a backend's connection drops, so a
+ * killed runner still releases the lock with no unlock call needed.
  */
 export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
   const key = lockKey(name);
-  const client = await pool.connect();
+  const client = new Client({ connectionString: resolveConnectionString() });
+  await client.connect();
 
-  // A client whose ROLLBACK failed may still have an open transaction on it;
-  // returning it to the pool would hand that state to the next caller (see
-  // the same guard in withTransaction, db.ts).
-  let broken = false;
   try {
     await client.query("BEGIN");
     const { rows } = await client.query<{ locked: boolean }>(
@@ -65,14 +79,14 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        broken = true;
-      }
+      // The caller's error, never the rollback's: it says nothing about why
+      // the work failed and could carry connection detail. There is no pool
+      // here to poison if the rollback itself fails (unlike withTransaction
+      // in db.ts) -- this connection is closed below either way.
+      await client.query("ROLLBACK").catch(() => {});
       throw error;
     }
   } finally {
-    client.release(broken ? new Error("rollback failed; discarding client") : undefined);
+    await client.end();
   }
 }

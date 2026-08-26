@@ -4,26 +4,38 @@ import { loadEnvLocal } from "./env";
 
 loadEnvLocal();
 
-const isTest = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
-const variable = isTest ? "TEST_DATABASE_URL" : "DATABASE_URL";
-const connectionString = process.env[variable]?.trim();
+/**
+ * Resolves and validates the connection string for the current environment
+ * (`TEST_DATABASE_URL` under test, `DATABASE_URL` otherwise). Exported so a
+ * caller that needs a connection of its own -- outside `pool` -- gets the
+ * same validated string rather than re-deriving (and potentially
+ * mis-deriving) which env var applies. See `lock.ts` for why that matters:
+ * it opens a dedicated `Client` per call rather than borrowing from `pool`.
+ */
+export function resolveConnectionString(): string {
+  const isTest = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+  const variable = isTest ? "TEST_DATABASE_URL" : "DATABASE_URL";
+  const value = process.env[variable]?.trim();
 
-if (!connectionString) {
-  // Never interpolate the value into the message: this string reaches logs.
-  throw new Error(`${variable} is not set. See .env.example.`);
+  if (!value) {
+    // Never interpolate the value into the message: this string reaches logs.
+    throw new Error(`${variable} is not set. See .env.example.`);
+  }
+
+  if (isTest) {
+    // connectionIdentity() is a cheap first line of defense, not a proof; the
+    // real backstop is assertTestDatabaseMarker() below, which does not
+    // depend on parsing anything.
+    assertDistinctFromProduction(
+      value,
+      "TEST_DATABASE_URL must not be the production database: the suite truncates it."
+    );
+  }
+
+  return value;
 }
 
-if (isTest) {
-  // connectionIdentity() is a cheap first line of defense, not a proof; the
-  // real backstop is assertTestDatabaseMarker() below, which does not
-  // depend on parsing anything.
-  assertDistinctFromProduction(
-    connectionString,
-    "TEST_DATABASE_URL must not be the production database: the suite truncates it."
-  );
-}
-
-export const pool = new Pool({ connectionString, max: 1 });
+export const pool = new Pool({ connectionString: resolveConnectionString(), max: 1 });
 
 // Neon scales to zero and can drop idle connections; without a handler that
 // surfaces as an uncaught exception instead of a recoverable, logged event.
