@@ -466,24 +466,47 @@ describe("replayPosition: win rate", () => {
     expect((await position()).realized_sol).toBe("-1.5");
   });
 
-  it("charges a tail sell after closure to the episode that already counted", async () => {
-    // The 1 SOL from the tail sell lands on 08-26 as realized PnL, but it is
-    // the previous round trip's proceeds: it must not be carried into the
-    // episode the 08-27 buy opens, or that episode inherits a profit it did
-    // not make.
+  it("opens the next episode at the reopening buy, not at the closure before it", async () => {
+    // Where the snapshot is taken is the most fragile decision in the module,
+    // and it takes a deliberate value to see it. The 0.96 SOL tail sell on
+    // 08-26 is the *first* round trip's proceeds - it arrived after that
+    // position closed and before anything reopened it - so it must stay with
+    // the episode that already counted.
+    //
+    // Snapshotting at the closure instead leaves that 0.96 inside the next
+    // episode, which then reads +0.46 rather than -0.5 and writes a win onto
+    // a day whose own realized PnL is negative: the §4.7 contradiction the
+    // episode rule exists to remove, one step further along.
+    //
+    //   buy  1   / 100 -> qty 100, cost 1
+    //   sell 2   /  96 -> +1.04, closes 08-25 at a win
+    //   sell 1   /   4 -> +0.96 tail on 08-26, no episode open, counts nothing
+    //   buy  2   / 100 -> reopens; realized stands at 2 and the episode starts there
+    //   sell 1.5 / 100 -> -0.5 for the episode, closes 08-27 at a loss
     await insertTrades([
       { side: "buy", sol: "1", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
       { side: "sell", sol: "2", tokens: "96", at: "2026-08-25T12:01:00Z", slot: 2 },
       { side: "sell", sol: "1", tokens: "4", at: "2026-08-26T12:00:00Z", slot: 3 },
       { side: "buy", sol: "2", tokens: "100", at: "2026-08-27T12:00:00Z", slot: 4 },
-      { side: "sell", sol: "1", tokens: "100", at: "2026-08-27T12:01:00Z", slot: 5 },
+      { side: "sell", sol: "1.5", tokens: "100", at: "2026-08-27T12:01:00Z", slot: 5 },
     ]);
     await replayPosition(kolId, mint);
 
     const rows = await daily();
     expect(rows.find((row) => row.day === "2026-08-25")).toMatchObject({ wins: 1, losses: 0 });
-    expect(rows.find((row) => row.day === "2026-08-26")).toMatchObject({ wins: 0, losses: 0 });
-    expect(rows.find((row) => row.day === "2026-08-27")).toMatchObject({ wins: 0, losses: 1 });
+    // A sell between a closure and the next buy belongs to no episode's verdict.
+    expect(rows.find((row) => row.day === "2026-08-26")).toMatchObject({
+      realized_sol: "0.96",
+      wins: 0,
+      losses: 0,
+    });
+    // The day that discriminates: negative realized PnL, and it must not carry a win.
+    expect(rows.find((row) => row.day === "2026-08-27")).toMatchObject({
+      realized_sol: "-0.5",
+      wins: 0,
+      losses: 1,
+    });
+    expect((await position()).realized_sol).toBe("1.5");
   });
 
   it("closes on the share of everything ever bought, not of what is left", async () => {
