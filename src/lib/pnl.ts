@@ -16,8 +16,18 @@
  *    trader fires several swaps of one mint inside a second; `id` is a random
  *    UUID. Ordering those by `id` produces an arbitrary sequence, and a
  *    weighted-average basis is order-sensitive — so the number would be
- *    plausible, stable across reruns, and wrong. `slot` then
- *    `instruction_index` is the chain's own order.
+ *    plausible, stable across reruns, and wrong. `slot` is the chain's own
+ *    order, and is what actually separates two swaps inside one second.
+ *
+ *    `instruction_index` is in the ORDER BY for the day the payload can
+ *    supply one, not because it separates anything today: the Helius enhanced
+ *    payload has no per-instruction detail for the quantities the parser
+ *    reads, so every row this project writes carries `0` (measured — see the
+ *    `instructionIndex` comment in `parse-swap.ts`). Two trades of one mint
+ *    landing in the same slot therefore fall through to `id`, which is
+ *    arbitrary but fixed once written, so a replay is at least reproducible.
+ *    That is the honest state of the tiebreak, and the claim it replaces —
+ *    that `instruction_index` is the chain's own order — was not true.
  *
  * 2. **No money passes through a JavaScript float.** `pg` returns `numeric`
  *    as a string; every amount here is parsed straight into scaled `bigint`

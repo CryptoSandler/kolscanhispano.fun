@@ -1338,6 +1338,162 @@ describe("parseSwap", () => {
   });
 });
 
+/**
+ * Two swaps of one mint by one wallet in one transaction — the shape batch 1's
+ * whole-branch review named as its top residual suspicion, on the theory that
+ * `instructionIndex: 0` would make two such trades collide on the unique index
+ * `(signature_hmac, instruction_index, wallet_id)` and one be silently dropped.
+ *
+ * **It does not happen, and it cannot.** Measured against six real mainnet
+ * enhanced transactions (four `SWAP`, from `JUPITER` and `PUMP_AMM`) fetched
+ * through `POST /v0/transactions`: `accountData` carries one entry per *unique
+ * account address*, and each entry's `tokenBalanceChanges` carries one change
+ * per (token account, mint) — never two. In one `PUMP_AMM` swap a token account
+ * touched by **four** separate `tokenTransfers` produced exactly **one**
+ * balance-change entry, whose raw value was the exact net of those four
+ * (`-228412` at 9 decimals against a transfer net of `-0.000228412`); a
+ * `JUPITER` swap did the same for four transfers (`-90326`) and for two
+ * (`9307`). Helius collapses the per-instruction detail into a
+ * transaction-level net *before* delivery, so two swaps arrive as one number.
+ *
+ * So the parser never sees two legs to index. `evaluateSwap` returns a single
+ * `SwapEvaluation` per wallet, `parsePending` resolves each address once
+ * through a deduplicated set against a `UNIQUE` `address_hmac`, and
+ * `insertTrade` therefore runs at most once per (wallet, transaction). A
+ * constant `0` cannot collide with itself.
+ *
+ * The tests below pin that, and pin the *real* residual — which is netting at
+ * the source, not the index, and is not fixable from this payload: a buy and a
+ * sell of one mint in one transaction reach the parser already netted.
+ */
+describe("two swaps of one mint in one transaction", () => {
+  it("books two same-direction swaps as one trade with the netted amounts", () => {
+    // Buy 100 tokens for 1 SOL, then buy 50 more for 0.6 SOL, through the same
+    // token account. Helius delivers the net: +150 tokens, -1.6 SOL.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -(1_600_000_000 + 5_000),
+      tokenChangeRaw: "150000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+
+    const trade = parseSwap(payload, wallet)!;
+    expect(trade.side).toBe("buy");
+    expect(trade.tokenAmount).toBeCloseTo(150, 9);
+    expect(trade.solAmount).toBeCloseTo(1.6, 9);
+    // Netting two same-direction buys is exactly spec §4.2's weighted average
+    // taken one step early: cost 1.6 SOL over 150 tokens is the same basis
+    // either way. Nothing is lost here, which is why this shape is a trade.
+    expect(trade.instructionIndex).toBe(0);
+  });
+
+  it("sums two same-mint balance changes into one leg, whichever order they arrive in", () => {
+    // The one shape that really does put two same-mint changes in front of the
+    // parser: a wallet holding the mint in two token accounts. Built in the
+    // real Helius layout rather than the fixture's convenience one — in all six
+    // sampled payloads every entry carrying `tokenBalanceChanges` had
+    // `tokenAccount === account`, i.e. the entry's `account` is the *token*
+    // account and the wallet appears only as `userAccount`. So the wallet's own
+    // entry carries the lamports and nothing else, and each change sits on its
+    // own ATA entry.
+    //
+    // They are one wallet's holdings of one mint, so `tokenLegsIn` must sum
+    // them rather than treat them as two legs and refuse as
+    // `unsupported_quote` — and the sum must not depend on their order.
+    const build = (first: string, second: string) => {
+      const payload = buildSwapPayload({
+        wallet: wallet.address,
+        mint,
+        decimals: 6,
+        nativeChangeLamports: -(1_600_000_000 + 5_000),
+        tokenChangeRaw: first,
+        feeLamports: 5_000,
+        isFeePayer: true,
+      });
+      payload.accountData[0].tokenBalanceChanges = [];
+      for (const raw of [first, second]) {
+        payload.accountData.push({
+          account: inventAddress(), // the token account, not the wallet
+          nativeBalanceChange: 0,
+          tokenBalanceChanges: [
+            { userAccount: wallet.address, mint, rawTokenAmount: { tokenAmount: raw, decimals: 6 } },
+          ],
+        });
+      }
+      return payload;
+    };
+
+    for (const payload of [build("100000000", "50000000"), build("50000000", "100000000")]) {
+      const trade = parseSwap(payload, wallet)!;
+      expect(trade.side).toBe("buy");
+      expect(trade.tokenAmount).toBeCloseTo(150, 9);
+      expect(trade.solAmount).toBeCloseTo(1.6, 9);
+      expect(trade.instructionIndex).toBe(0);
+    }
+  });
+
+  it("reaches no_token_leg for a buy and a sell of one mint that net to zero", () => {
+    // The residual, recorded rather than papered over. Buy 100 tokens for 1
+    // SOL and sell them again for 1.2 SOL in one transaction: Helius nets the
+    // token side to exactly 0, so there is no leg left to read, and the 0.2 SOL
+    // of realized profit is invisible. No index would recover it — the two
+    // amounts were summed before the payload was written.
+    //
+    // Two shapes, because the faithful one is the *first*: in the sampled
+    // payloads a token account whose transfers netted to zero carried **no
+    // balance-change entry at all** (two `JUPITER` swaps each had a token
+    // account touched twice with a transfer net of exactly 0 and zero
+    // corresponding entries). The explicit `"0"` is asserted alongside it so
+    // the outcome is pinned either way, not because Helius was seen to emit it.
+    const build = (mutate: (p: EnhancedTx) => void) => {
+      const payload = buildSwapPayload({
+        wallet: wallet.address,
+        mint,
+        decimals: 6,
+        nativeChangeLamports: 200_000_000 - 5_000,
+        tokenChangeRaw: "0",
+        feeLamports: 5_000,
+        isFeePayer: true,
+      });
+      mutate(payload);
+      return payload;
+    };
+
+    for (const payload of [
+      build((p) => (p.accountData[0].tokenBalanceChanges = [])), // no entry: the observed shape
+      build(() => {}), // an explicit zero, in case a source emits one
+    ]) {
+      expect(parseSwap(payload, wallet)).toBeNull();
+      expect(evaluateSwap(payload, wallet).outcome).toBe("no_token_leg");
+    }
+  });
+
+  it("books only the net of a partial round trip, and never a fabricated pair", () => {
+    // Buy 100 for 1 SOL, sell 60 for 0.7 SOL. The payload says +40 tokens and
+    // -0.3 SOL, and that is the whole of what the parser can honestly write.
+    // The point of asserting it: the numbers are the *net*, not the buy, so a
+    // future change that invents two trades out of this one payload has to
+    // invent the amounts too — and this test says where they would come from.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -(300_000_000 + 5_000),
+      tokenChangeRaw: "40000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+    });
+    const trade = parseSwap(payload, wallet)!;
+    expect(trade.side).toBe("buy");
+    expect(trade.tokenAmount).toBeCloseTo(40, 9);
+    expect(trade.solAmount).toBeCloseTo(0.3, 9);
+    expect(trade.instructionIndex).toBe(0);
+  });
+});
+
 async function makeKol(handle: string): Promise<string> {
   const id = crypto.randomUUID();
   await query(
@@ -1577,6 +1733,50 @@ describe("parsePending", () => {
     const [trade] = await query<Record<string, unknown>>("SELECT sol_usd, usd_amount FROM trade");
     expect(trade.sol_usd).toBe("100");
     expect(trade.usd_amount).toBe("100");
+  });
+
+  it("writes one trade for two same-mint swaps in one transaction, and re-parses idempotently", async () => {
+    // The end-to-end half of the `two swaps of one mint in one transaction`
+    // block above. Two buys of one mint arrive already netted, so exactly one
+    // row is written, at `instruction_index` 0 — nothing collides on
+    // `(signature_hmac, instruction_index, wallet_id)` and nothing is dropped.
+    //
+    // Then the row is requeued and parsed again. `ON CONFLICT DO NOTHING` must
+    // still be doing its job: a second run leaves one row, with the same
+    // amounts and the same identity. That is what a constant index buys, and
+    // it is what any future per-instruction index would have to preserve.
+    const minute = new Date("2026-08-25T12:00:00.000Z");
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -(1_600_000_000 + 5_000),
+      tokenChangeRaw: "150000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: Math.floor(minute.getTime() / 1000),
+      slot: 777,
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: minute, slot: 777, payload, source: "webhook" });
+
+    await parsePending();
+
+    const first = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(first).toHaveLength(1);
+    expect(first[0].side).toBe("buy");
+    expect(first[0].token_amount).toBe("150");
+    expect(first[0].sol_amount).toBe("1.6");
+    expect(Number(first[0].instruction_index)).toBe(0);
+
+    // Requeue exactly as a parser fix would: clear the settle marks and run again.
+    await query("UPDATE raw_tx SET parsed_at = NULL, parse_error = NULL");
+    await parsePending();
+
+    const second = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(second).toHaveLength(1);
+    expect(second[0].id).toBe(first[0].id);
+    expect(second[0].token_amount).toBe("150");
+    expect(second[0].sol_amount).toBe("1.6");
   });
 
   it("records an unsupported quote without inserting a trade", async () => {

@@ -969,11 +969,43 @@ export function evaluateSwap(
       tokenAmount,
       solAmount: Number(solDelta < 0n ? -solDelta : solDelta) / 1e9,
       feeSol: isFeePayer ? Number(fee) / 1e9 : 0,
-      // A Helius "SWAP" enhanced transaction is transaction-level, not
-      // per-instruction, so every wallet's leg of it is instruction 0. This is
-      // still safe against the (kol_id, mint) fan-out of a multi-wallet
-      // transaction: the unique index is (signature_hmac, instruction_index,
-      // wallet_id), and wallet_id differs per wallet.
+      // **Always 0, and measured rather than assumed.** The unique index is
+      // (signature_hmac, instruction_index, wallet_id), so a constant here is
+      // only safe if one wallet can produce at most one trade per transaction.
+      // It can, for two independent reasons.
+      //
+      // First, the payload has no per-instruction detail to index by. Measured
+      // against six real mainnet enhanced transactions (four `SWAP`, from
+      // `JUPITER` and `PUMP_AMM`): `accountData` carries one entry per unique
+      // account address, and each entry's `tokenBalanceChanges` carries one
+      // change per (token account, mint). In one `PUMP_AMM` swap a token
+      // account touched by *four* separate `tokenTransfers` produced exactly
+      // one balance-change entry whose raw value was the exact net of those
+      // four (-228412 at 9 decimals, against a transfer net of -0.000228412);
+      // a `JUPITER` swap did the same for four transfers (-90326) and for two
+      // (9307). `instructions[]` exists but carries only `accounts`, base58
+      // `data`, `programId` and `innerInstructions` — no amounts, and no link
+      // from a balance change to an instruction. `tokenTransfers` and
+      // `nativeTransfers` carry no index either, and `events.swap` is one
+      // object for the whole transaction. (The one Helius surface that does
+      // carry `instructionIdx` is `getTransfersByAddress`, a different RPC
+      // endpoint, not the enhanced payload this project ingests.) A derived
+      // index would therefore be invented, and an invented index that looks
+      // authoritative is worse than an honest constant.
+      //
+      // Second, nothing upstream can call this twice for one wallet.
+      // `evaluateSwap` returns a single evaluation, and `parsePending`
+      // resolves a deduplicated address set against a UNIQUE `address_hmac`,
+      // so `insertTrade` runs at most once per (wallet, transaction). The
+      // (kol_id, mint) fan-out of a multi-wallet transaction is safe for the
+      // same reason it always was: `wallet_id` differs per wallet.
+      //
+      // What this does *not* fix, because no index could: Helius nets a buy
+      // and a sell of one mint in the same transaction before delivery, so a
+      // round trip arrives as a single net token amount (exactly zero for a
+      // full one, which lands as `no_token_leg`) and the realized leg is
+      // invisible. See the `two swaps of one mint in one transaction` block in
+      // the tests, which pins both halves.
       instructionIndex: 0,
     },
   };
