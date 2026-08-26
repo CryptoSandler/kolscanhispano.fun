@@ -28,3 +28,21 @@ export const WSOL_MINT = "So11111111111111111111111111111111111111112";
  * entirely, not recorded even as `unsupported_quote`.
  */
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/**
+ * USDT mint. Named here for one purpose only: to **decline** a swap quoted in
+ * it with an honest reason, rather than misreporting it as token↔token.
+ *
+ * It is deliberately not treated the way `USDC_MINT` is. `sol_usd` is measured
+ * from the solana SOL/**USDC** pair specifically (`fetchSolUsdcPair` filters to
+ * that quote before ranking by liquidity), so a USDC amount is a USD amount by
+ * construction and needs no assumption about a peg. A USDT amount is not: it
+ * would need either a USDT/USD price this project never fetches, or the
+ * assumption that USDT is worth exactly one dollar — a guessed number of
+ * exactly the kind `parse-swap.ts`'s header forbids, and one that is wrong
+ * precisely when it matters most.
+ *
+ * So this constant buys distinguishability, not valuation. See
+ * `UNPRICED_STABLE_MINTS` in `parse-swap.ts`.
+ */
+export const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";

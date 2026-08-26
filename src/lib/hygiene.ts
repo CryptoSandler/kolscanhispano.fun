@@ -15,6 +15,7 @@ const CANDIDATE = new RegExp(`${BASE58}{32,}`, "g");
 export const ALLOWED_BASE58 = new Set([
   "So11111111111111111111111111111111111111112", // wrapped SOL mint
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC mint
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT mint (named only to decline swaps quoted in it)
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // SPL Token program
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", // Associated Token program
   "11111111111111111111111111111111", // System program

@@ -7,6 +7,7 @@ import { addWallet } from "./wallets";
 import {
   MalformedPayloadError,
   USDC_MINT,
+  USDT_MINT,
   WSOL_MINT,
   evaluateSwap,
   parseErrorFor,
@@ -1747,6 +1748,187 @@ async function makeKol(handle: string): Promise<string> {
   return id;
 }
 
+/**
+ * The last door in this file onto a fabricated cost basis: `dropDust` runs
+ * before anything knows the swap's shape, so a two-sided swap whose second
+ * side falls under the floor arrives at the sole-leg path indistinguishable
+ * from a one-sided one — and is then priced against whatever native residue
+ * the payload carries.
+ *
+ * Measured at `70a35ae`, before this rule existed, for the shape below:
+ *
+ *     trade{side sell, token_amount 500, sol_amount 0.00203928,
+ *           price_sol 0.00000407856}, parse_error NULL
+ *
+ * The design choice, argued in the task report: check what the removal
+ * *cost*, rather than reorder the floor. A dropped leg that moved opposite
+ * the survivor was its counterparty; one that moved the same way is a router
+ * remainder and stays dropped, which is the case the floor exists for.
+ */
+describe("a dust leg that was the counterparty", () => {
+  /**
+   * The reviewer's case, and Task 6's netting is what makes it ordinary
+   * rather than exotic: the wallet sold 500 A for B and round-tripped B
+   * inside the same transaction, so Helius delivers B's *net* — 5/10,000,000
+   * of a token, under the floor. Closing A's token account refunds 2,039,280
+   * lamports, and that refund is the only SOL in the payload.
+   */
+  const sellIntoADustCounterparty = (bDecimals = 9, bRaw = "500") =>
+    buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 2_039_280 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-500000000" }, // 500 A out
+        { mint: inventAddress(), decimals: bDecimals, rawTokenAmount: bRaw }, // B in, under the floor
+      ],
+    });
+
+  it("does not book ATA rent as the proceeds of a 500-token sale", () => {
+    const payload = sellIntoADustCounterparty();
+    expect(parseSwap(payload, wallet)).toBeNull();
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_dust_counterparty");
+  });
+
+  it("refuses in the buy direction too, where the residue is rent paid rather than refunded", () => {
+    // The mirror: A bought, the dust leg spent. Rent is *paid* here, so the
+    // survivor and the residue agree on direction and every check below would
+    // have passed — the fabrication is a cost basis of 0.00203928 SOL for 500
+    // tokens rather than proceeds, which understates a position instead of
+    // manufacturing profit. Equally wrong, equally silent.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(2_039_280 + 5_000),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "500000000" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "-500" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_dust_counterparty");
+  });
+
+  it("still prices a swap whose dust leg is a router remainder, not a counterparty", () => {
+    // The negative control, and the reason the floor was not simply reordered:
+    // a remainder moves the *same* way as the acquisition, is nobody's
+    // counterparty, and sits beside a real, measured 1 SOL side. Declining it
+    // would cost a routine trade for no gain in truth.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -1_000_005_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" }, // 2 tokens in
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "1" }, // 1 raw unit in: a remainder
+      ],
+    });
+    expect(parseSwap(payload, wallet)).toEqual({
+      mint,
+      side: "buy",
+      tokenAmount: 2,
+      solAmount: 1,
+      feeSol: 0.000005,
+      instructionIndex: 0,
+    });
+  });
+
+  it("refuses a dust USDC counterparty rather than letting the floor hide a stablecoin quote", () => {
+    // A 1-raw-unit USDC leg is at the floor exactly, so `dropDust` removes it
+    // before the stablecoin branch can see it, and the sub-lamport guard on
+    // that branch never runs. This is the check that catches it instead —
+    // which is why that guard's comment no longer claims to be "the door".
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(2_039_280 + 5_000),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-1" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, parseDecimal("231.71")).outcome).toBe(
+      "unsupported_quote_dust_counterparty",
+    );
+  });
+
+  it("leaves a sole dust leg as dust_only, and a dust-only pair too", () => {
+    // The check is about a *survivor* losing its counterparty. With nothing
+    // surviving there is no survivor to mislead, and the older, narrower
+    // outcome still applies.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(2_039_280 + 5_000),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "1" },
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "-1" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("dust_only");
+  });
+
+});
+
+describe("swaps quoted in a stablecoin this project cannot price", () => {
+  it("declines a USDT-quoted swap under its own name, never as token<->token", async () => {
+    // `sol_usd` is measured from the SOL/USDC pair, so a USDC amount is a USD
+    // amount by construction. A USDT amount is not, and assuming the peg
+    // would be a guessed number. Declining is right; calling it token<->token
+    // is not — USDT is not a token the wallet took a position in.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDT_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+    expect(parseSwap(payload, wallet, parseDecimal("231.71"))).toBeNull();
+    // A rate does not help: it prices USDC, and only USDC.
+    expect(evaluateSwap(payload, wallet, parseDecimal("231.71")).outcome).toBe(
+      "unsupported_quote_unpriced_stable",
+    );
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_unpriced_stable");
+  });
+
+  it("keeps a genuine token<->token swap distinguishable from it", () => {
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "-3000000" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_token_token");
+  });
+
+  it("does not treat a sole USDT leg as anything but an ordinary token leg", () => {
+    // Deliberately NOT extended to `stable_rotation`: spec §4.3 names the
+    // stablecoin rotation as a kolscan.io behaviour to exclude, and this file
+    // reads that as the USDC case it has always meant. Widening a spec
+    // exclusion is not this task's call, and a SOL <-> USDT swap is a real
+    // SOL-quoted trade whose token happens to be a stablecoin.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -1_000_005_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [{ mint: USDT_MINT, decimals: 6, rawTokenAmount: "231710000" }],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("trade");
+  });
+});
+
 describe("parsePending", () => {
   let kolId: string;
   let walletAddress: string;
@@ -2250,6 +2432,31 @@ describe("parsePending", () => {
       "SELECT parsed_at, parse_error FROM raw_tx",
     );
     expect(raw.parse_error).toBeNull();
+    expect(raw.parsed_at).not.toBeNull();
+  });
+
+  it("records a dust-counterparty refusal on the row and settles it", async () => {
+    // No later data makes this readable: the counterparty's amount is gone
+    // upstream, netted away before delivery. Settled, unlike a missing rate.
+    const payload = buildObservedSwapPayload({
+      wallet: walletAddress,
+      nativeChangeLamports: 2_039_280 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "-500000000" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "500" },
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: new Date(), slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+    const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    );
+    expect(raw.parse_error).toBe("unsupported_quote_dust_counterparty");
     expect(raw.parsed_at).not.toBeNull();
   });
 
@@ -3120,6 +3327,41 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
         }),
     },
     {
+      // Review of task 7. The dust floor removed this leg's counterparty, so
+      // what reaches the sole-leg path is a two-sided swap wearing a
+      // one-sided swap's shape — and the only SOL in the payload is the
+      // 2,039,280 lamports of rent refunded when the sold mint's token
+      // account closed. Was: `sell 500 for 0.00203928 SOL`, silently.
+      name: "a real leg whose counterparty the dust floor removed (was: rent as proceeds)",
+      outcome: "unsupported_quote_dust_counterparty",
+      build: () =>
+        buildObservedSwapPayload({
+          wallet: walletAddress,
+          nativeChangeLamports: 2_039_280 - 5_000, // the closed ATA's rent, less gas
+          feeLamports: 5_000,
+          isFeePayer: true,
+          legs: [
+            { mint: inventAddress(), decimals: 6, rawTokenAmount: "-500000000" }, // 500 tokens out
+            { mint: inventAddress(), decimals: 9, rawTokenAmount: "500" }, // 5e-7 in: under the floor
+          ],
+        }),
+    },
+    {
+      name: "a USDT-quoted swap (a stablecoin this project has no SOL price for)",
+      outcome: "unsupported_quote_unpriced_stable",
+      build: () =>
+        buildObservedSwapPayload({
+          wallet: walletAddress,
+          nativeChangeLamports: -5_000,
+          feeLamports: 5_000,
+          isFeePayer: true,
+          legs: [
+            { mint: inventAddress(), decimals: 6, rawTokenAmount: "2000000" },
+            { mint: USDT_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+          ],
+        }),
+    },
+    {
       name: "non-fee-payer sell",
       outcome: "trade",
       build: () =>
@@ -3627,6 +3869,8 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       no_sol_leg: true,
       unsupported_quote: true,
       unsupported_quote_no_rate: true,
+      unsupported_quote_dust_counterparty: true,
+      unsupported_quote_unpriced_stable: true,
       unsupported_quote_token_token: true,
       sol_leg_wrong_direction: true,
     };
