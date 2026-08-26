@@ -80,9 +80,9 @@ hairlines, never a shadow or a glow.
 `numeric` `ink-muted`; PnL in `numeric-lg` by sign; secondary unit in `numeric` `ink-subtle`.
 Ranks 1–3 carry a 2px cyan bar on the left edge — no medals, no trophies.
 
-**`row-feed`** — 36px, hairline bottom. Avatar, name, verb, amount, symbol, price, relative time
-right-aligned. Sign colour on the verb and amount only. A new row appears at the top over
-`motion.data-in` with no layout shift: the container reserves its height.
+**`row-feed`** — 36px, hairline bottom. Avatar, name, verb, amount, token quantity, symbol,
+price, relative time right-aligned. Sign colour on the verb and amount only. A new row appears
+at the top over `motion.data-in` with no layout shift: the container reserves its height.
 
 **`segmented-window`** — `Diario · Semanal · Mensual` and `SOL · USD` as pill segments, selected
 segment `surface-3` with cyan text. Footnote `día UTC` in `label` `ink-subtle`.

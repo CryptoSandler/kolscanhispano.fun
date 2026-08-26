@@ -17,7 +17,7 @@
  * The module is imported by a client component, so it stays free of anything
  * that is not portable JavaScript.
  */
-import { DECIMALS, parseDecimal } from "./decimal";
+import { DECIMALS, ONE, parseDecimal } from "./decimal";
 
 /** U+2212, the typographic minus: it aligns with digits, the hyphen does not. */
 const MINUS = "−";
@@ -62,24 +62,28 @@ function exponentOf(value: bigint): number | null {
  * nine decimals turns `US$1.802,40` into noise. The two-decimal floor is what
  * keeps a value at or above one reading as money (`US$12,00`, not `US$12`).
  */
-function formatAmount(text: string, significant: number): string {
-  const value = parseDecimal(text);
+function formatAmount(text: string, significant: number, minimumFraction = 2): string {
+  return renderAmount(parseDecimal(text), significant, minimumFraction);
+}
+
+function renderAmount(value: bigint, significant: number, minimumFraction: number): string {
   const exponent = exponentOf(value);
   const fractionDigits =
-    exponent === null ? 2 : Math.min(Math.max(significant - 1 - exponent, 2), DECIMALS);
+    exponent === null
+      ? minimumFraction
+      : Math.min(Math.max(significant - 1 - exponent, minimumFraction), DECIMALS);
 
   let rendered = renderEs(roundTo(value, fractionDigits), fractionDigits);
-  // `fractionDigits` is never below two, so a comma is always present; the
-  // check keeps that assumption from becoming a silent digit-eater if it ever
-  // stops holding.
+  // The comma check is load-bearing once `minimumFraction` can be zero: with
+  // no fraction at all the loop would otherwise eat integer digits.
   while (
     rendered.includes(",") &&
     rendered.endsWith("0") &&
-    rendered.length - rendered.indexOf(",") - 1 > 2
+    rendered.length - rendered.indexOf(",") - 1 > minimumFraction
   ) {
     rendered = rendered.slice(0, -1);
   }
-  return rendered;
+  return rendered.endsWith(",") ? rendered.slice(0, -1) : rendered;
 }
 
 /**
@@ -99,6 +103,33 @@ export function formatSol(text: string): string {
  */
 export function formatUsdPrice(text: string): string {
   return `US$${formatAmount(text, 4)}`;
+}
+
+/** Scaled by 10^18, so dividing the scaled value by these divides the real one. */
+const MILLION = 10n ** 6n;
+const TRILLION = 10n ** 12n;
+
+/**
+ * A token quantity, compacted: `16,9M`, `1.690M`, `847`.
+ *
+ * Spec §2 puts this in the row and DESIGN.md's `row-feed` originally left it
+ * out. The row needs it: without a quantity there is no way to check the SOL
+ * amount against the price, which is the one arithmetic a reader can do from
+ * a feed line, and at 1280px the sentence otherwise trails half the row in
+ * empty space.
+ *
+ * `M` for millions and `B` for billions (10^12, `billón`), which is what
+ * `es-ES` means by those letters — not the English short scale. Below a
+ * million the plain grouped figure is shorter than any abbreviation of it, so
+ * there is no `mil` tier.
+ */
+export function formatTokenAmount(text: string): string {
+  const value = parseDecimal(text);
+  const magnitude = value < 0n ? -value : value;
+
+  if (magnitude >= ONE * TRILLION) return `${renderAmount(value / TRILLION, 3, 0)}B`;
+  if (magnitude >= ONE * MILLION) return `${renderAmount(value / MILLION, 3, 0)}M`;
+  return renderAmount(value, 4, 0);
 }
 
 /**

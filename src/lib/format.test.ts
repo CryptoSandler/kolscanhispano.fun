@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRelative, formatSol, formatUsdPrice } from "./format";
+import { formatRelative, formatSol, formatTokenAmount, formatUsdPrice } from "./format";
 
 describe("formatSol", () => {
   it("uses the es-ES decimal comma", () => {
@@ -58,6 +58,42 @@ describe("formatUsdPrice", () => {
 
   it("renders a zero price as a zero price, not as an empty string", () => {
     expect(formatUsdPrice("0")).toBe("US$0,00");
+  });
+});
+
+describe("formatTokenAmount", () => {
+  it("compacts millions the way spec §2's row does", () => {
+    expect(formatTokenAmount("16900000")).toBe("16,9M");
+    expect(formatTokenAmount("1000000")).toBe("1M");
+  });
+
+  it("keeps `M` up to a billón, which is where es-ES switches letters", () => {
+    // 1.69e9 is "mil seiscientos noventa millones" in Spanish, not "1,69 B":
+    // `B` is 10^12 here, not the English short-scale billion.
+    expect(formatTokenAmount("1690000000")).toBe("1.690M");
+    expect(formatTokenAmount("2500000000000")).toBe("2,5B");
+  });
+
+  it("leaves a figure below a million alone, because the digits are shorter", () => {
+    expect(formatTokenAmount("847")).toBe("847");
+    expect(formatTokenAmount("1500")).toBe("1.500");
+    expect(formatTokenAmount("999999")).toBe("999.999");
+  });
+
+  it("does not print a trailing decimal comma with nothing after it", () => {
+    for (const amount of ["1000000", "847", "2000000000000"]) {
+      expect(formatTokenAmount(amount)).not.toMatch(/,$/);
+    }
+  });
+
+  it("keeps a fractional quantity rather than rounding it to zero", () => {
+    expect(formatTokenAmount("0.5")).toBe("0,5");
+  });
+
+  // Past the range a double represents exactly, and never converted to one:
+  // the tier is chosen and the digits produced from `decimal.ts`'s bigint.
+  it("compacts a quantity larger than Number.MAX_SAFE_INTEGER", () => {
+    expect(formatTokenAmount("9007199254740993")).toBe("9.007B");
   });
 });
 

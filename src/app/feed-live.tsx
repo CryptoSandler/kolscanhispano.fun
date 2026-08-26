@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatRelative, formatSol, formatUsdPrice } from "@/lib/format";
+import { formatRelative, formatSol, formatTokenAmount, formatUsdPrice } from "@/lib/format";
 import { FEED_PAGE_SIZE, type PublicTrade } from "@/lib/serialize";
 
 /** Spec §10 says 3–5 s; four is the middle of it. */
@@ -36,11 +36,10 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
   const etag = useRef<string | null>(null);
   const newest = useRef<PublicTrade | undefined>(initialTrades[0]);
 
-  const poll = useCallback(async () => {
-    // A tab nobody is looking at still costs a database round trip every four
-    // seconds. This is a page people leave open, so that adds up.
-    if (typeof document !== "undefined" && document.hidden) return;
+  const inFlight = useRef(false);
 
+  /** One request. Returns whether the server says more rows are waiting. */
+  const fetchPage = useCallback(async (): Promise<boolean> => {
     const cursor = newest.current;
     const search = cursor
       ? `?since=${encodeURIComponent(`${cursor.blockTime},${cursor.id}`)}`
@@ -55,23 +54,49 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
     } catch {
       // A dropped connection is the normal case for a laptop that slept, not
       // an error worth showing. The next tick tries again.
-      return;
+      return false;
     }
 
     if (response.status === 304) {
       etag.current = response.headers.get("etag") ?? etag.current;
-      return;
+      return false;
     }
-    if (!response.ok) return;
+    if (!response.ok) return false;
 
     etag.current = response.headers.get("etag");
-    const body = (await response.json()) as { trades: PublicTrade[] };
-    if (body.trades.length === 0) return;
+    const body = (await response.json()) as { trades: PublicTrade[]; hasMore?: boolean };
+    if (body.trades.length === 0) return false;
 
+    // The cursor advances to the newest row **that arrived**, never past it.
+    // The server pages forward from the cursor, so a burst larger than one
+    // page arrives oldest first and the rows still waiting stay reachable;
+    // advancing to anything else would skip them silently.
     newest.current = body.trades[0];
     setArriving(new Set(body.trades.map((trade) => trade.id)));
     setTrades((current) => [...body.trades, ...current].slice(0, FEED_PAGE_SIZE));
+    return body.hasMore === true;
   }, []);
+
+  const poll = useCallback(async () => {
+    // A tab nobody is looking at still costs a database round trip every four
+    // seconds. This is a page people leave open, so that adds up.
+    if (typeof document !== "undefined" && document.hidden) return;
+    // A catch-up can outlast the interval; a second loop would race the first
+    // for the cursor and re-request rows it already holds.
+    if (inFlight.current) return;
+
+    inFlight.current = true;
+    try {
+      // Bounded: a server that answered `hasMore` forever would otherwise
+      // spin here. Ten pages is 500 trades, well past any real burst, and the
+      // next tick resumes whatever is left.
+      for (let page = 0; page < 10; page += 1) {
+        if (!(await fetchPage())) return;
+      }
+    } finally {
+      inFlight.current = false;
+    }
+  }, [fetchPage]);
 
   useEffect(() => {
     const timer = setInterval(poll, POLL_MS);
@@ -143,7 +168,8 @@ function FeedRow({
           </>
         )}
         <span className={direction}>{verb}</span>{" "}
-        <span className={`num ${direction}`}>{formatSol(trade.solAmount)} SOL</span> de{" "}
+        <span className={`num ${direction}`}>{formatSol(trade.solAmount)} SOL</span>{" "}
+        <span className="num quantity">({formatTokenAmount(trade.tokenAmount)})</span> de{" "}
         <span className="symbol">
           {trade.symbol ? `$${trade.symbol}` : "un token sin símbolo"}
         </span>{" "}
@@ -156,13 +182,17 @@ function FeedRow({
       </span>
 
       {/*
-        Spec §7: for a KOL that hides its wallets there is no signature to
-        link, and this label is the only thing that appears where an address
+        Spec §7: this label is the only thing that appears where an address
         otherwise would. It is not a claim of anonymity — the amount, the mint
         and the timestamp still find the transaction in any explorer — only a
         statement that we do not publish the address.
+
+        It is driven by `kol.hideWallets`, not by the absence of a signature.
+        Those differ when a stored signature will not decrypt: the row loses
+        its explorer link either way, but a KOL that publishes its wallets
+        must not be labelled as hiding them because of a key rotation.
       */}
-      {trade.signature === null && <span className="chip-hidden-wallets">Wallets ocultas</span>}
+      {trade.kol.hideWallets && <span className="chip-hidden-wallets">Wallets ocultas</span>}
 
       {trade.signature === null ? (
         <time className="num row-age" dateTime={trade.blockTime} suppressHydrationWarning>

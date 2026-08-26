@@ -1,10 +1,16 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { aadFor, blindIndex, encrypt } from "@/lib/crypto";
 import { query } from "@/lib/db";
 import { inventAddress, inventSignature } from "@/lib/ids";
 import type { PublicTrade } from "@/lib/serialize";
 import { addWallet } from "@/lib/wallets";
 import { GET } from "./route";
+
+// `spy: true` keeps every real implementation and wraps it, so these tests
+// exercise the same code as the rest of the file while being able to say which
+// of the two queries a request actually ran.
+vi.mock("@/lib/feed", { spy: true });
+import * as feed from "@/lib/feed";
 
 type TradeSpec = {
   id?: string;
@@ -94,9 +100,18 @@ function request(search = "", ifNoneMatch: string | null = null): Request {
   });
 }
 
+type FeedBody = { trades: PublicTrade[]; hasMore: boolean };
+
+async function page(response: Response): Promise<FeedBody> {
+  return (await response.json()) as FeedBody;
+}
+
 async function trades(response: Response): Promise<PublicTrade[]> {
-  const body = (await response.json()) as { trades: PublicTrade[] };
-  return body.trades;
+  return (await page(response)).trades;
+}
+
+function cursorOf(trade: PublicTrade): string {
+  return `?since=${encodeURIComponent(`${trade.blockTime},${trade.id}`)}`;
 }
 
 let mint: string;
@@ -105,6 +120,8 @@ beforeEach(async () => {
   await query("TRUNCATE kol, kol_wallet, cabal, token, trade, position, pnl_daily, " +
     "pnl_position_daily CASCADE");
   mint = inventAddress();
+  vi.mocked(feed.readFeedPage).mockClear();
+  vi.mocked(feed.readFeedValidator).mockClear();
 });
 
 describe("GET /api/feed", () => {
@@ -167,8 +184,7 @@ describe("GET /api/feed", () => {
     ]);
 
     const all = await trades(await GET(request()));
-    const cursor = `${all[1].blockTime},${all[1].id}`; // the 11:00 trade
-    const after = await trades(await GET(request(`?since=${encodeURIComponent(cursor)}`)));
+    const after = await trades(await GET(request(cursorOf(all[1])))); // after the 11:00 trade
     expect(after.map((t) => t.blockTime)).toEqual(["2026-08-25T12:00:00.000Z"]);
   });
 
@@ -190,14 +206,11 @@ describe("GET /api/feed", () => {
       const all = await trades(await GET(request()));
       expect(all).toHaveLength(2);
       // `all` is newest-first, so all[1] is the lower id at the same instant.
-      const cursor = `${all[1].blockTime},${all[1].id}`;
-      const after = await trades(await GET(request(`?since=${encodeURIComponent(cursor)}`)));
+      const after = await trades(await GET(request(cursorOf(all[1]))));
       expect(after.map((t) => t.id)).toEqual([all[0].id]);
 
       // And from the newest one, nothing is left.
-      const fromNewest = `${all[0].blockTime},${all[0].id}`;
-      expect(await trades(await GET(request(`?since=${encodeURIComponent(fromNewest)}`))))
-        .toHaveLength(0);
+      expect(await trades(await GET(request(cursorOf(all[0]))))).toHaveLength(0);
     });
 
   it("caps the page at 50 trades", async () => {
@@ -324,7 +337,7 @@ describe("GET /api/feed", () => {
         priceUsd: "0.01", at: "2026-08-25T10:00:00Z" },
     ]);
     const [newest] = await trades(await GET(request()));
-    const search = `?since=${encodeURIComponent(`${newest.blockTime},${newest.id}`)}`;
+    const search = cursorOf(newest);
 
     const first = await GET(request(search));
     expect(first.status).toBe(200);
@@ -344,5 +357,146 @@ describe("GET /api/feed", () => {
       const response = await GET(request(`?since=${encodeURIComponent(bad)}`));
       expect(response.status).toBe(400);
     }
+  });
+  // `feed.ts` never selects the address, so no route test can catch a
+  // serializer that forwarded it — the unit test and the type are the whole
+  // defence there. What a route test *can* pin is the shape that leaves the
+  // process: enumerate it, and a query that starts selecting more, or a
+  // serializer that starts spreading its input, fails here rather than
+  // shipping `hide_wallets` and `display_name` to a browser.
+  it("forwards exactly the public shape, whatever the query selects", async () => {
+    const kol = await insertKol({ slug: "dieciseis", hideWallets: false, cabalTag: "EJE" });
+    await query("INSERT INTO token (mint, symbol, name) VALUES ($1, 'EJE', 'Ejemplo')", [mint]);
+    await insertTrades([
+      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T10:00:00Z" },
+    ]);
+
+    const response = await GET(request());
+    const text = await response.clone().text();
+    const [got] = await trades(response);
+
+    expect(Object.keys(got).sort()).toEqual(
+      ["blockTime", "id", "kol", "mint", "priceUsd", "side", "signature", "solAmount", "symbol",
+       "tokenAmount"].sort(),
+    );
+    expect(Object.keys(got.kol).sort()).toEqual(
+      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug"].sort(),
+    );
+
+    // Every column name the query touches. A spread of the database row would
+    // put each of them in the body verbatim.
+    for (const column of ["hide_wallets", "display_name", "kol_id", "cabal_tag", "block_time",
+      "sol_amount", "token_amount", "price_usd", "signature_enc", "wallet_id",
+      "signature_hmac", "address"]) {
+      expect(text).not.toContain(column);
+    }
+  });
+
+  it("says nothing more is waiting on the opening page", async () => {
+    const kol = await insertKol({ slug: "diecisiete", hideWallets: false });
+    await insertTrades([
+      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T10:00:00Z" },
+    ]);
+    expect((await page(await GET(request()))).hasMore).toBe(false);
+  });
+
+  // The failure this closes: `?since` used to answer with the *newest* 50 rows
+  // after the cursor, and the client then advanced past rows it had never been
+  // handed. A burst of more than one page between two polls lost its oldest
+  // trades with every response a 200 and nothing recording the loss.
+  it("delivers a burst larger than one page without dropping any of it", async () => {
+    const kol = await insertKol({ slug: "dieciocho", hideWallets: false });
+    await insertTrades([
+      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T00:00:00Z" },
+    ]);
+    const [start] = await trades(await GET(request()));
+
+    // 60 trades land after the cursor while the client is between polls.
+    await insertTrades(
+      Array.from({ length: 60 }, (_, i) => ({
+        kolId: kol.id, walletId: kol.walletId, mint, side: "buy" as const, sol: "1",
+        tokens: "10", priceUsd: "0.01",
+        at: new Date(Date.UTC(2026, 7, 25, 1, i)).toISOString(),
+      })),
+    );
+
+    const first = await page(await GET(request(cursorOf(start))));
+    expect(first.trades).toHaveLength(50);
+    expect(first.hasMore).toBe(true);
+    // Newest-first within the page, and the page is the *oldest* 50 of the
+    // burst — the ones the client would otherwise never see.
+    expect(first.trades[0].blockTime).toBe(new Date(Date.UTC(2026, 7, 25, 1, 49)).toISOString());
+    expect(first.trades[49].blockTime).toBe(new Date(Date.UTC(2026, 7, 25, 1, 0)).toISOString());
+
+    // The client advances to the newest row it actually received, and asks
+    // again because `hasMore` said to.
+    const second = await page(await GET(request(cursorOf(first.trades[0]))));
+    expect(second.trades).toHaveLength(10);
+    expect(second.hasMore).toBe(false);
+
+    const delivered = [...second.trades, ...first.trades].map((t) => t.id);
+    expect(new Set(delivered).size).toBe(60);
+    // And nothing arrived twice.
+    expect(delivered).toHaveLength(60);
+  });
+
+  // The ETag exists to save the server work, not to save the client bytes.
+  // Deriving it from a finished page meant a quiet poll ran the four-table
+  // join and fifty AES-GCM decrypts and then threw all of it away.
+  it("answers 304 without running the page query at all", async () => {
+    const kol = await insertKol({ slug: "diecinueve", hideWallets: false });
+    await insertTrades([
+      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T10:00:00Z" },
+    ]);
+
+    const first = await GET(request());
+    expect(vi.mocked(feed.readFeedPage)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(feed.readFeedPage).mockClear();
+    vi.mocked(feed.readFeedValidator).mockClear();
+
+    const second = await GET(request("", first.headers.get("etag")));
+    expect(second.status).toBe(304);
+    expect(vi.mocked(feed.readFeedValidator)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(feed.readFeedPage)).not.toHaveBeenCalled();
+  });
+
+  it("runs the page query on a miss", async () => {
+    const kol = await insertKol({ slug: "veinte", hideWallets: false });
+    await insertTrades([
+      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T10:00:00Z" },
+    ]);
+    const res = await GET(request("", 'W/"stale"'));
+    expect(res.status).toBe(200);
+    expect(vi.mocked(feed.readFeedPage)).toHaveBeenCalledTimes(1);
+  });
+
+  it("neither probes nor queries when the cursor is malformed", async () => {
+    const res = await GET(request("?since=nonsense"));
+    expect(res.status).toBe(400);
+    expect(vi.mocked(feed.readFeedValidator)).not.toHaveBeenCalled();
+    expect(vi.mocked(feed.readFeedPage)).not.toHaveBeenCalled();
+  });
+
+  it("carries the wallet promise as a field, not as the absence of a signature", async () => {
+    const hidden = await insertKol({ slug: "veintiuno", hideWallets: true });
+    const shown = await insertKol({ slug: "veintidos", hideWallets: false });
+    await insertTrades([
+      { kolId: hidden.id, walletId: hidden.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T10:00:00Z" },
+      { kolId: shown.id, walletId: shown.walletId, mint, side: "buy", sol: "1", tokens: "10",
+        priceUsd: "0.01", at: "2026-08-25T11:00:00Z" },
+    ]);
+
+    const bySlug = Object.fromEntries(
+      (await trades(await GET(request()))).map((t) => [t.kol.slug, t]),
+    );
+    expect(bySlug.veintiuno.kol.hideWallets).toBe(true);
+    expect(bySlug.veintidos.kol.hideWallets).toBe(false);
   });
 });

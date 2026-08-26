@@ -1,4 +1,4 @@
-import { feedEtag, readFeed, type FeedCursor } from "@/lib/feed";
+import { readFeedPage, readFeedValidator, type FeedCursor } from "@/lib/feed";
 
 export const runtime = "nodejs";
 // Every response depends on the cursor and on rows written seconds ago; there
@@ -34,6 +34,14 @@ function parseCursor(raw: string): FeedCursor | null {
  * A malformed cursor is a `400`, not a silently ignored parameter: answering
  * a bad cursor with the newest 50 trades would look like a working poll while
  * quietly replaying the whole page on every request.
+ *
+ * The validator is probed **before** the page is read. Deriving it from a
+ * finished result made the `ETag` free of charge to the client and worth
+ * nothing to the server: a quiet poll ran the four-table join and fifty
+ * AES-GCM decrypts and then answered `304` with all of it thrown away. The
+ * probe is one row from two tables. On a miss the page is read and answers
+ * with its **own** validator, not the probe's — a trade that lands between
+ * the two queries must not be described by a header that predates it.
  */
 export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
@@ -47,15 +55,14 @@ export async function GET(request: Request): Promise<Response> {
     if (since === null) return new Response("bad request", { status: 400 });
   }
 
-  const trades = await readFeed(since);
-  const etag = feedEtag(trades);
-
-  if (request.headers.get("if-none-match") === etag) {
-    return new Response(null, { status: 304, headers: { ETag: etag } });
+  const validator = await readFeedValidator(since);
+  if (request.headers.get("if-none-match") === validator) {
+    return new Response(null, { status: 304, headers: { ETag: validator } });
   }
 
-  return new Response(JSON.stringify({ trades }), {
+  const page = await readFeedPage(since);
+  return new Response(JSON.stringify({ trades: page.trades, hasMore: page.hasMore }), {
     status: 200,
-    headers: { "content-type": "application/json; charset=utf-8", ETag: etag },
+    headers: { "content-type": "application/json; charset=utf-8", ETag: page.etag },
   });
 }

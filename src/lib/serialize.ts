@@ -67,6 +67,19 @@ export type PublicTrade = {
     name: string;
     cabalTag: string | null;
     avatarUrl: string;
+    /**
+     * Whether this KOL's wallets are published — the fact the `Wallets
+     * ocultas` chip states, carried explicitly.
+     *
+     * The screen used to infer it from `signature === null`, which is a
+     * different question with the same answer almost always. `readFeed`
+     * also returns a null signature when a stored ciphertext will not open,
+     * so a KOL that publishes its wallets was labelled as hiding them the
+     * moment a key rotation left one row unreadable — the safe direction to
+     * err in, and still a false statement about the one promise this
+     * product makes.
+     */
+    hideWallets: boolean;
   };
   side: "buy" | "sell";
   mint: string;
@@ -88,6 +101,7 @@ export function serializeTrade(row: FeedRow): PublicTrade {
       // encodeURIComponent on an id that is always a UUID is belt and braces;
       // it costs nothing and stops a future non-UUID id from building a path.
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
+      hideWallets: row.hide_wallets,
     },
     side: row.side,
     mint: row.mint,

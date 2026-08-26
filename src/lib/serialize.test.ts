@@ -70,7 +70,9 @@ describe("serializeTrade", () => {
         "tokenAmount",
       ].sort(),
     );
-    expect(Object.keys(out.kol).sort()).toEqual(["avatarUrl", "cabalTag", "name", "slug"].sort());
+    expect(Object.keys(out.kol).sort()).toEqual(
+      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug"].sort(),
+    );
   });
 
   // A serializer that returned the row it was handed, or spread it, would pass
@@ -101,6 +103,20 @@ describe("serializeTrade", () => {
 
   it("carries a null cabal tag through", () => {
     expect(serializeTrade({ ...base, cabal_tag: null }).kol.cabalTag).toBeNull();
+  });
+
+  // `hide_wallets` is a promise about publication, and the screen states it in
+  // words. Inferring it from `signature === null` collapses two different
+  // questions: `readFeed` also returns a null signature when a ciphertext will
+  // not open, so a KOL that publishes its wallets would be labelled as hiding
+  // them by a key rotation. The chip is driven by this field, so this field
+  // must not be derived from the signature.
+  it("states the wallet promise separately from whether a signature came through", () => {
+    expect(serializeTrade(base).kol.hideWallets).toBe(true);
+    expect(serializeTrade({ ...base, hide_wallets: false }).kol.hideWallets).toBe(false);
+    expect(
+      serializeTrade({ ...base, hide_wallets: false, signature: null }).kol.hideWallets,
+    ).toBe(false);
   });
 
   // The hidden case must win even when the caller has no signature to give:

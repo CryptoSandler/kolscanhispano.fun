@@ -53,7 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </header>
           <main>{children}</main>
           <p className="footnote">
-            Datos públicos de la cadena. Esto no es asesoramiento financiero y los resultados
+            Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados
             pasados no garantizan nada.
           </p>
         </div>

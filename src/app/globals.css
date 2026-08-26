@@ -193,7 +193,11 @@ a {
   list-style: none;
   margin: 0;
   padding: 0;
-  min-height: calc(12 * var(--row-height));
+  /* Eight rows, which is DESIGN.md's thesis: the leaderboard's ten and the
+     feed's eight share one 900px viewport. Twelve made this panel 519px and
+     left 381px for a leaderboard that needs about 425px — the direction's
+     whole argument lost, for a mostly empty box. */
+  min-height: calc(8 * var(--row-height));
 }
 
 .row-feed {
@@ -265,7 +269,8 @@ a {
   font-weight: 500;
 }
 
-.price {
+.price,
+.quantity {
   color: var(--ink-muted);
 }
 
