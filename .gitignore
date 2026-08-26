@@ -8,3 +8,7 @@ next-env.d.ts
 test-results
 playwright-report
 .playwright
+
+# Vercel CLI: linked-project ids, and the .env it pulls down.
+.vercel
+.env
