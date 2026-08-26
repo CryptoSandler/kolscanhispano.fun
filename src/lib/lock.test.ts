@@ -177,6 +177,85 @@ describe("withLock", () => {
     );
     expect(result).toEqual([{ one: 1 }]);
   }, 10_000);
+
+  // The three cases below are about the *connection*, not the lock. The lock
+  // releases itself on ROLLBACK, on COMMIT, and on a dropped backend, so
+  // every assertion about lock release above still passes with the
+  // connection left wide open -- which is exactly how a leaked one survives
+  // review. Against Neon's pooled endpoint a leaked connection is not free:
+  // it keeps a PgBouncer server backend pinned, showing as "idle in
+  // transaction" until the server times it out.
+
+  it("closes its connection when connecting itself fails", async () => {
+    const endSpy = vi.spyOn(Client.prototype, "end");
+    const connectSpy = vi
+      .spyOn(Client.prototype, "connect")
+      .mockRejectedValueOnce(new Error("password authentication failed"));
+    const before = endSpy.mock.calls.length;
+
+    try {
+      let ran = false;
+      await expect(
+        withLock("withLock-connect-fails", async () => {
+          ran = true;
+          return "never";
+        }),
+      ).rejects.toThrow("password authentication failed");
+
+      expect(ran).toBe(false);
+      // connect() used to sit outside the try, so this path returned without
+      // ever closing the client.
+      expect(endSpy.mock.calls.length).toBe(before + 1);
+    } finally {
+      connectSpy.mockRestore();
+      endSpy.mockRestore();
+    }
+  });
+
+  it("closes its connection when the lock query throws before fn is ever reached", async () => {
+    const endSpy = vi.spyOn(Client.prototype, "end");
+    // The first query withLock issues is the BEGIN.
+    const querySpy = vi
+      .spyOn(Client.prototype, "query")
+      .mockRejectedValueOnce(new Error("terminating connection due to administrator command"));
+    const before = endSpy.mock.calls.length;
+
+    try {
+      let ran = false;
+      await expect(
+        withLock("withLock-begin-fails", async () => {
+          ran = true;
+          return "never";
+        }),
+      ).rejects.toThrow("terminating connection due to administrator command");
+
+      expect(ran).toBe(false);
+      expect(endSpy.mock.calls.length).toBe(before + 1);
+    } finally {
+      querySpy.mockRestore();
+      endSpy.mockRestore();
+    }
+  });
+
+  it("propagates fn's error rather than a failure to close the connection", async () => {
+    const realEnd = Client.prototype.end as (this: Client) => Promise<void>;
+    // Close for real first, then fail: the point is that a rejecting end()
+    // does not replace the caller's error, not that the connection leaks.
+    const endSpy = vi.spyOn(Client.prototype, "end").mockImplementationOnce(async function (this: Client) {
+      await realEnd.call(this);
+      throw new Error("Connection terminated unexpectedly");
+    });
+
+    try {
+      await expect(
+        withLock("withLock-end-fails", async () => {
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+    } finally {
+      endSpy.mockRestore();
+    }
+  });
 });
 
 describe("lockKey", () => {
