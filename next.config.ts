@@ -68,6 +68,18 @@ const SECURITY_HEADERS = [
 
   { key: "X-DNS-Prefetch-Control", value: "off" },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+
+  // Closed to search engines until launch. The `<meta name="robots">` tag in
+  // `src/app/layout.tsx` covers HTML pages; this covers every response that has
+  // no <head> to carry a tag — the API routes, and any file served from the
+  // build output. The `/(admin|api)` block below already sets this for its own
+  // routes and keeps doing so once this line is removed, which is the point of
+  // leaving it there rather than folding it in here: those two must stay
+  // noindex forever, and this one is temporary.
+  //
+  // **Removing this is a three-file change** — this entry, `metadata.robots` in
+  // `src/app/layout.tsx`, and `src/app/robots.ts`. All three, or none.
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
 ];
 
 const nextConfig: NextConfig = {

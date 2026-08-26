@@ -26,6 +26,33 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "kolscanhispano.fun",
   description: "Operaciones en vivo de KOLs hispanohablantes en Solana.",
+
+  /**
+   * Closed to search engines until launch, on purpose and by hand.
+   *
+   * `robots.ts` asks crawlers not to fetch; this is what keeps a page *already*
+   * fetched out of an index, which is the case robots.txt cannot cover — a URL
+   * linked from anywhere gets crawled whatever robots.txt said. `googleBot` is
+   * set explicitly rather than left to inherit, because Google reads its own
+   * directive in preference to the generic one when both are present, and the
+   * generic tag alone is the weaker of the two claims.
+   *
+   * **Lifting this is a three-file change, and all three must go together:**
+   * here, `src/app/robots.ts`, and the `X-Robots-Tag` entry in
+   * `next.config.ts`. Removing one leaves the site indexed through a door the
+   * other two do not guard, or (worse) half-indexed in a way that is slow to
+   * notice and slower to undo — a de-indexing takes weeks that an indexing
+   * takes hours.
+   *
+   * Metadata merges shallowly and per key, so a page that exports its own
+   * `robots` replaces this wholesale. No page does today; `/leaderboard` only
+   * sets `title` and `description` and so still inherits this.
+   */
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: { index: false, follow: false },
+  },
 };
 
 /**
