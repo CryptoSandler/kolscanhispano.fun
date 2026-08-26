@@ -23,18 +23,20 @@
  * a later per-minute series can fill it in. Nothing is written from a rate
  * this parser had to reach backwards in time for.
  *
- * **The dust floor runs before the shape is known, and that ordering was a
- * door.** `dropDust` cannot wait until the quote shape is decided — the
- * shape is decided *by* the surviving arity — so a two-sided swap whose
- * second side falls under the floor reaches the sole-leg path looking like an
- * ordinary one-sided swap, and gets priced against whatever native residue is
- * left. Rather than reorder the floor (which would decline the routine
- * router-remainder case the floor exists for), the removal is checked for
- * what it cost: a dropped leg that moved *opposite* the survivor was that
- * survivor's counterparty, and its loss is refused as
- * `unsupported_quote_dust_counterparty`. A dropped leg that moved the *same*
- * way is a remainder, not a counterparty, and stays dropped. See
- * `dustCounterpartyOf` for the measured fabrication this closes.
+ * **A SOL side that is only bookkeeping is not a price.** Several different
+ * shapes end with one real token leg and a SOL side made entirely of account
+ * rent — a swap whose counterparty fell under the dust floor, a swap whose
+ * counterparty was WSOL and never reached the floor at all, a stablecoin leg
+ * that normalises to nothing. They differ in how they got there and are
+ * identical in what they produce: 2,039,280 lamports of ATA rent written as
+ * the proceeds of a 500-token sale. `settleTrade` therefore checks the
+ * quantity itself rather than the route to it — see
+ * `TOKEN_ACCOUNT_RENT_LAMPORTS` and the residue test there. An earlier
+ * version of this rule tested the *sign* of the dropped leg instead, and was
+ * defeated in both directions: Helius nets before delivery, so a
+ * counterparty's sign flips on its last raw unit, and a sell routed through
+ * an intermediate mint leaves an *incoming* remainder that a sign test reads
+ * as a counterparty. Magnitude is the discriminator; the route is not.
  *
  * **Token ↔ token stays declined, and not for want of trying.** Spec §4.3
  * would have it close leg A and open leg B at the implied SOL value, and two
@@ -235,6 +237,36 @@ const MAX_UNIX_SECONDS = 4_102_444_800; // 2100-01-01
 const DUST_MAX_TOKENS_NUMERATOR = 1n;
 const DUST_MAX_TOKENS_DENOMINATOR = 1_000_000n;
 
+/**
+ * The rent-exempt minimum of one SPL token account, in lamports — the unit
+ * every "the SOL side is only bookkeeping" case is built out of.
+ *
+ * **Derived, not chosen.** Solana charges `lamports_per_byte_year = 3480` and
+ * requires two years' worth for exemption, over the account's data plus a
+ * fixed `ACCOUNT_STORAGE_OVERHEAD` of 128 bytes. An SPL token account is 165
+ * bytes. So `(128 + 165) * 3480 * 2 = 2039280`, which is the figure every
+ * fixture in this file's tests has been using literally since batch 1. It is
+ * a protocol constant, so a comparison against it is a measurement rather
+ * than a threshold somebody picked — which matters, because this file has no
+ * business inventing a floor on what counts as a real trade.
+ *
+ * Opening a token account pays exactly this and closing one refunds exactly
+ * this, so a wallet whose swap opened or closed `n` token accounts can show a
+ * native movement of up to `n * 2039280` lamports with no value having been
+ * exchanged at all. `settleTrade` compares against `n` taken from the
+ * payload: the number of balance changes this wallet has, which is the number
+ * of token accounts it touched (task 6 measured one change per (token
+ * account, mint)).
+ *
+ * The transaction fee is deliberately **not** added on top. `solSideFor`
+ * already adds it back out of the SOL side for the fee payer (spec §4.4), and
+ * a non-fee-payer never had it, so by the time the comparison happens the fee
+ * is not in the quantity being compared. A priority-fee tip is a different
+ * matter and is not identifiable in this payload at all — which is exactly
+ * why `sol_leg_wrong_direction` exists for the case where one swamps a sale.
+ */
+const TOKEN_ACCOUNT_RENT_LAMPORTS = 2_039_280n;
+
 export type TokenBalanceChange = {
   userAccount: string;
   mint: string;
@@ -301,11 +333,6 @@ export type ParsedTrade = {
  *   of that block" has no rate to normalise at. **Requeueable** (see
  *   `REQUEUEABLE_ERRORS`): unlike every other refusal here, the missing
  *   ingredient can still arrive.
- * - `unsupported_quote_dust_counterparty`: one real token leg survived the
- *   dust floor, and the leg the floor removed had moved the *opposite* way —
- *   i.e. it was this leg's counterparty. Dropping it turns a two-sided swap
- *   into a one-sided one whose SOL side is whatever residue is left. See
- *   `dustCounterpartyOf`.
  * - `unsupported_quote_unpriced_stable`: a two-leg swap quoted in a
  *   stablecoin this project has no SOL price for (USDT). Declining is the
  *   same refusal `unsupported_quote_no_rate` makes, but for a different
@@ -326,6 +353,11 @@ export type ParsedTrade = {
  *   A stablecoin-quoted swap reaches the same check against the same
  *   quantity, since its normalised stable value is summed into the SOL side
  *   before the sign is looked at.
+ * - `sol_leg_is_residue`: the SOL side's whole magnitude is accounted for by
+ *   the rent of the token accounts this wallet's own legs touched, so it
+ *   carries no information about what the swap was worth. Its sibling above
+ *   rejects a SOL side pointing the wrong way; this one rejects a SOL side
+ *   that is not a price at all. See `TOKEN_ACCOUNT_RENT_LAMPORTS`.
  */
 export type SwapOutcome =
   | "trade"
@@ -335,19 +367,19 @@ export type SwapOutcome =
   | "no_sol_leg"
   | "unsupported_quote"
   | "unsupported_quote_no_rate"
-  | "unsupported_quote_dust_counterparty"
   | "unsupported_quote_unpriced_stable"
   | "unsupported_quote_token_token"
-  | "sol_leg_wrong_direction";
+  | "sol_leg_wrong_direction"
+  | "sol_leg_is_residue";
 
 /** The outcomes that are recorded on the `raw_tx` row rather than passed over in silence. */
 export type SwapParseError =
   | "unsupported_quote"
   | "unsupported_quote_no_rate"
-  | "unsupported_quote_dust_counterparty"
   | "unsupported_quote_unpriced_stable"
   | "unsupported_quote_token_token"
-  | "sol_leg_wrong_direction";
+  | "sol_leg_wrong_direction"
+  | "sol_leg_is_residue";
 
 /**
  * The single mapping from an outcome to the `parse_error` it records, so the
@@ -363,10 +395,10 @@ export function parseErrorFor(outcome: SwapOutcome): SwapParseError | null {
   switch (outcome) {
     case "unsupported_quote":
     case "unsupported_quote_no_rate":
-    case "unsupported_quote_dust_counterparty":
     case "unsupported_quote_unpriced_stable":
     case "unsupported_quote_token_token":
     case "sol_leg_wrong_direction":
+    case "sol_leg_is_residue":
       return outcome;
     default:
       return null;
@@ -857,46 +889,6 @@ function dropDust(legs: TokenLeg[]): TokenLeg[] {
   return legs.filter((leg) => !isDust(leg));
 }
 
-/**
- * Whether a leg the dust floor removed was `leg`'s **counterparty** — a leg
- * of another mint that moved the opposite way.
- *
- * **This is the last door in this file onto a fabricated cost basis, and it
- * is not exotic.** `dropDust` runs before anything knows what shape the swap
- * is, so a two-sided swap whose second side falls under the floor arrives at
- * the sole-leg path looking exactly like an ordinary one-sided one — and the
- * SOL side it is then priced against is whatever native residue the payload
- * happens to carry. Measured, on the code before this check existed: a wallet
- * selling 500 tokens of A whose B side nets to 5/10,000,000 of a token
- * through an intra-transaction round trip (Helius nets before delivery, task
- * 6), closing A's token account for its 2,039,280 lamports of rent, was
- * written as
- *
- *     trade{side sell, token_amount 500, sol_amount 0.00203928,
- *           price_sol 0.00000407856}, parsed_at SET, parse_error NULL
- *
- * — ATA rent, booked as realized proceeds, into the number the leaderboard
- * ranks. The same fabrication review rounds 2 and 3 removed, through the one
- * door they left open.
- *
- * **The rule is the sign, and the sign is what tells the two cases apart.**
- * A dust leg that moved the *same* way as the survivor is not anything's
- * counterparty: it is a remainder the router left on an intermediate mint
- * alongside the acquisition, the case the dust floor exists for, and it stays
- * dropped. A dust leg that moved the *opposite* way is the other side of the
- * swap, and its removal is what converts a two-sided swap into a one-sided
- * one. Refused, never arbitrated: the survivor's value cannot be read off a
- * counterparty this small, and the residue is not a price.
- *
- * Checked against `allLegs` (pre-floor) rather than against what survived,
- * because what survived is precisely what has forgotten this happened. Signs
- * are strict: `tokenLegsIn` already drops every leg whose net is exactly `0n`.
- */
-function dustCounterpartyOf(allLegs: readonly TokenLeg[], leg: TokenLeg): boolean {
-  const incoming = leg.raw > 0n;
-  return allLegs.some((other) => other.mint !== leg.mint && other.raw > 0n !== incoming);
-}
-
 /** The net WSOL balance change in a validated set of changes, **in lamports**, 0n if none. */
 function wsolLamportsIn(changes: readonly BalanceChange[]): bigint {
   let total = 0n;
@@ -1083,8 +1075,45 @@ function settleTrade(
 
   if (solSide === 0n) return { outcome: "no_sol_leg" };
 
+  // Direction first, and deliberately: a SOL side pointing the wrong way is
+  // the older, more specific statement about the row, and a rent refund on a
+  // "buy" satisfies both this and the residue test below.
   const wrongDirection = side === "buy" ? solSide > 0n : solSide < 0n;
   if (wrongDirection) return { outcome: "sol_leg_wrong_direction" };
+
+  // **The SOL side must be more than the bookkeeping of the accounts it
+  // touched, or it is not a price.**
+  //
+  // `changes.length` is the number of token accounts this wallet moved
+  // anything in (task 6: one balance change per (token account, mint)), and
+  // each of those could have been opened or closed by this transaction, at
+  // exactly `TOKEN_ACCOUNT_RENT_LAMPORTS` either way. A SOL side no larger
+  // than that is fully explained without any value being exchanged, so it
+  // says nothing about what the swap was worth.
+  //
+  // This one test closes four shapes that arrive by four different routes and
+  // are indistinguishable once they get here. Measured at `d1d3656`, each
+  // writing `parse_error` NULL:
+  //
+  //   sell 500 A, B's net under the dust floor  -> sell 500 for 0.00203928 SOL
+  //   the same with B's net one raw unit lower  -> sell 500 for 0.00203928 SOL
+  //   its buy mirror, rent paid not refunded    -> buy  500 for 0.00203928 SOL
+  //   sell 500 A beside a dust WSOL leg         -> sell 500 for 0.00203878 SOL
+  //
+  // The previous rule tested the *sign* of the leg the dust floor had
+  // removed, and caught only the first: Helius nets before delivery, so the
+  // second is the first with one more raw unit of a mint neither side is
+  // trading, and the fourth never touches the dust path at all because WSOL
+  // is excluded from `tokenLegsIn`. Worse, the sign test refused a real trade
+  // in the other direction — a sell routed A->C->SOL leaves an *incoming*
+  // remainder on C, opposite the outgoing survivor, so `sell 2 for 1 SOL` was
+  // being declined. Magnitude separates all five correctly, because what the
+  // fabrications have in common is not how the counterparty went missing: it
+  // is that the rent is the only thing left.
+  const magnitude = solSide < 0n ? -solSide : solSide;
+  if (magnitude <= TOKEN_ACCOUNT_RENT_LAMPORTS * BigInt(changes.length)) {
+    return { outcome: "sol_leg_is_residue" };
+  }
 
   return {
     outcome: "trade",
@@ -1273,25 +1302,16 @@ export function evaluateSwap(
 
     const stableLamports = stableLamportsFor(stable, solUsd);
 
-    // The stable leg normalises to less than one lamport, so it contributes
-    // nothing and the SOL side would be whatever native residue the payload
-    // carries. Refused rather than settled.
-    //
-    // **A narrow backstop, and the comment that used to be here claimed more
-    // than that.** Measured: a USDC leg of `n` raw units is `1000 * n / usd`
-    // lamports, so this fires only above **$2,000/SOL** for the smallest leg
-    // that can reach it (2 raw units gives exactly 1 lamport at $2,000 and 0
-    // above it) — not "unreachable at any real SOL price", which was wrong in
-    // the direction that matters. What it is *not* is a defence against
-    // residue-priced trades in general: eight lamports higher, the same 2-raw-
-    // unit leg beside 2,039,280 lamports of ATA rent books a trade that is
-    // 99.99961% rent, and `settleTrade` writes it, because spec §4.4 says
-    // that rent is real cost the wallet paid. And a 1-raw-unit USDC leg never
-    // arrives here at all — the dust floor removes it first, which is what
-    // `dustCounterpartyOf` above is for. This guard covers exactly one thing:
-    // an exact zero out of the division, where the division is the only
-    // reason there is a SOL side at all.
-    if (stableLamports === 0n) return { outcome: "unsupported_quote" };
+    // There is deliberately no guard here for a stable leg that normalises to
+    // less than one lamport. The previous version had one, and the residue
+    // test in `settleTrade` subsumes it: a stable leg contributing nothing
+    // leaves a SOL side that is native residue, which is precisely what that
+    // test refuses. Measured, same input both ways — a 2-raw-unit USDC leg at
+    // $2,001/SOL beside 2,039,280 lamports of rent — the guard returned
+    // `unsupported_quote` and the residue test returns `sol_leg_is_residue`,
+    // which is the truer name. Keeping the guard would also have made it fire
+    // in the one case where it is *wrong*: a wallet paying 1 SOL plus a
+    // sub-lamport USDC leg has a real, measured SOL side and a real trade.
 
     return settleTrade(payload, wallet.address, changes, token, stableLamports);
   }
@@ -1303,16 +1323,6 @@ export function evaluateSwap(
   // the counterparty check below because a rotation writes no number either
   // way, and this is the older, spec-stated rule.
   if (sole.mint === USDC_MINT) return { outcome: "stable_rotation" };
-
-  // One real leg survived, but the floor removed its counterparty: this is a
-  // two-sided swap wearing a one-sided swap's shape, and pricing it against
-  // the leftover native residue is the fabrication `dustCounterpartyOf`
-  // documents in full. Refused here, on the only path where it can happen —
-  // two or more surviving legs are already declined above, and a stablecoin
-  // quote with a dust leg beside it has a real stable side to be valued from.
-  if (dustCounterpartyOf(allLegs, sole)) {
-    return { outcome: "unsupported_quote_dust_counterparty" };
-  }
 
   return settleTrade(payload, wallet.address, changes, sole, 0n);
 }
@@ -1465,18 +1475,18 @@ export type RowParseError = SwapParseError | "malformed_payload";
  * land) take the top two places, in that order — an unreadable payload is the
  * stronger statement, since the row cannot even be classified.
  *
- * Below them, among the settled refusals: a wrong-direction leg outranks the
- * unsupported quotes, being a rejected trade with real money on it, then
- * `unsupported_quote_dust_counterparty` — the one that stands between a real
- * leg and a fabricated cost basis, so it is the one worth surfacing next —
- * then the two named quote shapes, then the bare `unsupported_quote`, which
- * names no shape at all.
+ * Below them, among the settled refusals: the two that reject a *SOL side*
+ * come first, because each of them stands between a real token leg and a
+ * fabricated number — `sol_leg_wrong_direction` (a rejected trade with real
+ * money on it) then `sol_leg_is_residue` (rent that would have been written
+ * as a price). Then the two named quote shapes, then the bare
+ * `unsupported_quote`, which names no shape at all.
  */
 const ERROR_PRIORITY: Record<RowParseError, number> = {
   malformed_payload: 7,
   unsupported_quote_no_rate: 6,
   sol_leg_wrong_direction: 5,
-  unsupported_quote_dust_counterparty: 4,
+  sol_leg_is_residue: 4,
   unsupported_quote_unpriced_stable: 3,
   unsupported_quote_token_token: 2,
   unsupported_quote: 1,

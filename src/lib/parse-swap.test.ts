@@ -1645,26 +1645,10 @@ describe("stablecoin-quoted swaps (spec §4.3)", () => {
     );
   });
 
-  it("refuses a stablecoin leg worth less than a lamport rather than pricing the swap off ATA rent", () => {
-    // The batch-1 fabrication, reached through the new door. At an absurd
-    // rate the 2-raw-unit USDC leg normalises to exactly 0 lamports, which
-    // would leave the 2,039,280 lamports of ATA rent as the entire "SOL
-    // side" and write `buy tokenAmount 2, solAmount 0.00203928,
-    // price_sol 0.00101964` — the round-2 cost basis, with a stablecoin
-    // quote's name on it.
-    const payload = buildObservedSwapPayload({
-      wallet: wallet.address,
-      nativeChangeLamports: -(5_000 + 2_039_280),
-      feeLamports: 5_000,
-      isFeePayer: true,
-      legs: [
-        { mint, decimals: 6, rawTokenAmount: "2000000" },
-        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-2" }, // 2/1,000,000 USDC: above the dust floor
-      ],
-    });
-    expect(evaluateSwap(payload, wallet, parseDecimal("1000000000000")).outcome).toBe("unsupported_quote");
-    expect(parseSwap(payload, wallet, parseDecimal("1000000000000"))).toBeNull();
-  });
+  // The sub-lamport stablecoin leg that used to be asserted here now lives in
+  // `a SOL side that is only account rent`: it reaches the general residue
+  // rule instead of a guard of its own, and is named `sol_leg_is_residue`
+  // rather than the catch-all. Same input, same refusal, truer name.
 
   it("rejects a stablecoin-quoted swap whose two legs moved the same way", () => {
     // Tokens in and USDC in: not a swap between them at all. The direction
@@ -1749,85 +1733,118 @@ async function makeKol(handle: string): Promise<string> {
 }
 
 /**
- * The last door in this file onto a fabricated cost basis: `dropDust` runs
- * before anything knows the swap's shape, so a two-sided swap whose second
- * side falls under the floor arrives at the sole-leg path indistinguishable
- * from a one-sided one — and is then priced against whatever native residue
- * the payload carries.
+ * The last family of fabricated cost bases in this file: a real token leg
+ * whose SOL side is nothing but the rent of the accounts the transaction
+ * opened or closed.
  *
- * Measured at `70a35ae`, before this rule existed, for the shape below:
+ * Four routes arrive here and are indistinguishable once they do — a
+ * counterparty that fell under the dust floor, the same one netted a single
+ * raw unit the other side of zero, its buy mirror, and a counterparty in WSOL
+ * that never reaches the dust path at all because `tokenLegsIn` excludes it.
+ * Each was measured writing a trade with `parse_error` NULL; the numbers are
+ * in the block below and in the task report.
  *
- *     trade{side sell, token_amount 500, sol_amount 0.00203928,
- *           price_sol 0.00000407856}, parse_error NULL
- *
- * The design choice, argued in the task report: check what the removal
- * *cost*, rather than reorder the floor. A dropped leg that moved opposite
- * the survivor was its counterparty; one that moved the same way is a router
- * remainder and stays dropped, which is the case the floor exists for.
+ * The rule is magnitude, not route: `|solSide|` must exceed
+ * `2039280 * (token accounts this wallet touched)`. An earlier version tested
+ * the *sign* of the leg the dust floor removed and was defeated in both
+ * directions — the netting variant below is bit-identical to the case it
+ * caught, and the sell-side router remainder is a fully-valued 1 SOL trade it
+ * wrongly refused.
  */
-describe("a dust leg that was the counterparty", () => {
-  /**
-   * The reviewer's case, and Task 6's netting is what makes it ordinary
-   * rather than exotic: the wallet sold 500 A for B and round-tripped B
-   * inside the same transaction, so Helius delivers B's *net* — 5/10,000,000
-   * of a token, under the floor. Closing A's token account refunds 2,039,280
-   * lamports, and that refund is the only SOL in the payload.
-   */
-  const sellIntoADustCounterparty = (bDecimals = 9, bRaw = "500") =>
+describe("a SOL side that is only account rent", () => {
+  const RENT = 2_039_280;
+
+  /** Shape 1: sell 500 A, B's net lands under the dust floor, A's ATA closes. */
+  const dustCounterparty = () =>
     buildObservedSwapPayload({
       wallet: wallet.address,
-      nativeChangeLamports: 2_039_280 - 5_000,
+      nativeChangeLamports: RENT - 5_000,
       feeLamports: 5_000,
       isFeePayer: true,
       legs: [
-        { mint, decimals: 6, rawTokenAmount: "-500000000" }, // 500 A out
-        { mint: inventAddress(), decimals: bDecimals, rawTokenAmount: bRaw }, // B in, under the floor
+        { mint, decimals: 6, rawTokenAmount: "-500000000" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "500" },
       ],
     });
 
   it("does not book ATA rent as the proceeds of a 500-token sale", () => {
-    const payload = sellIntoADustCounterparty();
-    expect(parseSwap(payload, wallet)).toBeNull();
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_dust_counterparty");
+    expect(parseSwap(dustCounterparty(), wallet)).toBeNull();
+    expect(evaluateSwap(dustCounterparty(), wallet).outcome).toBe("sol_leg_is_residue");
   });
 
-  it("refuses in the buy direction too, where the residue is rent paid rather than refunded", () => {
-    // The mirror: A bought, the dust leg spent. Rent is *paid* here, so the
-    // survivor and the residue agree on direction and every check below would
-    // have passed — the fabrication is a cost basis of 0.00203928 SOL for 500
-    // tokens rather than proceeds, which understates a position instead of
-    // manufacturing profit. Equally wrong, equally silent.
+  it("catches it just as well when the counterparty's net lands on the other side of zero", () => {
+    // Shape 2, and the one that killed the sign rule. Helius nets within a
+    // transaction, so a counterparty's *sign* is a net sign and flips on its
+    // last raw unit: one pre-existing raw unit of B, or a round trip that
+    // overshoots by one, and B nets to -1 — the same sign as the -500 A
+    // survivor, which a sign test reads as a router remainder. The payload is
+    // otherwise identical and so was the fabrication:
+    // `sell 500 for 0.00203928 SOL` at both 70a35ae and d1d3656.
     const payload = buildObservedSwapPayload({
       wallet: wallet.address,
-      nativeChangeLamports: -(2_039_280 + 5_000),
+      nativeChangeLamports: RENT - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-500000000" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "-1" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("sol_leg_is_residue");
+  });
+
+  it("catches the buy mirror, where the rent is paid rather than refunded", () => {
+    // Shape 3. Understates a cost basis instead of manufacturing proceeds —
+    // equally wrong, equally silent, and it was `buy 500 for 0.00203928 SOL`.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(RENT + 5_000),
       feeLamports: 5_000,
       isFeePayer: true,
       legs: [
         { mint, decimals: 6, rawTokenAmount: "500000000" },
-        { mint: inventAddress(), decimals: 9, rawTokenAmount: "-500" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "1" },
       ],
     });
-    expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_dust_counterparty");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("sol_leg_is_residue");
   });
 
-  it("still prices a swap whose dust leg is a router remainder, not a counterparty", () => {
-    // The negative control, and the reason the floor was not simply reordered:
-    // a remainder moves the *same* way as the acquisition, is nobody's
-    // counterparty, and sits beside a real, measured 1 SOL side. Declining it
-    // would cost a routine trade for no gain in truth.
+  it("catches a dust WSOL counterparty, which never reaches the dust floor at all", () => {
+    // Shape 5. WSOL is excluded from `tokenLegsIn`, so no rule about dropped
+    // *legs* could ever have seen this one. It was `sell 500 for 0.00203878
+    // SOL` — the rent, less the 500 lamports of WSOL that did move.
     const payload = buildObservedSwapPayload({
       wallet: wallet.address,
-      nativeChangeLamports: -1_000_005_000,
+      nativeChangeLamports: RENT - 5_000,
       feeLamports: 5_000,
       isFeePayer: true,
       legs: [
-        { mint, decimals: 6, rawTokenAmount: "2000000" }, // 2 tokens in
-        { mint: inventAddress(), decimals: 6, rawTokenAmount: "1" }, // 1 raw unit in: a remainder
+        { mint, decimals: 6, rawTokenAmount: "-500000000" },
+        { mint: WSOL_MINT, decimals: 9, rawTokenAmount: "-500" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet).outcome).toBe("sol_leg_is_residue");
+  });
+
+  it("prices a SELL whose router remainder is incoming, which the sign rule refused", () => {
+    // Shape 4, the false refusal the sign rule introduced. On a sell routed
+    // A -> C -> SOL the remainder left on C is *incoming*, therefore opposite
+    // the outgoing survivor — a counterparty by the sign test, a remainder in
+    // fact. The SOL side is a real, measured 1 SOL, two orders of magnitude
+    // above the rent of the two accounts touched, and it must parse.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 1_000_000_000 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-2000000" },
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "1" },
       ],
     });
     expect(parseSwap(payload, wallet)).toEqual({
       mint,
-      side: "buy",
+      side: "sell",
       tokenAmount: 2,
       solAmount: 1,
       feeSol: 0.000005,
@@ -1835,43 +1852,107 @@ describe("a dust leg that was the counterparty", () => {
     });
   });
 
-  it("refuses a dust USDC counterparty rather than letting the floor hide a stablecoin quote", () => {
-    // A 1-raw-unit USDC leg is at the floor exactly, so `dropDust` removes it
-    // before the stablecoin branch can see it, and the sub-lamport guard on
-    // that branch never runs. This is the check that catches it instead —
-    // which is why that guard's comment no longer claims to be "the door".
+  it("prices a BUY whose router remainder is outgoing, the mirror of the same case", () => {
+    // The fourth corner, so the table is symmetric in both axes rather than
+    // in the one that happened to be tested: a buy that spent a sub-floor
+    // balance of an intermediate mint. Outgoing remainder, incoming survivor.
     const payload = buildObservedSwapPayload({
       wallet: wallet.address,
-      nativeChangeLamports: -(2_039_280 + 5_000),
+      nativeChangeLamports: -1_000_005_000,
       feeLamports: 5_000,
       isFeePayer: true,
       legs: [
         { mint, decimals: 6, rawTokenAmount: "2000000" },
-        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-1" },
-      ],
-    });
-    expect(evaluateSwap(payload, wallet, parseDecimal("231.71")).outcome).toBe(
-      "unsupported_quote_dust_counterparty",
-    );
-  });
-
-  it("leaves a sole dust leg as dust_only, and a dust-only pair too", () => {
-    // The check is about a *survivor* losing its counterparty. With nothing
-    // surviving there is no survivor to mislead, and the older, narrower
-    // outcome still applies.
-    const payload = buildObservedSwapPayload({
-      wallet: wallet.address,
-      nativeChangeLamports: -(2_039_280 + 5_000),
-      feeLamports: 5_000,
-      isFeePayer: true,
-      legs: [
-        { mint, decimals: 6, rawTokenAmount: "1" },
         { mint: inventAddress(), decimals: 6, rawTokenAmount: "-1" },
       ],
     });
-    expect(evaluateSwap(payload, wallet).outcome).toBe("dust_only");
+    expect(parseSwap(payload, wallet)!.solAmount).toBe(1);
   });
 
+  it("scales the bound with the token accounts the wallet actually touched", () => {
+    // The bound is `2039280 * changes.length`, and `changes.length` comes off
+    // the payload — one balance change per token account (task 6). A wallet
+    // with one account has half the bound of a wallet with two, and a SOL
+    // side between the two is a trade in the first case and residue in the
+    // second. Nothing here is a threshold anybody chose.
+    const oneAccount = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 3_000_000 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [{ mint, decimals: 6, rawTokenAmount: "-500000000" }],
+    });
+    expect(parseSwap(oneAccount, wallet)!.solAmount).toBe(0.003);
+
+    const twoAccounts = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 3_000_000 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-500000000" },
+        { mint: inventAddress(), decimals: 9, rawTokenAmount: "500" },
+      ],
+    });
+    expect(evaluateSwap(twoAccounts, wallet).outcome).toBe("sol_leg_is_residue");
+  });
+
+  it("lets one lamport past the bound through, and refuses the bound itself", () => {
+    // The comparison is `<=`, so the bound is refused and bound+1 is a trade.
+    // Pinned exactly, because a rule stated in a protocol constant should be
+    // reproducible to the lamport rather than "about right".
+    const at = (lamports: number) =>
+      evaluateSwap(
+        buildObservedSwapPayload({
+          wallet: wallet.address,
+          nativeChangeLamports: lamports - 5_000,
+          feeLamports: 5_000,
+          isFeePayer: true,
+          legs: [{ mint, decimals: 6, rawTokenAmount: "-500000000" }],
+        }),
+        wallet,
+      );
+    expect(at(RENT).outcome).toBe("sol_leg_is_residue");
+    expect(at(RENT + 1).outcome).toBe("trade");
+  });
+
+  it("refuses a stablecoin quote whose stable leg normalises away, without a guard of its own", () => {
+    // What the removed `stableLamports === 0n` guard used to catch, now
+    // reached by the general rule and named more truthfully. A 2-raw-unit
+    // USDC leg at $2,001/SOL is 0 lamports, leaving 2,039,280 of rent.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(RENT + 5_000),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-2" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, parseDecimal("2001")).outcome).toBe("sol_leg_is_residue");
+    // And eight lamports of stable value does not rescue it either: at
+    // $231.71 the same leg is 8 lamports against 2,039,280 of rent, which was
+    // being written as a trade that is 99.99961% rent.
+    expect(evaluateSwap(payload, wallet, parseDecimal("231.71")).outcome).toBe("sol_leg_is_residue");
+  });
+
+  it("leaves the persistent-WSOL buy alone, rent included", () => {
+    // The negative control that matters most: batch 1's headline number is a
+    // real 1 SOL side *plus* the same 2,039,280 of rent, and spec §4.4 says
+    // that rent is part of the cost. The rule must not touch it.
+    const payload = buildSwapPayload({
+      wallet: wallet.address,
+      mint,
+      decimals: 6,
+      nativeChangeLamports: -(5_000 + RENT),
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+      extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: "-1000000000" }],
+    });
+    expect(parseSwap(payload, wallet)!.solAmount).toBe(1.00203928);
+  });
 });
 
 describe("swaps quoted in a stablecoin this project cannot price", () => {
@@ -2435,9 +2516,10 @@ describe("parsePending", () => {
     expect(raw.parsed_at).not.toBeNull();
   });
 
-  it("records a dust-counterparty refusal on the row and settles it", async () => {
-    // No later data makes this readable: the counterparty's amount is gone
-    // upstream, netted away before delivery. Settled, unlike a missing rate.
+  it("records a residue-only SOL side on the row and settles it", async () => {
+    // No later data makes this readable: whatever the counterparty was worth
+    // was netted away upstream of anything this project controls. Settled,
+    // unlike a missing rate.
     const payload = buildObservedSwapPayload({
       wallet: walletAddress,
       nativeChangeLamports: 2_039_280 - 5_000,
@@ -2456,7 +2538,7 @@ describe("parsePending", () => {
     const [raw] = await query<{ parsed_at: Date | null; parse_error: string | null }>(
       "SELECT parsed_at, parse_error FROM raw_tx",
     );
-    expect(raw.parse_error).toBe("unsupported_quote_dust_counterparty");
+    expect(raw.parse_error).toBe("sol_leg_is_residue");
     expect(raw.parsed_at).not.toBeNull();
   });
 
@@ -3327,13 +3409,12 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
         }),
     },
     {
-      // Review of task 7. The dust floor removed this leg's counterparty, so
-      // what reaches the sole-leg path is a two-sided swap wearing a
-      // one-sided swap's shape — and the only SOL in the payload is the
-      // 2,039,280 lamports of rent refunded when the sold mint's token
-      // account closed. Was: `sell 500 for 0.00203928 SOL`, silently.
-      name: "a real leg whose counterparty the dust floor removed (was: rent as proceeds)",
-      outcome: "unsupported_quote_dust_counterparty",
+      // Review of task 7. The whole SOL side is the 2,039,280 lamports of
+      // rent refunded when the sold mint's token account closed, so it is
+      // bookkeeping rather than proceeds. Was: `sell 500 for 0.00203928 SOL`,
+      // silently, with parse_error NULL.
+      name: "a SOL side that is only the rent of the accounts touched (was: rent as proceeds)",
+      outcome: "sol_leg_is_residue",
       build: () =>
         buildObservedSwapPayload({
           wallet: walletAddress,
@@ -3869,10 +3950,10 @@ describe("invariant: a tracked wallet's swap is never silently dropped", () => {
       no_sol_leg: true,
       unsupported_quote: true,
       unsupported_quote_no_rate: true,
-      unsupported_quote_dust_counterparty: true,
       unsupported_quote_unpriced_stable: true,
       unsupported_quote_token_token: true,
       sol_leg_wrong_direction: true,
+      sol_leg_is_residue: true,
     };
     const covered = new Set<string>(shapes.map((s) => s.outcome));
     expect((Object.keys(ALL_OUTCOMES) as SwapOutcome[]).filter((o) => !covered.has(o))).toEqual([]);
