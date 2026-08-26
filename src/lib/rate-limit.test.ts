@@ -19,34 +19,95 @@ describe("ipHash", () => {
   });
 });
 
-// The window is an hour, not the minute these cases would otherwise use.
-// Each case makes several sequential round trips to Neon, and `hitLimit`
-// buckets on a fixed window floored from the wall clock — so a minute
-// boundary falling between two calls of one case starts a fresh bucket and
-// the count resets under the assertion. That flaked once in CI. An hour makes
-// the boundary unreachable within a case without touching `hitLimit` itself,
-// which is the thing under test.
+// A readable window, now that the boundary is pinnable. Every case that cares
+// which bucket a call lands in passes the instant explicitly (`hitLimit`'s
+// last parameter), so no amount of round-trip latency can move it, and the
+// window can be the minute these cases read best with instead of the hour
+// they used to need. The one case that is *about* the default path leaves the
+// instant out on purpose and keeps an hour for the reason the whole file used
+// to: it makes two sequential round trips against the server's own clock, and
+// an hour is the only thing that keeps a boundary from falling between them.
+const WINDOW = 60;
+
+// Divisible by WINDOW, so it sits exactly on a boundary: T0 + WINDOW - 1 is
+// the last instant of its bucket and T0 + WINDOW the first of the next, which
+// is what makes the arithmetic in each case readable.
+const T0 = 1_800_000_000;
+
 describe("hitLimit", () => {
   it("allows calls up to the limit and blocks the next one", async () => {
     for (let i = 0; i < 3; i++) {
-      expect(await hitLimit("203.0.113.7", "test", 3, 3600)).toBe(false);
+      expect(await hitLimit("203.0.113.7", "test", 3, WINDOW, T0)).toBe(false);
     }
-    expect(await hitLimit("203.0.113.7", "test", 3, 3600)).toBe(true);
+    expect(await hitLimit("203.0.113.7", "test", 3, WINDOW, T0)).toBe(true);
   });
 
   it("counts buckets independently", async () => {
-    await hitLimit("203.0.113.7", "a", 1, 3600);
-    expect(await hitLimit("203.0.113.7", "b", 1, 3600)).toBe(false);
+    await hitLimit("203.0.113.7", "a", 1, WINDOW, T0);
+    expect(await hitLimit("203.0.113.7", "b", 1, WINDOW, T0)).toBe(false);
   });
 
   it("counts callers independently", async () => {
-    await hitLimit("203.0.113.7", "test", 1, 3600);
-    expect(await hitLimit("203.0.113.8", "test", 1, 3600)).toBe(false);
+    await hitLimit("203.0.113.7", "test", 1, WINDOW, T0);
+    expect(await hitLimit("203.0.113.8", "test", 1, WINDOW, T0)).toBe(false);
   });
 
   it("stores no raw IP address", async () => {
-    await hitLimit("203.0.113.7", "test", 5, 3600);
+    await hitLimit("203.0.113.7", "test", 5, WINDOW, T0);
     const [row] = await query<{ ip_hash: Buffer }>("SELECT ip_hash FROM rate_limit");
     expect(row.ip_hash.indexOf(Buffer.from("203.0.113.7", "utf8"))).toBe(-1);
+  });
+
+  // The behaviour the rate limiter exists for, and the one the hour-long
+  // window used to make unreachable: being blocked is temporary.
+  it("allows a blocked caller again on the first call of the next window", async () => {
+    expect(await hitLimit("203.0.113.7", "test", 1, WINDOW, T0)).toBe(false);
+    expect(await hitLimit("203.0.113.7", "test", 1, WINDOW, T0 + 1)).toBe(true);
+    expect(await hitLimit("203.0.113.7", "test", 1, WINDOW, T0 + WINDOW)).toBe(false);
+  });
+
+  it("shares a bucket within one window and starts a new one across a boundary", async () => {
+    await hitLimit("203.0.113.7", "test", 10, WINDOW, T0);
+    await hitLimit("203.0.113.7", "test", 10, WINDOW, T0 + WINDOW - 1);
+    await hitLimit("203.0.113.7", "test", 10, WINDOW, T0 + WINDOW);
+
+    const rows = await query<{ window_start: Date; hits: number }>(
+      "SELECT window_start, hits FROM rate_limit ORDER BY window_start",
+    );
+    expect(rows.map((row) => row.hits)).toEqual([2, 1]);
+    expect(rows[1].window_start.getTime() - rows[0].window_start.getTime()).toBe(WINDOW * 1000);
+  });
+
+  // `floor` puts a boundary instant at the start of the window it opens, not
+  // at the end of the one it closes. Worth pinning: it is exactly the kind of
+  // edge a rewrite of the expression (round, ceil, a subtracted epsilon)
+  // flips without anything else looking different.
+  it("puts an instant exactly on a boundary in the later window", async () => {
+    await hitLimit("203.0.113.7", "test", 10, WINDOW, T0 - 1);
+    await hitLimit("203.0.113.7", "test", 10, WINDOW, T0);
+
+    const rows = await query<{ window_start: Date }>(
+      "SELECT window_start FROM rate_limit ORDER BY window_start",
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[1].window_start.getTime()).toBe(T0 * 1000);
+  });
+
+  // Omitting the instant must not quietly hand the bucketing to the
+  // application's clock: `now()` is transaction start on the server, and a
+  // fleet of app processes with drifting clocks would otherwise disagree
+  // about which window a request belongs to. Asserted against the database's
+  // own now(), never against this process's -- comparing to Date.now() here
+  // would pass just as happily if the SQL had been changed to trust the
+  // caller, which is the whole thing this case is meant to catch.
+  it("buckets on the database's clock when no instant is supplied", async () => {
+    await hitLimit("203.0.113.7", "test", 5, 3600);
+
+    const [row] = await query<{ on_server_window: boolean }>(
+      `SELECT window_start = to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600)
+                AS on_server_window
+         FROM rate_limit`,
+    );
+    expect(row.on_server_window).toBe(true);
   });
 });
