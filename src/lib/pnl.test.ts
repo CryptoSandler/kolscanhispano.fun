@@ -39,6 +39,11 @@ type TradeSpec = {
   ix?: number;
   /** NULL models a trade whose block had no `sol_price` row. */
   usd?: string | null;
+  /**
+   * The transaction fee, spec §4.4. Zero unless this wallet was the fee
+   * payer — `parse-swap` writes 0 for every other wallet in the transaction.
+   */
+  fee?: string;
   basis?: "known" | "unknown";
   mint?: string;
 };
@@ -51,11 +56,13 @@ async function insertTrades(specs: TradeSpec[]): Promise<void> {
                         fee_sol, basis, block_time)
      SELECT entry.id::uuid, decode(entry.sig, 'hex'), decode(entry.sig, 'hex'),
             entry.ix::smallint, entry.slot::bigint, $1, $2, entry.mint, entry.side,
-            entry.tokens::numeric, entry.sol::numeric, entry.usd::numeric, 150, 0,
+            entry.tokens::numeric, entry.sol::numeric, entry.usd::numeric,
+            entry.sol_usd::numeric, entry.fee::numeric,
             entry.basis, entry.at::timestamptz
        FROM unnest($3::text[], $4::text[], $5::int[], $6::bigint[], $7::text[], $8::text[],
-                   $9::text[], $10::text[], $11::text[], $12::text[], $13::text[])
-            AS entry(id, sig, ix, slot, mint, side, tokens, sol, usd, basis, at)`,
+                   $9::text[], $10::text[], $11::text[], $12::text[], $13::text[],
+                   $14::text[], $15::text[])
+            AS entry(id, sig, ix, slot, mint, side, tokens, sol, usd, sol_usd, fee, basis, at)`,
     [
       kolId,
       walletId,
@@ -68,6 +75,10 @@ async function insertTrades(specs: TradeSpec[]): Promise<void> {
       specs.map((spec) => spec.tokens),
       specs.map((spec) => spec.sol),
       specs.map((spec) => (spec.usd === undefined ? null : spec.usd)),
+      // `usd_amount` and `sol_usd` are written from the same lookup, so a
+      // trade whose block had no price has neither.
+      specs.map((spec) => (spec.usd === undefined || spec.usd === null ? null : "150")),
+      specs.map((spec) => spec.fee ?? "0"),
       specs.map((spec) => spec.basis ?? "known"),
       specs.map((spec) => spec.at),
     ],
@@ -252,6 +263,103 @@ describe("replayPosition: cost basis", () => {
     expect(row.cost_sol).toBe("0");
     expect(row.qty).toBe("0");
     expect(row.avg_cost_sol).toBe("0");
+  });
+});
+
+describe("replayPosition: fees", () => {
+  it("charges the fee on both legs, so a round trip pays it twice", async () => {
+    // Spec §4.4: `sol_amount` is the swap leg alone — `parse-swap` adds the
+    // fee back out of the wallet's net balance delta precisely so the two can
+    // be charged separately. A buy costs the leg plus the fee, a sell nets the
+    // leg minus it.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", fee: "0.05", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "1.2", tokens: "100", fee: "0.05", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    // (1.2 - 0.05) - (1 + 0.05) = 0.1, not the 0.2 the gross legs alone show.
+    expect((await position()).realized_sol).toBe("0.1");
+  });
+
+  it("carries the fee into the cost basis of an unsold remainder", async () => {
+    // The ratio path, not the full-exit shortcut: half the position is still
+    // open and its average cost has to carry its share of the entry fee.
+    await insertTrades([
+      { side: "buy", sol: "2", tokens: "200", fee: "0.1", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "1.5", tokens: "100", fee: "0.1", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    const row = await position();
+    // Cost 2.1 over 200 tokens; the sale removes 2.1 x 100/200 = 1.05 and
+    // nets 1.4, so realized is 0.35 and 1.05 of basis stays on 100 tokens.
+    expect(row.realized_sol).toBe("0.35");
+    expect(row.cost_sol).toBe("1.05");
+    expect(row.avg_cost_sol).toBe("0.0105");
+  });
+
+  it("records a round trip that the fees turned negative as a loss", async () => {
+    // The seam this closes. Gross, the legs read +0.02 and the position
+    // closes as a win. The wallet paid 0.10 in fees to make it, so the round
+    // trip lost 0.08 - and a win on a losing round trip is the §4.7
+    // contradiction, on the number the leaderboard ranks.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", fee: "0.05", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "1.02", tokens: "100", fee: "0.05", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    expect((await position()).realized_sol).toBe("-0.08");
+    expect(await daily()).toEqual([
+      { day: "2026-08-25", realized_sol: "-0.08", realized_usd: "0", wins: 0, losses: 1 },
+    ]);
+  });
+
+  it("leaves the same round trip a win for a wallet that paid no fee", async () => {
+    // `parse-swap` writes `fee_sol` only for the fee payer; every other
+    // tracked wallet in the same transaction gets 0. The two cases have to be
+    // distinguishable, or the fix above is indistinguishable from a constant.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", fee: "0", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "1.02", tokens: "100", fee: "0", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    expect((await position()).realized_sol).toBe("0.02");
+    expect(await daily()).toEqual([
+      { day: "2026-08-25", realized_sol: "0.02", realized_usd: "0", wins: 1, losses: 0 },
+    ]);
+  });
+
+  it("values the fee in USD at the same rate the trade was priced with", async () => {
+    // §4.1: USD is derived at trade time and never re-priced. The fee is a
+    // SOL amount, so it is valued at that trade's own `sol_usd` — the rate
+    // `usd_amount` came from — rather than left out of the USD figure.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", usd: "150", fee: "0.05", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "1.2", tokens: "100", usd: "180", fee: "0.05", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    const row = await position();
+    expect(row.realized_sol).toBe("0.1");
+    // Cost 150 + 7.5, proceeds 180 - 7.5.
+    expect(row.realized_usd).toBe("15");
+  });
+
+  it("counts a sell whose fee outweighs its proceeds as the loss it is", async () => {
+    // Net proceeds below zero are a real outcome, not corrupt data, so they
+    // are not clamped - and they give up basis, so the position stays known.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "0.02", tokens: "100", fee: "0.05", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    const row = await position();
+    expect(row.realized_sol).toBe("-1.03");
+    expect(row.basis).toBe("known");
   });
 });
 

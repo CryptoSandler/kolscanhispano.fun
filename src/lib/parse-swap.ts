@@ -108,7 +108,7 @@
  * silent drop, and not requeueable.
  */
 import { aadFor, decrypt, encrypt } from "./crypto";
-import { query } from "./db";
+import { query, withTransaction } from "./db";
 import { findWalletByAddress, type WalletRow } from "./wallets";
 
 /**
@@ -1038,38 +1038,46 @@ async function insertTrade(
   const usdAmount = solUsd === null ? null : trade.solAmount * solUsd;
   const priceUsd = solUsd === null ? null : priceSol * solUsd;
 
-  await query(
-    `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
-                        mint, side, token_amount, sol_amount, usd_amount, sol_usd, price_sol,
-                        price_usd, fee_sol, block_time, slot)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-     ON CONFLICT (signature_hmac, instruction_index, wallet_id) DO NOTHING`,
-    [
-      id,
-      signatureHmac,
-      signatureEnc,
-      trade.instructionIndex,
-      wallet.kol_id,
-      wallet.id,
-      trade.mint,
-      trade.side,
-      trade.tokenAmount,
-      trade.solAmount,
-      usdAmount,
-      solUsd,
-      priceSol,
-      priceUsd,
-      trade.feeSol,
-      blockTime,
-      header.slot,
-    ],
-  );
+  // Both writes or neither. The trade is the source of truth and the dirty
+  // mark is the only thing that will ever cause it to be read: a crash
+  // between them leaves a trade that no replay is ever told to look at, so
+  // the position it belongs to silently stops matching its own trade log.
+  // Nothing recovers that on its own, because the recovery is driven by the
+  // flag that went missing.
+  await withTransaction(async (tx) => {
+    await tx(
+      `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
+                          mint, side, token_amount, sol_amount, usd_amount, sol_usd, price_sol,
+                          price_usd, fee_sol, block_time, slot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (signature_hmac, instruction_index, wallet_id) DO NOTHING`,
+      [
+        id,
+        signatureHmac,
+        signatureEnc,
+        trade.instructionIndex,
+        wallet.kol_id,
+        wallet.id,
+        trade.mint,
+        trade.side,
+        trade.tokenAmount,
+        trade.solAmount,
+        usdAmount,
+        solUsd,
+        priceSol,
+        priceUsd,
+        trade.feeSol,
+        blockTime,
+        header.slot,
+      ],
+    );
 
-  await query(
-    `INSERT INTO position (kol_id, mint, dirty) VALUES ($1, $2, TRUE)
-     ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = TRUE`,
-    [wallet.kol_id, trade.mint],
-  );
+    await tx(
+      `INSERT INTO position (kol_id, mint, dirty) VALUES ($1, $2, TRUE)
+       ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = TRUE`,
+      [wallet.kol_id, trade.mint],
+    );
+  });
 }
 
 /** What can end up in `raw_tx.parse_error`: a swap outcome, or an unreadable payload. */

@@ -42,8 +42,13 @@ const DEFAULT_DIRTY_LIMIT = 100;
 type TradeRow = {
   side: "buy" | "sell";
   token_amount: string;
+  /** The swap leg alone: `parse-swap` adds the fee back out of it (spec §4.4). */
   sol_amount: string;
   usd_amount: string | null;
+  /** The transaction fee, charged separately here. Zero unless this wallet paid it. */
+  fee_sol: string;
+  /** The SOL/USD rate at this block, the only way to value `fee_sol` in USD. */
+  sol_usd: string | null;
   basis: "known" | "unknown";
   block_time: Date;
 };
@@ -64,7 +69,7 @@ type DayTotals = { realizedSol: bigint; realizedUsd: bigint; wins: number; losse
  * those sort last within their second, then by instruction index.
  */
 const TRADES_SQL = `
-  SELECT side, token_amount, sol_amount, usd_amount, basis, block_time
+  SELECT side, token_amount, sol_amount, usd_amount, fee_sol, sol_usd, basis, block_time
     FROM trade
    WHERE kol_id = $1 AND mint = $2
    ORDER BY block_time, slot, instruction_index, id`;
@@ -163,33 +168,61 @@ function hasClosed(state: ReplayState, threshold: bigint): boolean {
  * sell:  realized += sol − (cost × q) / qty;  cost −= (cost × q) / qty;  qty −= q
  * ```
  *
+ * where `sol` is the SOL the wallet actually parted with or kept — spec §4.4.
+ * `sol_amount` is the swap leg alone, because `parse-swap` adds the fee back
+ * out of the wallet's net balance delta so the two can be charged separately;
+ * this is the half that charges it. **A buy costs `sol_amount + fee_sol` and a
+ * sell nets `sol_amount − fee_sol`**, and a fee is only ever non-zero for the
+ * wallet that actually paid it.
+ *
+ * Leaving it out was worth 0.1 SOL on a 2-leg round trip at the fee levels
+ * §4.4 calls material, and it flips the sign of a marginal episode: a round
+ * trip that grossed +0.02 and paid 0.10 in fees is a loss, and was being
+ * counted as a win — the §4.7 contradiction, reached through a seam between
+ * two modules that were each right about their own half.
+ *
  * USD is carried in parallel, on the same quantity ratio, because §4.1 fixes
- * the USD value at trade time and never re-prices. A trade with no
- * `usd_amount` — no `sol_price` row covered its block, so `parse-swap` wrote
- * NULL — contributes nothing to either side of the USD figure.
+ * the USD value at trade time and never re-prices. The fee is valued at that
+ * same trade's `sol_usd`, the rate its `usd_amount` was derived from. A trade
+ * with no `sol_price` row covering its block has both NULL and contributes
+ * nothing to either side of the USD figure.
  */
 function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): void {
   let quantity = parseDecimal(trade.token_amount);
   let sol = parseDecimal(trade.sol_amount);
   let usd = trade.usd_amount === null ? 0n : parseDecimal(trade.usd_amount);
+  let fee = parseDecimal(trade.fee_sol);
 
   // A trade the parser could not price against a known basis (spec §4.5), or
   // a negative amount, which nothing that writes this table produces. Either
   // way the position's realized figure stops being trustworthy, and §4.5's
-  // answer to that is to label it, not to publish it.
-  if (trade.basis === "unknown" || quantity < 0n || sol < 0n || usd < 0n) {
+  // answer to that is to label it, not to publish it. A negative fee is in
+  // that set too: it would credit SOL to the wallet that paid it.
+  if (trade.basis === "unknown" || quantity < 0n || sol < 0n || usd < 0n || fee < 0n) {
     state.unknownBasis = true;
     if (quantity < 0n) quantity = 0n;
     if (sol < 0n) sol = 0n;
     if (usd < 0n) usd = 0n;
+    if (fee < 0n) fee = 0n;
   }
+
+  // Spec §4.4. The fee is a SOL amount; valuing it in USD needs this trade's
+  // own rate, and an unpriced block leaves both sides of USD at zero.
+  const solUsd = trade.sol_usd === null ? 0n : parseDecimal(trade.sol_usd);
+  const feeUsd = mulDiv(fee, solUsd, ONE);
+
+  // What the wallet actually parted with, or actually kept. A sell whose fee
+  // exceeds its proceeds nets negative, and that is a real loss, not corrupt
+  // data — so it is deliberately not clamped above.
+  const netSol = trade.side === "buy" ? sol + fee : sol - fee;
+  const netUsd = trade.side === "buy" ? usd + feeUsd : usd - feeUsd;
 
   state.lastTradeAt = trade.block_time;
 
   if (trade.side === "buy") {
     state.qty += quantity;
-    state.costSol += sol;
-    state.costUsd += usd;
+    state.costSol += netSol;
+    state.costUsd += netUsd;
     state.boughtQty += quantity;
     if (state.firstBuyAt === null) state.firstBuyAt = trade.block_time;
     // Buying back into a position that had closed reopens it, so it can close
@@ -216,8 +249,10 @@ function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): voi
     // reaches this branch. It is guarded anyway because the number downstream
     // is the one the leaderboard ranks, and it should not depend on an
     // upstream filter staying exactly as it is. A genuinely empty sell — no
-    // quantity and no proceeds — moves nothing and is left alone.
-    if (sol !== 0n || usd !== 0n) state.unknownBasis = true;
+    // quantity and no proceeds — moves nothing and is left alone, and so
+    // does one that only paid a fee, which takes SOL away rather than
+    // inventing it.
+    if (netSol > 0n || netUsd > 0n) state.unknownBasis = true;
     removedSol = 0n;
     removedUsd = 0n;
   } else if (quantity >= state.qty) {
@@ -244,14 +279,14 @@ function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): voi
     state.qty -= quantity;
   }
 
-  state.realizedSol += sol - removedSol;
-  state.realizedUsd += usd - removedUsd;
+  state.realizedSol += netSol - removedSol;
+  state.realizedUsd += netUsd - removedUsd;
   state.soldQty += quantity;
 
   // Spec §4.7: realized PnL is bucketed by the timestamp of the sell.
   const totals = dayTotals(state, utcDay(trade.block_time));
-  totals.realizedSol += sol - removedSol;
-  totals.realizedUsd += usd - removedUsd;
+  totals.realizedSol += netSol - removedSol;
+  totals.realizedUsd += netUsd - removedUsd;
 
   // Spec §4.8: per closed position, not per sell. Counted once, on the sell
   // that crosses the threshold, on that sell's day — and won or lost on what
