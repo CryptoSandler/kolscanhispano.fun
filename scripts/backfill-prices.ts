@@ -42,10 +42,23 @@
  * filled and are also the oldest rows there are, so ordering by `block_time`
  * alone would park a permanently unfillable prefix at the front: past one
  * `LIMIT`'s worth of them, every run would re-examine the same rows and never
- * reach a newer trade a rate does cover. `priced_at NULLS FIRST` puts every
- * never-attempted trade ahead of every attempted one, so a new arrival always
- * jumps a stamped backlog, and the backlog is retried least-recent-first with
- * whatever budget is left. See migration 006.
+ * reach a newer trade a rate does cover.
+ *
+ * **The mechanism is rotation, not jumping the queue.** `insertTrade` stamps
+ * `priced_at = now()` on every insert, priced or not, so a freshly parsed
+ * unpriced trade arrives already stamped — with the newest stamp there is —
+ * and sorts *behind* the entire backlog. What reaches it is that each run
+ * re-stamps the rows it examined, moving them to the back: the queue rotates,
+ * and every row with a NULL `usd_amount` is examined at least once every
+ * `ceil(N / limit)` runs, where N is how many such rows exist. At N = 5,000
+ * and `DEFAULT_LIMIT`, that is one extra cycle — about five minutes. Bounded,
+ * which is the whole difference from `block_time` ordering, where no bound
+ * exists at all.
+ *
+ * `NULLS FIRST` therefore reaches exactly one thing: a row written before
+ * migration 005 added the column. Nothing produces an unstamped row any more.
+ * See migration 006 for the full reasoning, including why the queue is not
+ * narrowed by `priced_at` instead.
  */
 import { loadEnvLocal } from "../src/lib/env";
 loadEnvLocal();

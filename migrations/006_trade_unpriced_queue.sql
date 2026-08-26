@@ -7,24 +7,42 @@
 -- inventing one -- so they stay in the queue for good AND sort to the front,
 -- because they are the oldest rows there are. Past one LIMIT's worth of them,
 -- every five-minute run would re-examine the same permanently unfillable
--- prefix and never reach a newer trade that a rate does cover.
+-- prefix and never reach a newer trade that a rate does cover. Never: not
+-- late, not eventually.
 --
--- The fix is to sort on priced_at first, NULLS FIRST: a trade nothing has
--- ever looked at outranks every trade that has been looked at, whatever their
--- block times, and among trades that have been looked at the least recently
--- attempted goes first. A new trade therefore always jumps a stamped backlog,
--- and the backlog is still retried round-robin with whatever budget is left.
+-- Ordering on priced_at fixes that by ROTATION, and it is worth being exact
+-- about the mechanism, because the obvious reading of NULLS FIRST is wrong.
+-- insertTrade stamps priced_at = now() on EVERY insert, priced or not (that
+-- is what keeps 005's "no rate existed" apart from "never looked"). So a
+-- freshly parsed unpriced trade arrives already stamped, with the newest
+-- stamp in the table, and sorts BEHIND the whole backlog. It does not jump
+-- the queue.
+--
+-- What reaches it is that each run re-stamps the rows it examined, moving
+-- them to the back. The queue rotates, so every row with a NULL usd_amount is
+-- examined at least once every ceil(N / LIMIT) runs, where N is how many such
+-- rows there are. At N = 5,000 and the script's LIMIT of 5,000 that is one
+-- extra cycle, about five minutes. Bounded and cheap -- which is the whole
+-- difference from block_time ordering, where the bound does not exist.
+--
+-- NULLS FIRST therefore reaches exactly one thing: a row written before this
+-- column existed, i.e. before 005. No code path produces an unstamped row any
+-- more. Those legacy rows are also the oldest in the table, which is exactly
+-- where block_time ordering would have buried them, so they keep the front of
+-- the queue.
 --
 -- Retried, and not dropped: the queue is deliberately still every row with
 -- usd_amount IS NULL, not just the never-attempted ones. A sol_price row
 -- covering an earlier minute can arrive after the fact (a historical import,
 -- a seed), and narrowing the queue by priced_at would make those rows
--- unreachable forever -- trading a starvation bound for a permanent blind
--- spot.
+-- unreachable forever -- trading a bounded delay for a permanent blind spot.
 --
 -- ASC in Postgres defaults to NULLS LAST, so NULLS FIRST is spelled out on
 -- both the index and the query; they must keep agreeing for this index to
 -- serve the sort.
+--
+-- Comment revised after review; the two statements below are unchanged from
+-- what was applied.
 DROP INDEX IF EXISTS trade_unpriced_idx;
 
 CREATE INDEX IF NOT EXISTS trade_unpriced_queue_idx
