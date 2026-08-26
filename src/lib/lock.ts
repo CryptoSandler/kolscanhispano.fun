@@ -1,20 +1,12 @@
-import { createHash } from "node:crypto";
 import { Client } from "pg";
 import { resolveConnectionString } from "./db";
 
-/**
- * Hashes `name` to a signed 64-bit integer, returned as a decimal string so
- * it can be bound as a query parameter with no precision loss -- a JS
- * `number` cannot represent the full bigint range that
- * `pg_try_advisory_xact_lock(bigint)` accepts.
- *
- * Exported only so the test suite can make a second, independent connection
- * contend for the same key without duplicating the hash.
- */
-export function lockKey(name: string): string {
-  const digest = createHash("sha256").update(name, "utf8").digest();
-  return digest.readBigInt64BE(0).toString();
-}
+// Re-exported so `lockKey` stays importable from "./lock" -- the test suite
+// makes a second, independent connection contend for the same key, and
+// `vitest.globalSetup.ts` imports it from `./src/lib/lock-key` directly (see
+// the note there for why that module exists at all).
+export { lockKey } from "./lock-key";
+import { lockKey } from "./lock-key";
 
 /**
  * Runs `fn` while holding a Postgres advisory lock named `name`, so that two
@@ -61,9 +53,18 @@ export function lockKey(name: string): string {
 export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
   const key = lockKey(name);
   const client = new Client({ connectionString: resolveConnectionString() });
-  await client.connect();
+  // Neon scales to zero and can drop a connection mid-call. pg surfaces that
+  // as an EventEmitter "error", which with no listener is an uncaught
+  // exception no try/catch in this function could contain. Mirrors the pool's
+  // handler in db.ts. Never log the error: it can carry connection detail.
+  client.on("error", () => {});
 
   try {
+    // connect() is inside the try so that a connection that fails *during*
+    // startup -- TLS negotiated, auth rejected -- is still closed by the
+    // finally below. Left outside, that path returned without ever calling
+    // end(), leaking the socket for the OS to reap.
+    await client.connect();
     await client.query("BEGIN");
     const { rows } = await client.query<{ locked: boolean }>(
       "SELECT pg_try_advisory_xact_lock($1::bigint) AS locked",
@@ -87,6 +88,14 @@ export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T
       throw error;
     }
   } finally {
-    await client.end();
+    // Closing must not mask the caller's error, and must not skip closing
+    // when the connection is already unhealthy. An `await client.end()` that
+    // rejects here replaced whatever the try block threw -- so a job that
+    // failed for its own reasons surfaced as a connection error instead --
+    // and left this connection attached to a PgBouncer backend, where an
+    // interrupted call shows up as "idle in transaction" until the server
+    // times it out. Releasing the advisory lock is not enough on its own:
+    // the lock goes at ROLLBACK, the backend goes only when this closes.
+    await client.end().catch(() => {});
   }
 }

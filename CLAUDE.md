@@ -20,6 +20,37 @@ relevant guide in `node_modules/next/dist/docs/` before writing App Router code,
 deprecation notices. `next.config.ts` sets `agentRules: false`, which is why this file is not
 maintaining that pointer itself: `next dev` otherwise rewrites this file on every run.
 
+## One session per working tree
+
+A second Claude Code session on this repo gets its own `git worktree`. Never
+two in the same checkout.
+
+Sessions in a shared checkout write over each other with no signal that it
+happened. Measured on 2026-08-26: a second session replaced a migration with
+`SELECT 1;` for a mutation test while another session was benchmarking the
+suite, so three tests failed in a run that had nothing to do with them, and
+the benchmark it was measuring became unreadable. Neither session did
+anything wrong on its own. `git status` in a shared checkout shows both
+sessions' edits as one indistinguishable set of changes, and the branch a
+session thinks it is on is the branch every other session is also on.
+
+The suite lock in `vitest.globalSetup.ts` only guards the database. Nothing
+guards the files.
+
+## Never run two suites of this repo at once
+
+`npm test` truncates shared tables in a single Neon database, so two runs
+delete each other's fixtures mid-assertion. Measured directly: six concurrent
+single-file runs with the guard off produced failures in five of them; the
+same runs with it on were clean. One uncoordinated pair cost 28 minutes of
+wall clock against 270 seconds of actual test time.
+
+`vitest.globalSetup.ts` takes a run-scoped Postgres advisory lock, so a second
+run now *queues* behind the first rather than corrupting it — it is a
+backstop, not a licence. Don't start a suite in one session while another
+session is running one: the second just sits there, and a session waiting
+20 minutes on a lock looks exactly like a session that has hung.
+
 ## Default posture: lazy senior
 
 A skill only fires when the model judges it relevant, and this applies to every change, so
