@@ -31,12 +31,45 @@
  * identical in what they produce: 2,039,280 lamports of ATA rent written as
  * the proceeds of a 500-token sale. `settleTrade` therefore checks the
  * quantity itself rather than the route to it — see
- * `TOKEN_ACCOUNT_RENT_LAMPORTS` and the residue test there. An earlier
+ * `LARGEST_ATA_RENT_LAMPORTS` and the residue test there. An earlier
  * version of this rule tested the *sign* of the dropped leg instead, and was
  * defeated in both directions: Helius nets before delivery, so a
  * counterparty's sign flips on its last raw unit, and a sell routed through
  * an intermediate mint leaves an *incoming* remainder that a sign test reads
  * as a counterparty. Magnitude is the discriminator; the route is not.
+ *
+ * **What that rule refuses to reach for, and why.** The bound is the rent of
+ * the *token accounts* the wallet's own legs touched — the payload's own
+ * figure where it states one, a largest-ordinary-ATA floor where it does not.
+ * A wallet can also have a larger account of its own closed by a swap: a
+ * Serum/OpenBook open-orders account is 3,228 bytes, 0.023 SOL, and a sole-leg
+ * sell whose whole SOL side is that refund is written as a trade at any
+ * plausible number of balance changes. It is not closable here. Raising the
+ * floor to cover it would put 0.023 SOL per account under a rule that
+ * currently costs 0.00207, and refuse most genuine small trades to catch it;
+ * the exact term cannot see it either, because an open-orders account carries
+ * no token balance change for our wallet to key off. Neither half of the
+ * bound has anything true to say about it, so it is left stated rather than
+ * chased. The honest fix is not a bigger constant: it is raw `getTransaction`
+ * with per-venue instruction decoders, which reads what each account *is*
+ * instead of inferring it from a lamport figure — a batch of work, not a
+ * corner of this one.
+ *
+ * **A stablecoin leg worth less than one lamport is refused, and that costs a
+ * real row.** `evaluateSwap` declines a stable-quoted swap whose normalised
+ * value truncates to zero (`unsupported_quote`) rather than pricing the token
+ * leg off whatever native residue is left. The residue test does not cover
+ * this: it is bounded by the accounts it can count, and a payload can close
+ * three accounts while reporting two balance changes, which was measured
+ * writing `sell 2 for 0.00611784 SOL` — 100% rent, `parse_error` NULL. The
+ * price of the guard is stated here rather than discovered later: a genuine
+ * SOL-quoted swap that incidentally moves a stable amount worth under a
+ * lamport (2 raw units of USDC is $0.000002, below anything `isDust` removes)
+ * has a real, measured SOL side, and it is now refused along with the
+ * fabrication. That was priced and accepted, on the asymmetry this whole file
+ * runs on: a refused trade loses one row, settled and visible in
+ * `parse_error`, while a fabricated one corrupts a cost basis permanently,
+ * silently, and with nothing recorded anywhere.
  *
  * **Token ↔ token stays declined, and not for want of trying.** Spec §4.3
  * would have it close leg A and open leg B at the implied SOL value, and two
@@ -238,25 +271,39 @@ const DUST_MAX_TOKENS_NUMERATOR = 1n;
 const DUST_MAX_TOKENS_DENOMINATOR = 1_000_000n;
 
 /**
- * The rent-exempt minimum of one SPL token account, in lamports — the unit
- * every "the SOL side is only bookkeeping" case is built out of.
+ * A floor on the rent of one token account, in lamports — the unit every
+ * "the SOL side is only bookkeeping" case is built out of, used only where
+ * the payload does not state the rent itself (see `identifiableRentFor`).
  *
  * **Derived, not chosen.** Solana charges `lamports_per_byte_year = 3480` and
  * requires two years' worth for exemption, over the account's data plus a
- * fixed `ACCOUNT_STORAGE_OVERHEAD` of 128 bytes. An SPL token account is 165
- * bytes. So `(128 + 165) * 3480 * 2 = 2039280`, which is the figure every
- * fixture in this file's tests has been using literally since batch 1. It is
- * a protocol constant, so a comparison against it is a measurement rather
- * than a threshold somebody picked — which matters, because this file has no
+ * fixed `ACCOUNT_STORAGE_OVERHEAD` of 128 bytes. So the rent of an account is
+ * `(128 + size) * 3480 * 2`, and the only question is which size. It is a
+ * protocol constant, so a comparison against it is a measurement rather than
+ * a threshold somebody picked — which matters, because this file has no
  * business inventing a floor on what counts as a real trade.
+ *
+ * **The size is the largest *ordinary* ATA, not the smallest.** A classic SPL
+ * token account is 165 bytes, `(128 + 165) * 3480 * 2 = 2039280` — the figure
+ * every fixture in this file's tests used literally from batch 1 until this
+ * round. But a Token-2022 ATA carries the mandatory `ImmutableOwner`
+ * extension and is 170 bytes (165, one account-type byte, then a 4-byte TLV
+ * header with an empty payload), so its rent is `(128 + 170) * 3480 * 2 =
+ * 2074080`. Measured against the 165-byte figure: a sole-leg sell whose only
+ * lamport movement was a Token-2022 ATA refund of `2074080 - 5000` was
+ * written as `sell 500 for 0.00207408 SOL`, escaping the bound by 34,800
+ * lamports — and a worthless-token sale, which is exactly that shape, is a
+ * routine thing for a Token-2022 memecoin to be. The floor is therefore the
+ * larger of the two ordinary ATA sizes, at a cost of 0.0000348 SOL per
+ * account (~$0.007 at $200/SOL) to a genuine small trade.
  *
  * Opening a token account pays exactly this and closing one refunds exactly
  * this, so a wallet whose swap opened or closed `n` token accounts can show a
- * native movement of up to `n * 2039280` lamports with no value having been
+ * native movement of up to `n * 2074080` lamports with no value having been
  * exchanged at all. `settleTrade` compares against `n` taken from the
- * payload: the number of balance changes this wallet has, which is the number
- * of token accounts it touched (task 6 measured one change per (token
- * account, mint)).
+ * payload: the number of *non-zero* balance changes this wallet has, which is
+ * the number of token accounts it demonstrably moved anything in (task 6
+ * measured one change per (token account, mint)).
  *
  * The transaction fee is deliberately **not** added on top. `solSideFor`
  * already adds it back out of the SOL side for the fee payer (spec §4.4), and
@@ -265,7 +312,7 @@ const DUST_MAX_TOKENS_DENOMINATOR = 1_000_000n;
  * matter and is not identifiable in this payload at all — which is exactly
  * why `sol_leg_wrong_direction` exists for the case where one swamps a sale.
  */
-const TOKEN_ACCOUNT_RENT_LAMPORTS = 2_039_280n;
+const LARGEST_ATA_RENT_LAMPORTS = 2_074_080n;
 
 export type TokenBalanceChange = {
   userAccount: string;
@@ -357,7 +404,8 @@ export type ParsedTrade = {
  *   the rent of the token accounts this wallet's own legs touched, so it
  *   carries no information about what the swap was worth. Its sibling above
  *   rejects a SOL side pointing the wrong way; this one rejects a SOL side
- *   that is not a price at all. See `TOKEN_ACCOUNT_RENT_LAMPORTS`.
+ *   that is not a price at all. See `LARGEST_ATA_RENT_LAMPORTS`
+ *   and `identifiableRentFor`.
  */
 export type SwapOutcome =
   | "trade"
@@ -1031,6 +1079,64 @@ function stableLamportsFor(leg: TokenLeg, solUsd: bigint): bigint {
 }
 
 /**
+ * The rent this payload **states outright** for the token accounts of the
+ * wallet's own legs, in lamports.
+ *
+ * A closed token account's `accountData` entry reports its own emptying as a
+ * negative `nativeBalanceChange` — the exact refund, whatever that account's
+ * size happened to be. Summing those over the entries that carry one of this
+ * wallet's balance changes gives the part of the SOL side that is provably
+ * bookkeeping, with no guess at an account size anywhere in it. That is what
+ * `LARGEST_ATA_RENT_LAMPORTS * n` is standing in for whenever the payload
+ * does not state it, and a stand-in is only ever a floor: an account bigger
+ * than an ordinary ATA (a Token-2022 mint with several extensions, say) is
+ * closed at a refund this term reads exactly and the floor underestimates.
+ *
+ * Only *refunds* count (`max(0, -nativeBalanceChange)`). An account being
+ * opened reports the same rent with the opposite sign, and it reaches the
+ * wallet's SOL side through the wallet's own entry, where the floor already
+ * covers it; reading it here would be reading the same lamports twice.
+ *
+ * **The wallet's own entry is excluded, and that is load-bearing.** The term
+ * is the rent of *token accounts*, and a wallet's address is not one. Task 6
+ * measured six real transactions, all 34 balance changes in the same shape —
+ * the entry carrying a token change is the token account, the wallet's own
+ * entry carries lamports and an empty `tokenBalanceChanges` — so in the
+ * production shape this exclusion removes nothing. In the other layout, where
+ * a wallet's change sits on the wallet's own entry, it removes a
+ * catastrophe: measured without it, an ordinary 1 SOL buy
+ * (`nativeBalanceChange -1_000_005_000`, one token change on that same entry)
+ * reads an "identifiable rent" of 1,000,005,000 lamports and refuses the
+ * whole trade as `sol_leg_is_residue`. The purchase price is not rent.
+ *
+ * **Unreadable contributes nothing, and never raises.** This runs on a path
+ * that can decide an outcome, so the value goes through the same
+ * `requireLamports` every other lamports figure in this file does — no
+ * coercion, no default from a non-integer. But an entry that is not this
+ * wallet's own is not this wallet's problem (the rule the header states for
+ * `account` and for `tokenBalanceChanges` alike), and a term that can only
+ * ever *raise* the bound cannot fabricate a trade by being 0: it falls back
+ * to the floor, which is where it would have been anyway. So an unreadable
+ * one is caught and contributes 0 rather than failing the row.
+ */
+function identifiableRentFor(payload: EnhancedTx, address: string): bigint {
+  let total = 0n;
+  for (const account of accountEntries(payload)) {
+    if (account.record === null || account.account === address) continue;
+    if (!account.changes?.some((change) => change.userAccount === address)) continue;
+    let native: bigint;
+    try {
+      native = requireLamports(account.record.nativeBalanceChange, "nativeBalanceChange");
+    } catch (error) {
+      if (!(error instanceof MalformedPayloadError)) throw error;
+      continue; // not readable, therefore not identifiable: the floor stands
+    }
+    if (native < 0n) total -= native;
+  }
+  return total;
+}
+
+/**
  * The last step of every trade: one token leg against a SOL side, in
  * lamports, with the direction check between them.
  *
@@ -1084,12 +1190,24 @@ function settleTrade(
   // **The SOL side must be more than the bookkeeping of the accounts it
   // touched, or it is not a price.**
   //
-  // `changes.length` is the number of token accounts this wallet moved
-  // anything in (task 6: one balance change per (token account, mint)), and
-  // each of those could have been opened or closed by this transaction, at
-  // exactly `TOKEN_ACCOUNT_RENT_LAMPORTS` either way. A SOL side no larger
-  // than that is fully explained without any value being exchanged, so it
-  // says nothing about what the swap was worth.
+  // The bound is the larger of two statements about the same thing. The
+  // payload's own, `identifiableRentFor`: the refunds it reports on the token
+  // accounts carrying this wallet's legs, exact and size-agnostic. And a
+  // floor, for the accounts whose rent it does not state: the number of token
+  // accounts this wallet demonstrably moved anything in (task 6: one balance
+  // change per (token account, mint)), each of which could have been opened
+  // or closed by this transaction, at up to `LARGEST_ATA_RENT_LAMPORTS`
+  // either way. A SOL side no larger than that is fully explained without any
+  // value being exchanged, so it says nothing about what the swap was worth.
+  //
+  // Only *non-zero* changes are counted. A change of exactly zero moved
+  // nothing, so no account was opened or closed for it and it may not raise
+  // the bound — the header's own rule that provably-zero data cannot move an
+  // outcome. Measured with zero changes counted: a real 0.003 SOL sell with
+  // one extra `"0"` change beside it doubled the bound to 4,078,560 and was
+  // refused as `sol_leg_is_residue`. A payload-inflatable bound errs toward
+  // refusal rather than fabrication, which is why it was minor, but a
+  // refusal it invents is still a row lost.
   //
   // This one test closes four shapes that arrive by four different routes and
   // are indistinguishable once they get here. Measured at `d1d3656`, each
@@ -1111,7 +1229,11 @@ function settleTrade(
   // fabrications have in common is not how the counterparty went missing: it
   // is that the rent is the only thing left.
   const magnitude = solSide < 0n ? -solSide : solSide;
-  if (magnitude <= TOKEN_ACCOUNT_RENT_LAMPORTS * BigInt(changes.length)) {
+  const nonZeroChanges = changes.filter((change) => change.raw !== 0n).length;
+  const floor = LARGEST_ATA_RENT_LAMPORTS * BigInt(nonZeroChanges);
+  const identifiableRent = identifiableRentFor(payload, address);
+  const bound = identifiableRent > floor ? identifiableRent : floor;
+  if (magnitude <= bound) {
     return { outcome: "sol_leg_is_residue" };
   }
 
@@ -1302,16 +1424,30 @@ export function evaluateSwap(
 
     const stableLamports = stableLamportsFor(stable, solUsd);
 
-    // There is deliberately no guard here for a stable leg that normalises to
-    // less than one lamport. The previous version had one, and the residue
-    // test in `settleTrade` subsumes it: a stable leg contributing nothing
-    // leaves a SOL side that is native residue, which is precisely what that
-    // test refuses. Measured, same input both ways — a 2-raw-unit USDC leg at
-    // $2,001/SOL beside 2,039,280 lamports of rent — the guard returned
-    // `unsupported_quote` and the residue test returns `sol_leg_is_residue`,
-    // which is the truer name. Keeping the guard would also have made it fire
-    // in the one case where it is *wrong*: a wallet paying 1 SOL plus a
-    // sub-lamport USDC leg has a real, measured SOL side and a real trade.
+    // The stable leg normalises to less than one lamport, so it contributes
+    // nothing and the SOL side left to price the swap with is whatever native
+    // residue the payload carries. Refused rather than settled.
+    //
+    // **The residue test does not subsume this, and removing it on the belief
+    // that it did reopened a fabrication.** The residue test is bounded by the
+    // accounts it can see; this guard fires exactly where that bound cannot
+    // reach. Measured: a token leg of -2,000,000, a 2-raw-unit USDC leg at
+    // $2,001/SOL (0 lamports), and a native side of `3 * 2039280 - 5000` —
+    // three accounts closed, only two of them with a balance change to count —
+    // was written as `sell 2 for 0.00611784 SOL`, 100% rent, `parse_error`
+    // NULL. With the guard it is `unsupported_quote`.
+    //
+    // **A narrow backstop, and priced.** A USDC leg of `n` raw units is
+    // `1000 * n / usd` lamports, so this fires only above $2,000/SOL for the
+    // smallest leg that can reach it (2 raw units is exactly 1 lamport at
+    // $2,000 and 0 above it); 1 raw unit never arrives, the dust floor removes
+    // it first. What it costs is one real shape — a wallet paying 1 SOL plus a
+    // sub-lamport USDC leg, which has a genuine measured SOL side and is now
+    // refused. That is a row lost, settled and honest; the alternative is rent
+    // written as a price into a cost basis that nothing ever revisits. See the
+    // file header, where the trade is stated in full.
+
+    if (stableLamports === 0n) return { outcome: "unsupported_quote" };
 
     return settleTrade(payload, wallet.address, changes, token, stableLamports);
   }

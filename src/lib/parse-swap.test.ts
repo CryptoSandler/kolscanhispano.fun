@@ -1752,7 +1752,15 @@ async function makeKol(handle: string): Promise<string> {
  * wrongly refused.
  */
 describe("a SOL side that is only account rent", () => {
+  /** A classic 165-byte SPL token account: `(128 + 165) * 3480 * 2`. */
   const RENT = 2_039_280;
+  /**
+   * The floor the rule actually uses: a Token-2022 ATA, 170 bytes with its
+   * mandatory `ImmutableOwner` extension, `(128 + 170) * 3480 * 2`. Round 2's
+   * bound was the 165-byte figure and a Token-2022 ATA refund escaped it by
+   * 34,800 lamports (see the Token-2022 tests below).
+   */
+  const ATA_FLOOR = 2_074_080;
 
   /** Shape 1: sell 500 A, B's net lands under the dust floor, A's ATA closes. */
   const dustCounterparty = () =>
@@ -1912,14 +1920,20 @@ describe("a SOL side that is only account rent", () => {
         }),
         wallet,
       );
-    expect(at(RENT).outcome).toBe("sol_leg_is_residue");
-    expect(at(RENT + 1).outcome).toBe("trade");
+    expect(at(ATA_FLOOR).outcome).toBe("sol_leg_is_residue");
+    expect(at(ATA_FLOOR + 1).outcome).toBe("trade");
+    // And the old 165-byte figure is inside the bound now, not on it.
+    expect(at(RENT + 1).outcome).toBe("sol_leg_is_residue");
   });
 
-  it("refuses a stablecoin quote whose stable leg normalises away, without a guard of its own", () => {
-    // What the removed `stableLamports === 0n` guard used to catch, now
-    // reached by the general rule and named more truthfully. A 2-raw-unit
-    // USDC leg at $2,001/SOL is 0 lamports, leaving 2,039,280 of rent.
+  it("refuses a stablecoin quote whose stable leg normalises away, under either rule", () => {
+    // A 2-raw-unit USDC leg at $2,001/SOL is 0 lamports, leaving 2,039,280 of
+    // rent as the only SOL there is. Round 2 removed the
+    // `stableLamports === 0n` guard on the grounds that the residue test
+    // subsumed this; round 3 restored it, because the residue test is bounded
+    // by the accounts it can count and this one is not (see the three-closed-
+    // accounts case below). Both refusals are correct here; the guard is
+    // first, so this is `unsupported_quote`.
     const payload = buildObservedSwapPayload({
       wallet: wallet.address,
       nativeChangeLamports: -(RENT + 5_000),
@@ -1930,11 +1944,196 @@ describe("a SOL side that is only account rent", () => {
         { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-2" },
       ],
     });
-    expect(evaluateSwap(payload, wallet, parseDecimal("2001")).outcome).toBe("sol_leg_is_residue");
+    expect(evaluateSwap(payload, wallet, parseDecimal("2001")).outcome).toBe("unsupported_quote");
     // And eight lamports of stable value does not rescue it either: at
     // $231.71 the same leg is 8 lamports against 2,039,280 of rent, which was
-    // being written as a trade that is 99.99961% rent.
+    // being written as a trade that is 99.99961% rent. Past the guard, refused
+    // by the residue test.
     expect(evaluateSwap(payload, wallet, parseDecimal("231.71")).outcome).toBe("sol_leg_is_residue");
+  });
+
+  /**
+   * The `accountData` entry a token account gets in the observed layout is
+   * `accountData[1 + legIndex]` (see `buildObservedSwapPayload`). A closed
+   * token account reports its own emptying there, as a negative
+   * `nativeBalanceChange`; the wallet's entry reports the matching credit.
+   */
+  const closeAta = (payload: EnhancedTx, legIndex: number, lamports: unknown): EnhancedTx => {
+    (payload.accountData[1 + legIndex] as unknown as Record<string, unknown>).nativeBalanceChange = lamports;
+    return payload;
+  };
+
+  it("refuses a Token-2022 ATA refund, which the 165-byte bound let through", () => {
+    // Round 3, finding 1. A Token-2022 ATA carries the mandatory
+    // `ImmutableOwner` extension and is 170 bytes, not 165, so closing one
+    // refunds 2,074,080 lamports — 34,800 more than round 2's bound. The shape
+    // is the one the whole rule exists for: a worthless-token sale where the
+    // ATA refund is the only lamport movement there is. Measured at 6f0d3e1:
+    // `trade{sell, 500, solAmount 0.00207408}`, parse_error NULL.
+    const sale = (lamports: number) =>
+      evaluateSwap(
+        closeAta(
+          buildObservedSwapPayload({
+            wallet: wallet.address,
+            nativeChangeLamports: lamports - 5_000,
+            feeLamports: 5_000,
+            isFeePayer: true,
+            legs: [{ mint, decimals: 6, rawTokenAmount: "-500000000" }],
+          }),
+          0,
+          // The ATA states its own refund, as Helius reports it, and it is the
+          // same 2,074,080 whatever else the wallet received.
+          -2_074_080,
+        ),
+        wallet,
+      );
+    expect(sale(2_074_080).outcome).toBe("sol_leg_is_residue");
+    // One lamport of real proceeds on top of the refund, and it is a trade
+    // again: the rule refuses rent, not small trades.
+    expect(sale(2_074_080 + 1).outcome).toBe("trade");
+    // And the same sale with the ATA entry silent about its own refund — the
+    // shape the finding was measured on — is refused by the floor alone.
+    const unstated = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 2_074_080 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [{ mint, decimals: 6, rawTokenAmount: "-500000000" }],
+    });
+    expect(evaluateSwap(unstated, wallet).outcome).toBe("sol_leg_is_residue");
+  });
+
+  it("reads an account's rent off the payload when it is larger than the floor", () => {
+    // Ruling A's exact term. The floor is a guess at an account size; the
+    // payload frequently states the real one. A Token-2022 ATA that also
+    // carries the `TransferFeeAmount` extension is 182 bytes —
+    // `(128 + 182) * 3480 * 2 = 2157600` — which is 83,520 lamports above the
+    // floor, so the floor alone books this sale as a trade. The closed
+    // account's own entry says what it refunded, and that is exact.
+    const sale = (lamports: number) =>
+      evaluateSwap(
+        closeAta(
+          buildObservedSwapPayload({
+            wallet: wallet.address,
+            nativeChangeLamports: lamports - 5_000,
+            feeLamports: 5_000,
+            isFeePayer: true,
+            legs: [{ mint, decimals: 6, rawTokenAmount: "-500000000" }],
+          }),
+          0,
+          -2_157_600,
+        ),
+        wallet,
+      );
+    expect(2_157_600).toBeGreaterThan(ATA_FLOOR); // the floor would not have covered it
+    expect(sale(2_157_600).outcome).toBe("sol_leg_is_residue");
+    expect(sale(2_157_600 + 1).outcome).toBe("trade");
+  });
+
+  it("falls back to the floor when the stated rent cannot be read, and does not refuse the row", () => {
+    // The exact term reads untrusted payload data on a path that decides an
+    // outcome, so it goes through `requireLamports` — but an entry that is not
+    // this wallet's own is not this wallet's problem, and a term that can only
+    // raise the bound cannot fabricate a trade by being absent. An unreadable
+    // one contributes nothing and leaves the floor exactly where it was.
+    const sale = (lamports: number) =>
+      evaluateSwap(
+        closeAta(
+          buildObservedSwapPayload({
+            wallet: wallet.address,
+            nativeChangeLamports: lamports - 5_000,
+            feeLamports: 5_000,
+            isFeePayer: true,
+            legs: [{ mint, decimals: 6, rawTokenAmount: "-500000000" }],
+          }),
+          0,
+          "-2157600", // a string, not a lamports figure
+        ),
+        wallet,
+      );
+    expect(sale(2_157_600).outcome).toBe("trade"); // floor behaviour, not the exact term
+    expect(sale(ATA_FLOOR).outcome).toBe("sol_leg_is_residue"); // and the floor still holds
+  });
+
+  it("refuses a stable-zero swap that closed more accounts than it reported changes", () => {
+    // Round 3, finding 2, and the reason the `stableLamports === 0n` guard is
+    // back. Jupiter emits cleanup instructions that close leftover empty ATAs;
+    // an account that was already empty has no balance change to report, so
+    // the payload can close three accounts and carry two changes. The residue
+    // bound counts changes, so it stops at two accounts' rent while the wallet
+    // received three. Measured at 6f0d3e1: `trade{sell, 2, solAmount
+    // 0.00611784}` — 100% rent, parse_error NULL, and at d1d3656
+    // `unsupported_quote`.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 3 * RENT - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "2" },
+      ],
+    });
+    closeAta(payload, 0, -RENT);
+    closeAta(payload, 1, -RENT);
+    // The third account: closed, already empty, so no balance change at all.
+    payload.accountData.push({ account: inventAddress(), nativeBalanceChange: -RENT, tokenBalanceChanges: [] });
+    expect(2n * BigInt(ATA_FLOOR)).toBeLessThan(3n * BigInt(RENT)); // the floor does not reach it
+    expect(evaluateSwap(payload, wallet, parseDecimal("2001")).outcome).toBe("unsupported_quote");
+  });
+
+  it("refuses a real 1 SOL buy that incidentally moved two raw units of USDC, and that is the price", () => {
+    // The counter-case the restored guard costs, asserted so the accepted cost
+    // is visible in the suite rather than discovered in production. This wallet
+    // spent a measured 1 SOL; its USDC leg is $0.000002, too small for
+    // `isDust` to remove (that floor is one millionth of a token, and 2 raw
+    // units of a 6-decimal mint is two millionths) and worth 0 lamports above
+    // $2,000/SOL. The guard cannot tell it from the fabrication above, so it
+    // refuses both: one row lost, settled and named in `parse_error`, against
+    // a cost basis that would have been rent.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(1_000_000_000 + 5_000),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-2" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, parseDecimal("2001")).outcome).toBe("unsupported_quote");
+    // Two more raw units of USDC — 1 lamport, at the same rate — and the same
+    // trade is priced in full. The guard is exactly as narrow as it looks.
+    const priced = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -(1_000_000_000 + 5_000),
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-4" },
+      ],
+    });
+    expect(parseSwap(priced, wallet, parseDecimal("2001"))!.solAmount).toBe(1.000000001);
+  });
+
+  it("does not let a zero balance change inflate the bound", () => {
+    // Round 3, finding 3. `changes.length` counted every balance change,
+    // including ones the payload reports as exactly "0" — a token account the
+    // router touched and netted to nothing. A real 0.003 SOL sell beside one
+    // of those had its bound doubled to 4,078,560 and was refused. Provably
+    // zero data may not move an outcome, which is this file's own rule.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: 3_000_000 - 5_000,
+      feeLamports: 5_000,
+      isFeePayer: true,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "-500000000" },
+        { mint: inventAddress(), decimals: 6, rawTokenAmount: "0" },
+      ],
+    });
+    expect(parseSwap(payload, wallet)!.solAmount).toBe(0.003);
   });
 
   it("leaves the persistent-WSOL buy alone, rent included", () => {
