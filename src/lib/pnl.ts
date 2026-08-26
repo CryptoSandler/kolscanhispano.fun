@@ -107,6 +107,16 @@ type ReplayState = {
   boughtQty: bigint;
   soldQty: bigint;
   closed: boolean;
+  /**
+   * `realizedSol` as it stood when the current episode opened, so a closure
+   * can be judged on what *this* round trip did. Without it `realizedSol` is
+   * cumulative and a position that has ever been in profit counts every later
+   * closure as a win, however badly that episode went — a day whose own
+   * realized PnL is negative carrying a win, which is precisely the
+   * self-contradiction spec §4.7 cites against kolscan.io, on the figure the
+   * leaderboard ranks.
+   */
+  episodeStartSol: bigint;
   unknownBasis: boolean;
   firstBuyAt: Date | null;
   lastTradeAt: Date | null;
@@ -123,6 +133,7 @@ function emptyState(): ReplayState {
     boughtQty: 0n,
     soldQty: 0n,
     closed: false,
+    episodeStartSol: 0n,
     unknownBasis: false,
     firstBuyAt: null,
     lastTradeAt: null,
@@ -182,15 +193,31 @@ function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): voi
     state.boughtQty += quantity;
     if (state.firstBuyAt === null) state.firstBuyAt = trade.block_time;
     // Buying back into a position that had closed reopens it, so it can close
-    // a second time and count a second win or loss (spec §4.8).
-    if (state.closed && !hasClosed(state, threshold)) state.closed = false;
+    // a second time and count a second win or loss (spec §4.8). The new
+    // episode starts from the realized figure as it stands now: everything
+    // realized before this buy — including the tail sells that came after the
+    // previous closure — belongs to the round trip that already counted.
+    if (state.closed && !hasClosed(state, threshold)) {
+      state.closed = false;
+      state.episodeStartSol = state.realizedSol;
+    }
     return;
   }
 
   let removedSol: bigint;
   let removedUsd: bigint;
   if (quantity === 0n) {
-    // Removes no quantity, so it removes no basis either.
+    // Removes no quantity, so it gives up no basis — and proceeds against no
+    // basis are not profit, they are SOL this position cannot account for.
+    // Same manufactured-profit shape as the oversell below (spec §4.5) and
+    // handled the same way: label the position rather than rank it.
+    //
+    // `parse-swap`'s dust floor drops a zero-quantity leg today, so nothing
+    // reaches this branch. It is guarded anyway because the number downstream
+    // is the one the leaderboard ranks, and it should not depend on an
+    // upstream filter staying exactly as it is. A genuinely empty sell — no
+    // quantity and no proceeds — moves nothing and is left alone.
+    if (sol !== 0n || usd !== 0n) state.unknownBasis = true;
     removedSol = 0n;
     removedUsd = 0n;
   } else if (quantity >= state.qty) {
@@ -226,12 +253,13 @@ function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): voi
   totals.realizedSol += sol - removedSol;
   totals.realizedUsd += usd - removedUsd;
 
-  // Spec §4.8: per closed position, not per sell. Counted on the sell that
-  // crosses the threshold, on that sell's day, from the realized figure as it
-  // stands at that moment.
+  // Spec §4.8: per closed position, not per sell. Counted once, on the sell
+  // that crosses the threshold, on that sell's day — and won or lost on what
+  // this episode realized, not on the position's running total. See
+  // `episodeStartSol`.
   if (!state.closed && hasClosed(state, threshold)) {
     state.closed = true;
-    if (state.realizedSol > 0n) totals.wins += 1;
+    if (state.realizedSol - state.episodeStartSol > 0n) totals.wins += 1;
     else totals.losses += 1;
   }
 }

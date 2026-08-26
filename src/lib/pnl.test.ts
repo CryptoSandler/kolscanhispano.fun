@@ -422,6 +422,70 @@ describe("replayPosition: win rate", () => {
     expect(rows.find((row) => row.day === "2026-08-25")?.wins).toBe(1);
   });
 
+  it("counts a losing round trip as a loss even after a winning one", async () => {
+    // The realized figure on the position is cumulative, so once a position
+    // has ever been in profit every later closure looks positive. Judged that
+    // way, the second episode here — which lost half a SOL — is recorded as a
+    // win, and 08-26 becomes a day whose own realized PnL is negative while it
+    // carries a win. That is the statistic spec §4.7 cites against
+    // kolscan.io, on the number the leaderboard ranks.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "2", tokens: "100", at: "2026-08-25T12:01:00Z", slot: 2 },
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-26T12:00:00Z", slot: 3 },
+      { side: "sell", sol: "0.5", tokens: "100", at: "2026-08-26T12:01:00Z", slot: 4 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    // Episode one: +1, a win. Episode two: -0.5, a loss. The position's
+    // cumulative realized PnL is +0.5 throughout the second closure.
+    expect(await daily()).toEqual([
+      { day: "2026-08-25", realized_sol: "1", realized_usd: "0", wins: 1, losses: 0 },
+      { day: "2026-08-26", realized_sol: "-0.5", realized_usd: "0", wins: 0, losses: 1 },
+    ]);
+    expect((await position()).realized_sol).toBe("0.5");
+  });
+
+  it("counts a winning round trip as a win even after a losing one", async () => {
+    // The other sign direction, where the cumulative reading is still negative
+    // at the second closure and would call a profitable round trip a loss.
+    await insertTrades([
+      { side: "buy", sol: "3", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "0.5", tokens: "100", at: "2026-08-25T12:01:00Z", slot: 2 },
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-26T12:00:00Z", slot: 3 },
+      { side: "sell", sol: "2", tokens: "100", at: "2026-08-26T12:01:00Z", slot: 4 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    // Episode one: -2.5, a loss. Episode two: +1, a win. Cumulative realized
+    // PnL at the second closure is -1.5.
+    expect(await daily()).toEqual([
+      { day: "2026-08-25", realized_sol: "-2.5", realized_usd: "0", wins: 0, losses: 1 },
+      { day: "2026-08-26", realized_sol: "1", realized_usd: "0", wins: 1, losses: 0 },
+    ]);
+    expect((await position()).realized_sol).toBe("-1.5");
+  });
+
+  it("charges a tail sell after closure to the episode that already counted", async () => {
+    // The 1 SOL from the tail sell lands on 08-26 as realized PnL, but it is
+    // the previous round trip's proceeds: it must not be carried into the
+    // episode the 08-27 buy opens, or that episode inherits a profit it did
+    // not make.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "2", tokens: "96", at: "2026-08-25T12:01:00Z", slot: 2 },
+      { side: "sell", sol: "1", tokens: "4", at: "2026-08-26T12:00:00Z", slot: 3 },
+      { side: "buy", sol: "2", tokens: "100", at: "2026-08-27T12:00:00Z", slot: 4 },
+      { side: "sell", sol: "1", tokens: "100", at: "2026-08-27T12:01:00Z", slot: 5 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    const rows = await daily();
+    expect(rows.find((row) => row.day === "2026-08-25")).toMatchObject({ wins: 1, losses: 0 });
+    expect(rows.find((row) => row.day === "2026-08-26")).toMatchObject({ wins: 0, losses: 0 });
+    expect(rows.find((row) => row.day === "2026-08-27")).toMatchObject({ wins: 0, losses: 1 });
+  });
+
   it("closes on the share of everything ever bought, not of what is left", async () => {
     // 100 bought, 60 sold, then 100 more bought and 60 more sold: 120 of 200,
     // which is not closed - even though the second sell took 60 of the 140 on
@@ -491,6 +555,40 @@ describe("replayPosition: unknown basis", () => {
     expect(row.realized_sol).toBe("2");
     // But withheld from the leaderboard's table (spec §4.5).
     expect(await daily()).toEqual([]);
+  });
+
+  it("marks a sell that gave up no quantity, and keeps its proceeds off pnl_daily", async () => {
+    // Proceeds against no basis are the same manufactured-profit shape as an
+    // oversell. Unreachable through `parse-swap`, whose dust floor drops a
+    // zero leg — but the number this feeds is the one the leaderboard ranks,
+    // so it is guarded here rather than upstream.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "5", tokens: "0", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    const row = await position();
+    expect(row.basis).toBe("unknown");
+    // The position is untouched: nothing left it.
+    expect(row.qty).toBe("100");
+    expect(row.cost_sol).toBe("1");
+    // 5 SOL out of nothing, kept off the ranked table.
+    expect(await daily()).toEqual([]);
+  });
+
+  it("leaves a sell that moved nothing at all alone", async () => {
+    // No quantity and no proceeds moves no money and accuses nobody.
+    await insertTrades([
+      { side: "buy", sol: "1", tokens: "100", at: "2026-08-25T12:00:00Z", slot: 1 },
+      { side: "sell", sol: "0", tokens: "0", at: "2026-08-25T12:01:00Z", slot: 2 },
+    ]);
+    await replayPosition(kolId, mint);
+
+    const row = await position();
+    expect(row.basis).toBe("known");
+    expect(row.realized_sol).toBe("0");
+    expect(row.qty).toBe("100");
   });
 
   it("marks a position whose first trade is a sell", async () => {
