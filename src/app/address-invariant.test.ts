@@ -235,6 +235,26 @@ describe("the fixture is populated, so the assertions below are about a real pag
     expect(html.match(/class="row-leaderboard/g)?.length).toBeGreaterThanOrEqual(2);
     expect(html).not.toContain("state-empty");
   });
+
+  /**
+   * DESIGN.md `row-leaderboard`, as corrected in `b0f2a43`: *"beneath it the
+   * **`@handle`, always**, linked to X, with `Wallets ocultas` in `hidden`
+   * **beside it** where that KOL's wallets are hidden"* — and, in the
+   * paragraph below it, *"the handle is public identity, the wallet is the
+   * secret."*
+   *
+   * This is here rather than in a component test because it is the same
+   * property spec §7 is about, read from the other end: what `hide_wallets`
+   * withholds is the address slot, and it must not also withhold the person.
+   * The row was built against an earlier draft that wrote the two as
+   * alternatives, and the result was a preview where nine of thirteen rows
+   * carried no link to a human being at all.
+   */
+  it("links both KOLs' handles to X, the hidden one included", () => {
+    for (const slug of ["kol-abierto", "kol-oculto"]) {
+      expect(html, `an X link for ${slug}`).toContain(`https://x.com/${slug}`);
+    }
+  });
 });
 
 describe("no wallet address reaches the rendered page", () => {

@@ -570,8 +570,9 @@ a {
 }
 
 /* DESIGN.md: "36px circular avatar from `/api/avatar/<kol_id>`; a two-line
-   identity block — `name` on top, and beneath it the `@handle` linked to X
-   **or** `Wallets ocultas` in `hidden`; the cabal chip". */
+   identity block — `name` on top, and beneath it the **`@handle`, always**,
+   linked to X, with `Wallets ocultas` in `hidden` **beside it** where that
+   KOL's wallets are hidden; the cabal chip". */
 .identity {
   display: flex;
   align-items: center;
@@ -589,6 +590,30 @@ a {
 .identity-lines > * {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The second line holds two things now, not one: DESIGN.md, `row-leaderboard`
+   — "The handle and the hidden marker are **not alternatives**, and an earlier
+   draft of this document wrongly wrote them as one." The handle is the public
+   identity; `Wallets ocultas` occupies "the **address** slot and nothing
+   else", which is the slot to its right on both references. `min-width: 0` on
+   the handle is what makes the ellipsis fall on the handle rather than pushing
+   the marker out of the row. */
+.identity-second {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.identity-second > .handle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.identity-second > .hidden-wallets {
+  flex: none;
 }
 
 .handle {

@@ -126,13 +126,19 @@ export type PublicLeaderboardEntry = {
      * Whether this KOL's wallets are published — the same fact
      * {@link PublicTrade} already carries, now on the ranked row too.
      *
-     * DESIGN.md `row-leaderboard` puts, under the name, *"the `@handle`
-     * linked to X **or** `Wallets ocultas` in `hidden`"*. That slot is the one
-     * both reference sites fill with a truncated address, so what decides
-     * between the two is the same thing that decides it there: whether the KOL
-     * publishes its wallets. Nothing else on the row can answer that question
-     * — `x_handle` is `NOT NULL`, so its presence cannot — which is why the
-     * flag is serialized rather than inferred.
+     * DESIGN.md `row-leaderboard` puts, under the name, the *"**`@handle`,
+     * always**, linked to X, with `Wallets ocultas` in `hidden` **beside it**
+     * where that KOL's wallets are hidden"*. The marker occupies *"the
+     * **address** slot and nothing else"* — the slot both reference sites fill
+     * with a truncated address — so `hideWallets` decides that slot and never
+     * the handle. Nothing else on the row can answer the question: `x_handle`
+     * is `NOT NULL`, so its presence cannot, which is why the flag is
+     * serialized rather than inferred.
+     *
+     * (An earlier draft of that paragraph wrote the two as alternatives and
+     * this comment followed it. `b0f2a43` corrected the document: `hide_wallets`
+     * defaults to `TRUE`, so a handle switch would have erased the person from
+     * almost every row.)
      */
     hideWallets: boolean;
   };

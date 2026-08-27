@@ -9,7 +9,9 @@ import { expect, test } from "@playwright/test";
  * this spec measured every row at 36px to prove it. Commit `1f83420` replaced
  * that direction on the owner's decision: rows are now 56px — *"enough for a
  * 36px circular avatar, the bold name, and the handle or `Wallets ocultas`
- * beneath it"* — and the document makes no claim at all about vertical fit. A
+ * beneath it"* (Layout; the `row-leaderboard` paragraph, corrected in
+ * `b0f2a43`, now carries both) — and the document makes no claim at all about
+ * vertical fit. A
  * guard for a retired claim is worse than no guard: it fails for the right
  * reason exactly once and is then edited to whatever the page happens to do.
  *

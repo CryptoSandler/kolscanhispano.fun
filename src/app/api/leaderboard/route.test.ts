@@ -436,9 +436,10 @@ describe("GET /api/leaderboard", () => {
    *
    * **`hideWallets` is on the public shape on purpose**, and was added to it
    * when the leaderboard row grew a two-line identity: DESIGN.md
-   * `row-leaderboard` puts, beneath the name, *"the `@handle` linked to X
-   * **or** `Wallets ocultas` in `hidden`"*, and nothing else on the row can
-   * decide between the two — `kol.x_handle` is `NOT NULL`, so its presence
+   * `row-leaderboard` puts, beneath the name, the *"**`@handle`, always**,
+   * linked to X, with `Wallets ocultas` in `hidden` **beside it** where that
+   * KOL's wallets are hidden"*, and nothing else on the row can decide whether
+   * that marker belongs there — `kol.x_handle` is `NOT NULL`, so its presence
    * cannot. `PublicTrade.kol` has carried the same field for the same label
    * since the feed row was built. It is a fact about what we publish, not a
    * wallet: spec §7's promise is about the address and the signature, and both

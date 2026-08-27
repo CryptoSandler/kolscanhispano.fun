@@ -211,21 +211,25 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
           <span className="identity-lines">
             <span className="name">{entry.kol.name}</span>
             {/*
-              DESIGN.md: "beneath it the `@handle` linked to X **or** `Wallets
-              ocultas` in `hidden`". This is the slot both references fill with
-              a truncated address, and what decides between the two here is what
-              decides it there: whether the KOL publishes its wallets.
+              DESIGN.md, `row-leaderboard`: "beneath it the **`@handle`,
+              always**, linked to X, with `Wallets ocultas` in `hidden`
+              **beside it** where that KOL's wallets are hidden."
 
-              Spec §7: "Spanish label wherever a wallet would otherwise appear:
-              **Wallets ocultas**". The X handle is the KOL's public persona
-              (spec §6), not a wallet — publishing it touches nothing the hidden
-              -wallet promise covers — but it is the identifier that stands in
-              this slot, so a KOL who withholds its wallets says so here
-              instead.
+              That paragraph was corrected in `b0f2a43`, and this row was built
+              against the draft it replaced: "The handle and the hidden marker
+              are **not alternatives**, and an earlier draft of this document
+              wrongly wrote them as one. On both references a row carries a
+              handle *and* an identity chip that is either a truncated address
+              or `Wallets Ocultas`: the handle is public identity, the wallet is
+              the secret. `hide_wallets` defaults to `TRUE` here, so treating it
+              as a handle switch would erase the person from almost every row."
+
+              So `hideWallets` decides the *address slot* and nothing else, and
+              spec §7's "Spanish label wherever a wallet would otherwise appear"
+              is exactly that slot. The handle is the KOL's public persona
+              (spec §6) and is never withheld.
             */}
-            {entry.kol.hideWallets ? (
-              <span className="hidden-wallets">Wallets ocultas</span>
-            ) : (
+            <span className="identity-second">
               <a
                 className="handle"
                 href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
@@ -235,7 +239,10 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
               >
                 @{entry.kol.xHandle}
               </a>
-            )}
+              {entry.kol.hideWallets && (
+                <span className="hidden-wallets">Wallets ocultas</span>
+              )}
+            </span>
           </span>
           {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
               tag alone, so the row and the modal's header cannot disagree
