@@ -3675,7 +3675,7 @@ describe("requeueNoRate", () => {
       await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '0')", [MINUTE]);
 
       for (const cycle of [1, 2, 3]) {
-        expect(await requeueNoRate(), `cycle ${cycle}: rows requeued`).toBe(0);
+        expect(await requeueNoRate(), `cycle ${cycle}: rows requeued`).toEqual({ released: 0, remaining: 0 });
         // And the cycle is run out in full: nothing else may clear the row
         // either, and no trade may appear from a rate of zero.
         await parsePending();
@@ -3740,7 +3740,7 @@ describe("requeueNoRate", () => {
 
     // The minute lands, at a rate nowhere near the one A was valued at.
     await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [MINUTE]);
-    expect(await requeueNoRate()).toBe(1);
+    expect(await requeueNoRate()).toEqual({ released: 1, remaining: 0 });
     expect(await parsePending()).toBe(1);
 
     const [after] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
@@ -3787,7 +3787,7 @@ describe("requeueNoRate", () => {
     expect((await rawTxRow()).parse_error).toBe("unsupported_quote_no_rate");
 
     await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [MINUTE]);
-    expect(await requeueNoRate()).toBe(1);
+    expect(await requeueNoRate()).toEqual({ released: 1, remaining: 0 });
     await parsePending();
 
     const raw = await rawTxRow();
@@ -3797,7 +3797,58 @@ describe("requeueNoRate", () => {
 
     // And it is out of the queue for good — the requeue's own predicate
     // excludes it now, whatever else arrives in `sol_price`.
-    expect(await requeueNoRate()).toBe(0);
+    expect(await requeueNoRate()).toEqual({ released: 0, remaining: 0 });
+  });
+
+  it("releases at most `limit` rows, oldest first, and says how many it left", async () => {
+    // The bound exists for the caller that does not exist yet: a by-hand
+    // historical `sol_price` import can make every refused row eligible at
+    // once, and releasing them all would put them at the FRONT of
+    // `parsePending`'s `ORDER BY received_at` queue — ahead of live
+    // ingestion — to be drained at the same rate either way. `remaining` is
+    // what turns that from a silent backlog into a number in the log.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [MINUTE]);
+
+    const older = usdcQuotedBuy(walletAddress, testMint);
+    const newer = usdcQuotedBuy(walletAddress, inventAddress());
+    for (const payload of [older, newer]) {
+      await storeRawTx({ signature: payload.signature, blockTime: MINUTE, slot: 1, payload, source: "webhook" });
+    }
+    // Refuse both, then pin the order the queue sees them in. `received_at`
+    // defaults to now() for both, and two inserts in one millisecond would
+    // otherwise make "oldest first" untestable.
+    await query("UPDATE raw_tx SET parse_error = 'unsupported_quote_no_rate', parsed_at = NULL");
+    await query("UPDATE raw_tx SET received_at = now() - interval '1 hour' WHERE signature_hmac = $1", [
+      (await query<{ signature_hmac: Buffer }>("SELECT signature_hmac FROM raw_tx"))[0].signature_hmac,
+    ]);
+    const [{ signature_hmac: oldest }] = await query<{ signature_hmac: Buffer }>(
+      "SELECT signature_hmac FROM raw_tx ORDER BY received_at LIMIT 1",
+    );
+
+    expect(await requeueNoRate(1)).toEqual({ released: 1, remaining: 1 });
+
+    const released = await query<{ signature_hmac: Buffer }>(
+      "SELECT signature_hmac FROM raw_tx WHERE parse_error IS NULL",
+    );
+    expect(released).toHaveLength(1);
+    expect(released[0].signature_hmac.equals(oldest)).toBe(true);
+
+    // The next run takes the other one, and then there is nothing left.
+    expect(await requeueNoRate(1)).toEqual({ released: 1, remaining: 0 });
+    expect(await requeueNoRate(1)).toEqual({ released: 0, remaining: 0 });
+  });
+
+  it("releases nothing at a limit of zero, without pretending there was nothing to release", async () => {
+    // The same shape `TOKEN_METADATA_LIMIT=0` has on the metadata cron: a
+    // knob that stops the step dead without an edit or a deploy. It must
+    // still report the backlog it declined to touch.
+    const payload = usdcQuotedBuy(walletAddress, testMint);
+    await storeRawTx({ signature: payload.signature, blockTime: MINUTE, slot: 1, payload, source: "webhook" });
+    await parsePending(); // refused: the minute has no rate yet
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [MINUTE]);
+
+    expect(await requeueNoRate(0)).toEqual({ released: 0, remaining: 1 });
+    expect((await rawTxRow()).parse_error).toBe("unsupported_quote_no_rate");
   });
 });
 

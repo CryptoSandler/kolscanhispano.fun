@@ -1789,6 +1789,22 @@ function higherPriorityError(a: RowParseError | null, b: RowParseError): RowPars
 }
 
 /**
+ * How many `raw_tx` rows one cycle of this file's two queue operations
+ * touches: the rows `parsePending` parses, and the rows `requeueNoRate`
+ * releases into that queue ahead of it.
+ *
+ * One number rather than two, because the two are the same number for a
+ * reason. A requeue that released more rows than the parse behind it can
+ * examine does not parse them any sooner — it moves them into a queue that
+ * drains at this rate anyway — and it does so at the *front* of that queue,
+ * since a requeued row keeps its original `received_at`. Releasing exactly
+ * what the run behind it will take keeps a large release (a historical
+ * `sol_price` import, a wide `--from` on the fill) spread across cycles,
+ * with the leftover reported rather than dumped.
+ */
+const DEFAULT_PENDING_LIMIT = 100;
+
+/**
  * Parses up to `limit` unparsed `raw_tx` rows into `trade` rows.
  *
  * For each row: decrypt the payload, resolve every address it mentions
@@ -1831,7 +1847,7 @@ function higherPriorityError(a: RowParseError | null, b: RowParseError): RowPars
  *
  * Returns the number of `raw_tx` rows this call examined.
  */
-export async function parsePending(limit = 100): Promise<number> {
+export async function parsePending(limit = DEFAULT_PENDING_LIMIT): Promise<number> {
   const rows = await query<{ signature_hmac: Buffer; payload_enc: Buffer }>(
     `SELECT signature_hmac, payload_enc FROM raw_tx WHERE parsed_at IS NULL AND parse_error IS NULL
      ORDER BY received_at LIMIT $1`,
@@ -1964,10 +1980,18 @@ export async function parsePending(limit = 100): Promise<number> {
   return rows.length;
 }
 
+/** What one requeue run did, and what it left behind. */
+export type RequeueResult = {
+  /** Rows this run cleared `parse_error` on, oldest `received_at` first. */
+  released: number;
+  /** Rows the gate would have released that `limit` left for the next run. */
+  remaining: number;
+};
+
 /**
  * Clears `parse_error` on the `unsupported_quote_no_rate` rows whose missing
  * minute has since acquired a usable rate, so the next `parsePending` picks
- * them up. Returns how many rows were requeued.
+ * them up.
  *
  * This is the other half of `REQUEUEABLE_ERRORS`. "Requeueable" has always
  * been a property of the *row* — `parsed_at` left NULL, nothing about the
@@ -2004,20 +2028,44 @@ export async function parsePending(limit = 100): Promise<number> {
  * it is a parser fix plus a manual `UPDATE raw_tx SET parse_error = NULL`,
  * which is exactly what spec §5.2 describes.
  *
- * No lock of its own, and none needed. It is a single idempotent `UPDATE`
- * whose predicate stops matching the moment it has run; concurrent runs
- * either race to the same result or see no rows. It does not go through
- * `parsePending`'s advisory lock either, because clearing a column on a row
- * that lock's holder is not looking at (the pending query excludes every row
- * this one touches) cannot interfere with it.
+ * **Bounded, and the leftover is reported rather than dropped.** `limit`
+ * defaults to `DEFAULT_PENDING_LIMIT` — the same number of rows the parse
+ * behind it examines, for the reason stated there — and `remaining` is how
+ * many rows this run *could* have released and did not. At the same-minute
+ * residue this mechanism actually reaches, `remaining` is always 0; the
+ * caller that makes it non-zero is a by-hand historical import, which is
+ * exactly the caller that needs to be told.
+ *
+ * Concurrency needs nothing from this function: it is a single idempotent
+ * statement whose predicate stops matching the moment it has run, and it
+ * touches only rows `parsePending`'s query already excludes (`parse_error IS
+ * NULL`), so it cannot disturb a parse holding the advisory lock. The lock
+ * `scripts/requeue-no-rate.ts` takes around it is the house shape for a cron
+ * entry point, not a correctness requirement — see that file.
  */
-export async function requeueNoRate(): Promise<number> {
-  const rows = await query<{ signature_hmac: Buffer }>(
-    `UPDATE raw_tx SET parse_error = NULL
-      WHERE parse_error = 'unsupported_quote_no_rate' AND parsed_at IS NULL
-        AND EXISTS (SELECT 1 FROM sol_price
-                     WHERE minute = date_trunc('minute', raw_tx.block_time) AND usd > 0)
-      RETURNING signature_hmac`,
+export async function requeueNoRate(limit: number = DEFAULT_PENDING_LIMIT): Promise<RequeueResult> {
+  // One statement, and one copy of the predicate. `remaining` has to be
+  // measured against exactly the rows `released` was chosen from — a second
+  // query would be the same rule written twice, free to disagree with itself
+  // (and racing the first), which is the failure `prices.ts` already names
+  // about a rate lookup written three times. The CTE gives both numbers off
+  // one snapshot: `eligible` counts every row this run *could* have released,
+  // `released` the ones the limit let it.
+  const [row] = await query<{ released: number; eligible: number }>(
+    `WITH eligible AS (
+       SELECT signature_hmac, received_at FROM raw_tx
+        WHERE parse_error = 'unsupported_quote_no_rate' AND parsed_at IS NULL
+          AND EXISTS (SELECT 1 FROM sol_price
+                       WHERE minute = date_trunc('minute', raw_tx.block_time) AND usd > 0)
+     ),
+     released AS (
+       UPDATE raw_tx SET parse_error = NULL
+        WHERE signature_hmac IN (SELECT signature_hmac FROM eligible ORDER BY received_at LIMIT $1)
+       RETURNING 1
+     )
+     SELECT (SELECT count(*)::int FROM released) AS released,
+            (SELECT count(*)::int FROM eligible) AS eligible`,
+    [limit],
   );
-  return rows.length;
+  return { released: row.released, remaining: row.eligible - row.released };
 }
