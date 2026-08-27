@@ -1,0 +1,34 @@
+-- `sol_price.usd` had `NOT NULL` and nothing else: verified against
+-- `pg_constraint` on the test branch (2026-08-26), the table's whole
+-- constraint list was `NOT NULL minute`, `NOT NULL usd` and the primary key.
+-- So a rate of `0` was a perfectly storable row, and both writers of this
+-- table would store one: `fillSolPriceMinutes` writes any close
+-- `parseDecimal` accepts, including `'0'`, and `refreshSolPrice` writes any
+-- `priceUsd` DexScreener reports the same way.
+--
+-- A zero is not a rate. `evaluateSwap` refuses `solUsd <= 0n`
+-- (src/lib/parse-swap.ts, pinned by parse-swap.test.ts's "declines a
+-- stablecoin-quoted swap at a rate that is not a positive number"), because
+-- dividing by it is undefined and a negative one would flip the side of the
+-- trade. Every reader of this table already treats a non-positive rate as
+-- absent; this makes it unrepresentable instead of merely filtered.
+--
+-- **What made it worth a migration now.** `requeueNoRate` (src/lib/parse-swap.ts)
+-- clears `parse_error` on rows whose missing minute has since acquired a
+-- rate. A gate that only asked whether the minute *exists* would clear a row
+-- whose minute holds a zero, the parse would refuse it again for the same
+-- reason, and the gate would clear it again -- measured at three cycles out
+-- of three, zero trades. Worse, a requeued row keeps its original
+-- `received_at` and `parsePending` is `ORDER BY received_at LIMIT 100`, so a
+-- poisoned minute sits at the head of the queue and starves live ingestion.
+--
+-- The requeue's own `usd > 0` predicate is kept beside this constraint rather
+-- than replaced by it: the constraint governs what new rows may be, the
+-- predicate governs which rows that one statement acts on, and they fail
+-- independently. Belt and native platform, in the order the house posture
+-- asks for -- the database first.
+--
+-- Validated against existing rows rather than added `NOT VALID`: any row this
+-- would reject is a row nothing may read as a rate, so a migration that
+-- fails here is the correct outcome and the surviving zeros are the bug.
+ALTER TABLE sol_price ADD CONSTRAINT sol_price_usd_positive CHECK (usd > 0);
