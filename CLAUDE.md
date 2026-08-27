@@ -139,9 +139,23 @@ personal address anyway, and the mechanism was never found.
 
 So the rule is about the defence, not the diagnosis. A personal email in a public
 repo's history is permanent and is a no-doxx leak; the check costs one command and
-catches it while it is still rewritable. If it ever bites again, capture that
-commit's context **that day** — the environment, the working directory, what
-invoked git — because that is the only moment the evidence exists.
+catches it while it is still rewritable.
+
+**Captured 2026-08-27, the second time it bit.** Six of eight commits on a branch
+carried the personal address, and the split was exact: **every commit made by a
+subagent had it, every commit made by the main session did not.** Measured in the
+main session's shell at the same moment, in the same working tree:
+
+    GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL / EMAIL / GIT_CONFIG_GLOBAL   all unset
+    git config --show-origin user.email  ->  file:.git/config  ...noreply...
+    git rev-parse --absolute-git-dir     ->  /Users/fede/proyectos/kolscanhispano/.git
+
+So the repository config is not the variable; the committing **process** is. A
+subagent resolves a different identity than its parent in the same directory —
+the local `.git/config` that wins here does not win there. Until that is
+understood, treat any commit a subagent makes as suspect and run the gate before
+every push. The fix is one `git filter-branch --env-filter` while the branch is
+still unpushed; it is unavailable the moment it is public.
 
 ## Adding a step to a cron workflow
 
