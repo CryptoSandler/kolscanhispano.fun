@@ -25,6 +25,10 @@ colors:
   podium-1-wash: "#12251a"
   podium-2-wash: "#26200f"
   podium-3-wash: "#101f2b"
+  cabal-a: "#a78bfa"
+  cabal-b: "#f472b6"
+  cabal-c: "#fdba74"
+  cabal-d: "#94a3b8"
 typography:
   display-lg: { fontFamily: "Inter", fontSize: 30px, fontWeight: 700, lineHeight: 1.15, letterSpacing: -0.8px }
   headline:   { fontFamily: "Inter", fontSize: 20px, fontWeight: 650, lineHeight: 1.2, letterSpacing: -0.3px }
@@ -59,7 +63,8 @@ no logo, no face, no string.
 
 ## Identity
 
-The wordmark is the domain in Inter 700, with the accent on the dot. Subtitle:
+The wordmark is the domain in Inter 700, with **`.fun` in the accent** — the dot alone is
+invisible at 20px, measured rather than assumed. Subtitle:
 **"Ranking de traders hispanos"**. No logo, no mascot, no illustration.
 
 **The accent stays cyan `#22d3ee`** and neither reference uses it. It marks the wordmark,
@@ -94,8 +99,14 @@ WCAG 2.1, against `surface-1 #16191c`. Measured 2026-08-27:
 | `podium-1 #4ade80` | 10.13 | PASS |
 | `podium-2 #fbbf24` | 10.57 | PASS |
 | `podium-3 #7dd3fc` | 10.58 | PASS |
+| `cabal-a #a78bfa` | 6.02 | PASS |
+| `cabal-b #f472b6` | 6.19 | PASS |
+| `cabal-c #fdba74` | 9.72 | PASS |
+| `cabal-d #94a3b8` | 6.39 | PASS |
 
-`ink` on each podium wash: 14.18, 14.28, 14.78 — all PASS. A new colour enters this system
+The four cabal tints are measured against `surface-2 #1c2024`, the chip's own background;
+every other row is against `surface-1`. `ink` on each podium wash: 14.18, 14.28, 14.78 —
+all PASS. A new colour enters this system
 only with its measured ratio in this table; `design-tokens.test.ts` recomputes every row.
 
 ## Typography
@@ -132,13 +143,25 @@ action right.
 **`row-leaderboard`** — 56px, hairline bottom, `surface-2` on hover, whole row clickable and
 focusable (it opens the modal). Left to right: rank as zero-padded `numeric` with the medal
 glyph on ranks 1–3; 36px circular avatar from `/api/avatar/<kol_id>`; a two-line identity
-block — `name` on top, and beneath it the `@handle` linked to X **or** `Wallets ocultas` in
-`hidden`; the cabal chip; then right-aligned, the SOL figure in `numeric-lg` coloured by
-sign, and the USD total in `numeric` `ink-muted` in parentheses.
+block — `name` on top, and beneath it the **`@handle`, always**, linked to X, with
+`Wallets ocultas` in `hidden` **beside it** where that KOL's wallets are hidden; the cabal
+chip; then right-aligned, the SOL figure in `numeric-lg` coloured by sign, and the USD
+total in `numeric` `ink-muted` in parentheses.
+
+The handle and the hidden marker are **not alternatives**, and an earlier draft of this
+document wrongly wrote them as one. On both references a row carries a handle *and* an
+identity chip that is either a truncated address or `Wallets Ocultas`: the handle is public
+identity, the wallet is the secret. `hide_wallets` defaults to `TRUE` here, so treating it
+as a handle switch would erase the person from almost every row. `Wallets ocultas` occupies
+the **address** slot and nothing else.
 
 Ranks 1–3 additionally carry their `podium-N-wash` background.
 
-**`chip-cabal`** — the group's 3–4 letter tag, `label`, `radius-sm`, tinted per cabal.
+**`chip-cabal`** — the group's 3–4 letter tag, `label`, `radius-sm`, on `surface-2`, its
+text in one of four tints assigned per cabal: `cabal-a` violet, `cabal-b` pink, `cabal-c`
+peach, `cabal-d` slate. Four fixed tokens rather than a generated hue, because a generated
+one can land on green or red — reserved here for money — or on a podium tint. A fifth cabal
+reuses the first: repetition is honest, a colour outside the palette is not.
 
 **`chip-hidden`** — not a chip: `Wallets ocultas` in `hidden`, inline, no border. It occupies
 the slot where the reference prints a truncated address, which is what makes it read as
