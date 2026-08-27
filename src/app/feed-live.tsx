@@ -182,10 +182,14 @@ export function FeedRow({
 
   return (
     <li className={`row-feed${isNew ? " is-new" : ""}`}>
-      <Avatar name={trade.kol.name} src={trade.kol.avatarUrl} />
+      {/* 22px here, not the row's 36: DESIGN.md sizes the leaderboard
+          avatar and says nothing about the feed's one-line sentence. */}
+      <Avatar name={trade.kol.name} src={trade.kol.avatarUrl} size={22} />
 
       <span className="row-sentence">
-        <span className="kol-name">{trade.kol.name}</span>{" "}
+        {/* DESIGN.md, Do's: "keep every figure tabular and every name
+            bold." Same `name` role the leaderboard row uses. */}
+        <span className="name">{trade.kol.name}</span>{" "}
         {/* The space lives inside the branch: a KOL with no cabal must not
             leave a double space in the middle of the sentence. */}
         {trade.kol.cabalTag && (
@@ -208,6 +212,11 @@ export function FeedRow({
       </span>
 
       {/*
+        DESIGN.md `chip-hidden`: "**not a chip**: `Wallets ocultas` in `hidden`,
+        inline, no border" — grey italic, which is how the reference sets it
+        apart from a real identifier. The previous direction gave it a
+        background, a radius and uppercase; this one takes all three away.
+
         Spec §7: this label is the only thing that appears where an address
         otherwise would. It is not a claim of anonymity — the amount, the mint
         and the timestamp still find the transaction in any explorer — only a
@@ -218,7 +227,7 @@ export function FeedRow({
         its explorer link either way, but a KOL that publishes its wallets
         must not be labelled as hiding them because of a key rotation.
       */}
-      {trade.kol.hideWallets && <span className="chip-hidden-wallets">Wallets ocultas</span>}
+      {trade.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
 
       {trade.signature === null ? (
         <time className="num row-age" dateTime={trade.blockTime} suppressHydrationWarning>

@@ -1,11 +1,5 @@
-import Link from "next/link";
-import {
-  LEADERBOARD_UNITS,
-  parseUnit,
-  readLeaderboard,
-  type LeaderboardUnit,
-} from "@/lib/leaderboard";
-import { LEADERBOARD_WINDOWS, parseWindow, type LeaderboardWindow } from "@/lib/windows";
+import { parseUnit, readLeaderboard } from "@/lib/leaderboard";
+import { parseWindow, type LeaderboardWindow } from "@/lib/windows";
 import { LeaderboardTable, USD_CAVEAT } from "../leaderboard-table";
 
 /** The window is relative to now and the rows behind it change as trades land. */
@@ -22,8 +16,6 @@ const WINDOW_LABELS: Record<LeaderboardWindow, string> = {
   mensual: "Mensual",
 };
 
-const UNIT_LABELS: Record<LeaderboardUnit, string> = { sol: "SOL", usd: "USD" };
-
 type SearchParams = Record<string, string | string[] | undefined>;
 
 function first(value: string | string[] | undefined): string | null {
@@ -35,10 +27,14 @@ function first(value: string | string[] | undefined): string | null {
  * Spec §2: ranked realized PnL, with `Diario / Semanal / Mensual` and
  * `SOL / USD`.
  *
- * The toggles are links, not a client component. Every combination is a real
- * URL, so the state survives a reload, a share and a back button, and the page
- * costs no JavaScript at all — the only script this product ships is the
- * feed's poll.
+ * **The two toggles are not on this page.** DESIGN.md, Layout: *"Header:
+ * wordmark and subtitle left, nav centre, unit and window controls plus the
+ * wallet action right."* They live in the site header (`LeaderboardControls`),
+ * read the same query string this page reads, and apply the same fallbacks —
+ * rendering a second copy here would be two controls over one piece of state.
+ *
+ * They are still links, so every combination is a real URL: the state survives
+ * a reload, a share and a back button.
  *
  * An unreadable parameter falls back to the default here rather than
  * answering `400` the way `/api/leaderboard` does. A person following a stale
@@ -56,64 +52,35 @@ export default async function LeaderboardPage({
 
   const leaderboard = await readLeaderboard({ window, unit });
 
-  const href = (next: { window?: LeaderboardWindow; unit?: LeaderboardUnit }) =>
-    `/leaderboard?window=${next.window ?? window}&unit=${next.unit ?? unit}`;
-
   return (
-    <section className="panel" style={{ marginTop: "var(--stack)" }}>
-      <div className="panel-head">
-        <h1 className="headline">Clasificación</h1>
-        <span className="label">PnL realizado</span>
+    <>
+      {/* DESIGN.md's `display-lg`: the page's own title, above the panel that
+          holds its data. */}
+      <div className="page-head">
+        <h1 className="display-lg">Clasificación</h1>
+        <p className="page-subtitle">
+          PnL realizado · {WINDOW_LABELS[window]} · {unit === "sol" ? "SOL" : "USD"}
+        </p>
       </div>
 
-      <div className="controls">
-        <div className="segmented" role="group" aria-label="Ventana">
-          {LEADERBOARD_WINDOWS.map((option) => (
-            <Link
-              key={option}
-              className={option === window ? "segment is-selected" : "segment"}
-              aria-current={option === window ? "true" : undefined}
-              href={href({ window: option })}
-            >
-              {WINDOW_LABELS[option]}
-            </Link>
-          ))}
-        </div>
+      <section className="panel" style={{ marginTop: "var(--stack)" }}>
+        {/*
+          The qualifier line: everything a reader needs to know about the
+          figures before reading them, directly above them.
 
-        <div className="segmented" role="group" aria-label="Unidad">
-          {LEADERBOARD_UNITS.map((option) => (
-            <Link
-              key={option}
-              className={option === unit ? "segment is-selected" : "segment"}
-              aria-current={option === unit ? "true" : undefined}
-              href={href({ unit: option })}
-            >
-              {UNIT_LABELS[option]}
-            </Link>
-          ))}
-        </div>
-      </div>
+          `día UTC` is spec §4.9 — the community spans UTC−6 to UTC+1 and any
+          local choice would hand the day to one country.
 
-      {/*
-        The qualifier line: everything a reader needs to know about the figures
-        before reading them, directly above them.
+          The USD caveat is spec §4.1, and it is here **unconditionally**: this
+          table always prints a USD amount, as the ranked column or as the one
+          in parentheses. See `USD_CAVEAT`.
+        */}
+        <p className="label control-note">día UTC · {USD_CAVEAT}</p>
 
-        `día UTC` is spec §4.9 and DESIGN.md's `segmented-window` — it sits
-        under the control because the reader choosing a window is the reader
-        who needs to know where its boundary falls. The community spans UTC−6
-        to UTC+1 and any local choice would hand the day to one country.
-
-        The USD caveat is spec §4.1, and it is here **unconditionally**. It
-        used to be conditional on `unit === "usd"`, which left the secondary
-        USD column unlabelled on this page and the home panel's USD column
-        unlabelled entirely; this table always prints a USD amount, as the
-        ranked column or as the one in parentheses. See `USD_CAVEAT`.
-      */}
-      <p className="label control-note">día UTC · {USD_CAVEAT}</p>
-
-      {/* Spec §4.8's definition is written by `LeaderboardTable`, beneath the
-          column it defines. */}
-      <LeaderboardTable entries={leaderboard.entries} unit={unit} />
-    </section>
+        {/* Spec §4.8's definition is written by `LeaderboardTable`, beneath the
+            column it defines. */}
+        <LeaderboardTable entries={leaderboard.entries} unit={unit} />
+      </section>
+    </>
   );
 }

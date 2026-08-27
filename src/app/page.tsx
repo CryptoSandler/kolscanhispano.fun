@@ -8,19 +8,16 @@ import { LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
  * Spec §2: the home page is the live trade feed, newest first — and, beneath
  * it, the leaderboard's top ten.
  *
- * **Why both are here.** DESIGN.md's whole argument for the 36px row is that
- * *"the leaderboard's top ten and the live feed's last eight should share one
- * 900px viewport without scrolling"*, and it lists fitting them on one screen
- * first among its Do's. That thesis is only testable on a page that carries
- * both; the feed's `min-height` in `globals.css` was already sized against it
- * — eight rows rather than twelve, explicitly to leave room for a leaderboard
- * that needs about 425px. Spec §2's one-line description of `/` predates the
- * design document, and the design document is the binding authority on layout.
+ * **Why both are here.** `docs/references.md` §5: *"a live feed on the home
+ * page is not a genre requirement. Putting one there is our choice, and it is
+ * the choice that makes the site read as alive on the first three seconds."*
+ * kolscan.io keeps its feed on its own page and kolscanbrasil.io has none;
+ * DESIGN.md takes the feed from the first and the podium from the second, so
+ * this page carries both.
  *
  * The feed comes first because that is what spec §2 says this page is. The
- * top ten below it is the daily window in SOL, with no toggles: `/leaderboard`
- * is where a reader changes the window, and duplicating the control here would
- * duplicate the state that URL already holds.
+ * top ten below it is the daily window in SOL — the same defaults the header's
+ * controls show off `/leaderboard`, so the control and this panel agree.
  *
  * Both reads are issued together. They touch different tables and neither
  * needs the other's result, so waiting for them in sequence would add a Neon
@@ -58,9 +55,9 @@ export default async function HomePage() {
         </div>
 
         {/*
-          No header row: it costs 25px, and the caption `LeaderboardTable`
-          writes beneath itself names both count columns instead. The whole
-          point of this page is what fits in 900px.
+          No header row: `/leaderboard` is where a reader goes to compare
+          columns, and the caption `LeaderboardTable` writes beneath itself
+          names both count columns for the summary.
         */}
         <LeaderboardTable entries={leaderboard.entries} unit="sol" showHeader={false} />
       </section>

@@ -1,22 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Inter, Inter_Tight, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import { LEADERBOARD_UNITS } from "@/lib/leaderboard";
+import { LEADERBOARD_WINDOWS } from "@/lib/windows";
 import { AffiliateSlot } from "./affiliate-slot";
+import { LeaderboardControls } from "./leaderboard-controls";
 import { SiteNav } from "./site-nav";
 import "./globals.css";
 
 /**
- * DESIGN.md: Inter Tight for display, Inter for body, JetBrains Mono with
- * tabular figures for every number. `next/font` self-hosts all three, which is
- * also what keeps them inside the `font-src 'self' data:` policy in
- * `next.config.ts` — a Google Fonts stylesheet link would be blocked by it.
+ * DESIGN.md, Typography: *"**Inter** for all text and **JetBrains Mono** for
+ * all figures."* Two faces, not three — this direction dropped the separate
+ * display face the previous one carried, so `Inter_Tight` is no longer loaded.
+ * `next/font` self-hosts both, which is also what keeps them inside the
+ * `font-src 'self' data:` policy in `next.config.ts` — a Google Fonts
+ * stylesheet link would be blocked by it.
  */
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const interTight = Inter_Tight({
-  subsets: ["latin"],
-  variable: "--font-inter-tight",
-  display: "swap",
-});
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains-mono",
@@ -74,23 +74,48 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       `:root`, found nothing, and made the whole declaration invalid — every
       face silently fell back to the browser's default serif.
     */
-    <html lang="es" className={`${inter.variable} ${interTight.variable} ${jetbrainsMono.variable}`}>
+    <html lang="es" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
         <div className="shell">
+          {/*
+            DESIGN.md, Layout: "Header: wordmark and subtitle left, nav centre,
+            unit and window controls plus the wallet action right."
+          */}
           <header className="topbar">
             <div className="brand">
+              {/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700,
+                  with the accent on the dot." The dot, and nothing else. */}
               <Link className="wordmark" href="/">
-                kolscanhispano<span className="tld">.fun</span>
+                kolscanhispano<span className="wordmark-dot">.</span>fun
               </Link>
-              <SiteNav />
+              <p className="brand-subtitle">Ranking de traders hispanos</p>
             </div>
-            {/*
-              Spec §1.9: the affiliate slot is configurable from the admin and
-              empty at launch, where it renders nothing. The admin that
-              configures it is a later task; an empty slot is the correct
-              rendering of its launch state, not a placeholder.
-            */}
-            <AffiliateSlot />
+
+            <SiteNav />
+
+            <div className="topbar-right">
+              <LeaderboardControls windows={LEADERBOARD_WINDOWS} units={LEADERBOARD_UNITS} />
+              {/*
+                The wallet action's slot, as a label rather than a control.
+                Spec §6 makes `/registro` the only page that ever connects a
+                wallet, and that page does not exist yet; DESIGN.md's last
+                Don't is "**Don't** show a control that does not work." So this
+                is muted, unclickable and not focusable — it holds the slot the
+                genre puts here without pretending to be a flow.
+
+                **When `/registro` ships this becomes a real link.**
+              */}
+              <span className="registro" aria-disabled="true">
+                Registro — próximamente
+              </span>
+              {/*
+                Spec §1.9: the affiliate slot is configurable from the admin and
+                empty at launch, where it renders nothing. The admin that
+                configures it is a later task; an empty slot is the correct
+                rendering of its launch state, not a placeholder.
+              */}
+              <AffiliateSlot />
+            </div>
           </header>
           <main>{children}</main>
           <p className="footnote">
