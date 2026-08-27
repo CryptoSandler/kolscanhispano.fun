@@ -114,6 +114,77 @@ describe(".github/workflows/parse-pending.yml: pricing step", () => {
 });
 
 /**
+ * The parse workflow gained a third step when Task 3's metadata layer was
+ * wired up: `scripts/refresh-token-metadata.ts`, the only production caller of
+ * `tokenMetadata` and therefore the only reason a feed row carries a symbol.
+ *
+ * Two properties, both of them decisions rather than arrangement:
+ *
+ * - It runs *after* the parse (and after the backfill). A step that fails
+ *   stops the ones behind it, and a metadata refresh that cannot reach
+ *   DexScreener must not stand between a webhook and a trade.
+ * - Its HELIUS_API_KEY guard is a `::warning::` and **not** an `::error::`
+ *   with `exit 1`, unlike every other secret in this repo. Without the key
+ *   the step still resolves every mint DexScreener knows; only the DAS
+ *   fallback for the ones it does not is lost. Failing the step over an
+ *   optional fallback would turn a partial answer into no answer.
+ */
+describe(".github/workflows/parse-pending.yml: token metadata step", () => {
+  const text = readFileSync(".github/workflows/parse-pending.yml", "utf8");
+  const step = text.slice(text.indexOf("Refresh token metadata"));
+
+  it("runs the refresh in the same workflow, after the parse and after the backfill", () => {
+    const parseAt = text.indexOf("npx tsx scripts/parse-pending.ts");
+    const backfillAt = text.indexOf("npx tsx scripts/backfill-prices.ts");
+    const refreshAt = text.indexOf("npx tsx scripts/refresh-token-metadata.ts");
+    expect(refreshAt).toBeGreaterThan(-1);
+    expect(refreshAt).toBeGreaterThan(parseAt);
+    expect(refreshAt).toBeGreaterThan(backfillAt);
+  });
+
+  it("gives the step the one secret it needs, and no key it cannot use", () => {
+    // Everything from this step's own `env:` block to the end of the file, so
+    // a secret declared only on an earlier step cannot satisfy this -- nor be
+    // mistaken for one this step was granted. The script's import graph has
+    // no wallets.ts on it, so neither WALLET_* key is readable by anything it
+    // runs, and handing it one would only widen what a compromised step could
+    // exfiltrate.
+    expect(step).toMatch(/DATABASE_URL:\s*\$\{\{\s*secrets\.DATABASE_URL\s*\}\}/);
+    expect(step).not.toContain("WALLET_ENC_KEY");
+    expect(step).not.toContain("WALLET_HMAC_KEY");
+  });
+
+  it("passes HELIUS_API_KEY, so the DAS fallback is not dead code in CI", () => {
+    // The gap this closes: `heliusAssetMetadata` returns null with no key, and
+    // before this step no workflow in the repo passed one at all -- so the
+    // fallback that catches a mint DexScreener has never heard of could not
+    // fire anywhere but a developer's machine.
+    expect(step).toMatch(/HELIUS_API_KEY:\s*\$\{\{\s*secrets\.HELIUS_API_KEY\s*\}\}/);
+  });
+
+  it("degrades on a missing HELIUS_API_KEY instead of failing, and says what is lost", () => {
+    // The distinction under test. Deleting the guard, or promoting it to an
+    // ::error:: with an exit, breaks exactly one of these.
+    expect(step).toMatch(/if \[ -z "\$\{HELIUS_API_KEY\}" \]; then\s*\n\s*echo "::warning::HELIUS_API_KEY is not set/);
+    // It names what is degraded rather than only what is absent, so the
+    // person reading the annotation knows whether to act.
+    const warning = step.slice(step.indexOf("::warning::HELIUS_API_KEY"));
+    expect(warning).toContain("fallback");
+    expect(warning).toContain("symbol = NULL");
+    expect(warning).toContain("Settings -> Secrets");
+    // And it must not stop the job: no `exit` anywhere in this step's script.
+    expect(step.slice(step.indexOf("run: |"))).not.toMatch(/\bexit\s+1\b/);
+  });
+
+  it("never turns HELIUS_API_KEY into a required secret elsewhere in the file", () => {
+    // The three genuinely required secrets keep their ::error:: guards; the
+    // optional one must not acquire one by someone pattern-matching on the
+    // others.
+    expect(text).not.toContain("::error::HELIUS_API_KEY");
+  });
+});
+
+/**
  * The recompute workflow gained a second step in Task 9: the rate_limit
  * prune. Which workflow it is in and where in it are both properties, not
  * arrangement. It is not in parse-pending.yml because parsing is the

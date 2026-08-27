@@ -30,8 +30,17 @@ name: Parse pending trades
 # only thing that revisits a trade -- nothing ever revisits a parsed raw_tx
 # row -- so it has to run after the rows it is meant to price exist.
 #
-# The two scripts take different advisory locks, so the second cannot be
-# blocked by the first, and each exits non-zero on its own failure.
+# Then a third step, scripts/refresh-token-metadata.ts, gives the mints those
+# trades name a symbol. It is here, and last, for two separate reasons. Here,
+# because a mint becomes worth resolving the moment a trade names it, which is
+# this workflow's cadence and no other's. Last, because a step that fails
+# stops the ones behind it: a metadata refresh that cannot reach DexScreener
+# must not be able to stand between a webhook and a trade, nor between a trade
+# and its USD value. Symbols are what the feed shows; the two steps above are
+# what it is showing.
+#
+# The three scripts take different advisory locks, so a later one cannot be
+# blocked by an earlier one, and each exits non-zero on its own failure.
 #
 # This runs the work directly on a GitHub-hosted runner instead of calling an
 # HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
@@ -121,3 +130,50 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx scripts/backfill-prices.ts
+
+      - name: Refresh token metadata
+        env:
+          # DATABASE_URL only, of the three, and that is the accurate list
+          # rather than a shortened one: this script's whole import graph is
+          # env.ts, lock.ts, lock-key.ts, db.ts, prices.ts, decimal.ts and
+          # mints.ts, and wallets.ts -- the module that asserts both WALLET_*
+          # keys at load time -- is not on it. Handing this step keys it
+          # cannot use would only widen what a compromised step could
+          # exfiltrate. The emptiness guard for DATABASE_URL lives on the
+          # parse step above, which runs first in the same job with the same
+          # secret: if it were missing, this step would never be reached.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Optional, and the guard below is a ::warning:: rather than an
+          # ::error:: for that reason -- read this before "fixing" the
+          # inconsistency with the three checks above.
+          #
+          # The difference is what the step can still do without the value.
+          # Without DATABASE_URL there is no work at all, so the run stops
+          # (::error:: + exit 1). Without HELIUS_API_KEY the run does almost
+          # all of its work: DexScreener supplies the symbol for every mint it
+          # knows, which is nearly all of them, for free and with no key. What
+          # is lost is only the DAS fallback for the mints DexScreener has
+          # never heard of -- those rows keep symbol = NULL, which the feed
+          # already renders as "un token sin simbolo" rather than a ticker
+          # (verified 2026-08-26: src/app/feed-live.tsx:185). Failing over that
+          # would turn a partial answer into no answer, and would put a
+          # metadata step in front of a cron whose real job is ingestion.
+          #
+          # Adding the secret is what turns the fallback on; nothing else has
+          # to change. Note that a mint already written with symbol = NULL is
+          # only re-asked once its 24h retry interval has passed (see the
+          # script's header), so give it a day to catch up.
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          # Optional bound on how many mints one run resolves. Unset means the
+          # script's own default of 30 -- one DexScreener request per run. Set
+          # it as a repository *variable* for a one-off larger drain, or to 0
+          # to stop this step without editing the workflow.
+          TOKEN_METADATA_LIMIT: ${{ vars.TOKEN_METADATA_LIMIT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HELIUS_API_KEY}" ]; then
+            echo "::warning::HELIUS_API_KEY is not set, so the Helius DAS fallback is skipped. DexScreener still supplies a symbol for every mint it knows; a mint it does not know keeps symbol = NULL, which the feed renders as its no-symbol wording rather than a ticker. This is a warning, not an error: the fallback is optional and this step continues without it. Add it under Settings -> Secrets and variables -> Actions -> Repository secrets to enable it."
+          fi
+
+          npx tsx scripts/refresh-token-metadata.ts
