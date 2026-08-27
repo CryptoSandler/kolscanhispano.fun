@@ -1,0 +1,25 @@
+-- `token.decimals` was `SMALLINT NOT NULL DEFAULT 9`, and `upsertToken`
+-- (src/lib/prices.ts) inserted `COALESCE($4, 9)` on top of that. DexScreener's
+-- pair response does not carry a mint's decimals, so `deriveTokenUpdate`
+-- always passes NULL -- and every DexScreener-sourced token was therefore
+-- stored as 9 decimals whatever it actually is. Most pump.fun mints are 6.
+--
+-- Nothing reads `token.decimals` for money today: the parser takes decimals
+-- from the payload's own balance change (`rawTokenAmount.decimals`), and
+-- `feed.ts` reads only `symbol` off this table. So this was a wrong value
+-- sitting in a column rather than a wrong number anywhere -- which is exactly
+-- when it is cheap to stop writing it, and exactly the shape that becomes a
+-- wrong number the first time someone reads the column believing it.
+--
+-- A NULL that says "unknown" is worth more than a 9 that says "nine". The
+-- Helius DAS fallback does state real decimals, and still writes them.
+--
+-- **Existing rows are left alone, deliberately.** A stored 9 cannot be told
+-- apart from a genuine 9 by anything in this schema, so rewriting them to
+-- NULL would destroy the real values along with the fabricated ones. They age
+-- out on their own: the next `tokenMetadata` call for a mint overwrites the
+-- row, and with `decimals = COALESCE($4, token.decimals)` on the conflict path
+-- a DexScreener-sourced refresh keeps whatever is there rather than clearing
+-- it. The column is honest from here forward, not retroactively.
+ALTER TABLE token ALTER COLUMN decimals DROP NOT NULL;
+ALTER TABLE token ALTER COLUMN decimals DROP DEFAULT;

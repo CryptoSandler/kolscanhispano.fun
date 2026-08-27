@@ -378,9 +378,20 @@ async function upsertToken(mint: string, fields: TokenUpdate): Promise<void> {
   // fields never COALESCE: this call is only ever made with a definitive
   // answer from a source (see tokenMetadata's docs), so what it says is what
   // gets written, including turning a stale price back to null.
+  //
+  // **`decimals` is inserted as-is, and NULL means unknown.** It used to be
+  // `COALESCE($4, 9)` against a `NOT NULL DEFAULT 9` column, and DexScreener's
+  // pair response does not state a mint's decimals at all — so
+  // `deriveTokenUpdate` passes NULL every time and every DexScreener-sourced
+  // token was stored as 9 whatever it really is. Nothing reads this column for
+  // money (the parser takes decimals from the payload's own balance change),
+  // so it was a wrong value in a column rather than a wrong number anywhere;
+  // it is stopped here rather than after something starts believing it. Only
+  // the Helius DAS fallback states a real figure, and it still writes one.
+  // See migration 008.
   await query(
     `INSERT INTO token (mint, symbol, name, decimals, image_url, price_usd, price_sol, liquidity_usd, price_state, pair_url, updated_at)
-     VALUES ($1, $2, $3, COALESCE($4, 9), $5, $6, $7, $8, $9, $10, now())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
      ON CONFLICT (mint) DO UPDATE SET
        symbol        = COALESCE(EXCLUDED.symbol, token.symbol),
        name          = COALESCE(EXCLUDED.name, token.name),

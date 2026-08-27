@@ -208,6 +208,41 @@ describe("tokenMetadata", () => {
     expect(Number(row?.price_usd)).toBeCloseTo(2.5);
   });
 
+  it("leaves decimals NULL for a DexScreener-sourced token rather than writing a fabricated 9", async () => {
+    // DexScreener's pair response does not state a mint's decimals, so
+    // `deriveTokenUpdate` passes null for every token it sources. The column
+    // was `SMALLINT NOT NULL DEFAULT 9` under a `COALESCE($4, 9)` insert, so
+    // all of them were stored as 9 whatever they really are — most pump.fun
+    // mints are 6. Nothing reads this column for money (the parser takes
+    // decimals from the payload's own balance change), which is why it was a
+    // wrong value in a column rather than a wrong number anywhere, and why it
+    // is cheap to stop writing it now instead of after something believes it.
+    // Migration 008 makes the column nullable for this.
+    const mint = inventAddress();
+    const { fn } = fetchQueue(jsonResponse(buildDexResponse([buildDexPair({ mint, symbol: "FOO", priceUsd: "2.5" })])));
+
+    await tokenMetadata([mint], fn);
+
+    const row = await tokenRow(mint);
+    expect(row?.decimals).toBeNull();
+    expect(row?.symbol).toBe("FOO"); // and the rest of the row is written as before
+  });
+
+  it("does not blank decimals it already learned when DexScreener refreshes the row", async () => {
+    // NULL means "unknown", not "forget". The conflict path is
+    // `decimals = COALESCE($4, token.decimals)`, so a real figure a DAS
+    // fallback wrote survives a later DexScreener-sourced refresh.
+    const mint = inventAddress();
+    await query(`INSERT INTO token (mint, symbol, decimals, price_state) VALUES ($1, 'OLD', 6, 'unpriced')`, [mint]);
+
+    const { fn } = fetchQueue(jsonResponse(buildDexResponse([buildDexPair({ mint, symbol: "FOO", priceUsd: "2.5" })])));
+    await tokenMetadata([mint], fn);
+
+    const row = await tokenRow(mint);
+    expect(row?.decimals).toBe(6);
+    expect(row?.symbol).toBe("FOO");
+  });
+
   it("gives a mint with no pair a symbol from the Helius fallback and price_state unpriced — never a price", async () => {
     vi.stubEnv("HELIUS_API_KEY", "test-key");
     const mint = inventAddress();
