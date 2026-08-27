@@ -40,11 +40,34 @@ export function LeaderboardTable({
     apologising — two lines, verbatim from that document's table. The caption
     below the table goes with the table: it defines a column that is not there.
 
-    No header row over nothing and no zeroed rows: DESIGN.md's rule is that an
-    empty state *never fabricates*, with kolscan.io's fifty rows of `+0.00 Sol`
-    from a stalled indexer as the measured case.
+    **Why the condition is "nothing closed", not "no rows".** Two normative
+    documents look like they contradict each other here and do not; they answer
+    different questions.
+
+    Spec §2 — *"inactive approved KOLs stay in the list at zero — the roster is
+    part of the point"* — is about a roster that exists. A KOL who is approved
+    and did not trade this window is information about that KOL, and the zeros
+    are legible precisely because other rows carry real figures.
+
+    DESIGN.md — *"no zeroed rows, no ghost placeholders"*, with the measured case
+    that *"kolscan.io's leaderboard was captured twice showing fifty rows of
+    `+0.00 Sol` from a stalled indexer, which reads as fifty traders who all
+    broke exactly even"* — is about a surface with no data at all, where every
+    row is zero and the page as a whole asserts a measurement nobody made.
+
+    So the discriminator is whether **anything closed in this window**. If no
+    entry has a closed episode the table is entirely zeros and carries nothing,
+    and the empty state is the honest render. If even one entry has one, every
+    row goes out including the zeros — that is spec §2's roster, and a zero
+    beside a real figure means something.
+
+    The signal is `winRate === null`, which `serialize.ts` defines as *"`null`
+    when nothing closed in the window"*. It is the same field the row below uses
+    to print `sin cierres`, so the panel-level rule and the cell-level rule read
+    off one value and cannot drift apart. `entries.every` also covers the
+    no-approved-KOL case, where it is vacuously true.
   */
-  if (entries.length === 0) {
+  if (entries.every((entry) => entry.winRate === null)) {
     return (
       <div className="state-empty">
         <p className="state-empty-lead">Todavía no hay operaciones cerradas.</p>
