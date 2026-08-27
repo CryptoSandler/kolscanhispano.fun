@@ -303,11 +303,21 @@ describe(".github/workflows/parse-pending.yml: requeue step", () => {
     expect(stepAt).toBeLessThan(parseAt);
   });
 
-  it("calls requeueNoRate, and nothing stands in for it", () => {
-    // No script of its own -- one statement does not need a cron entry point
-    // -- so what is pinned here is the call itself.
-    expect(step).toContain("requeueNoRate");
-    expect(step).toContain("src/lib/parse-swap.ts");
+  it("runs the script, rather than an inline eval nothing can execute", () => {
+    // It was briefly `npx tsx --eval` with the statement written into the
+    // YAML. That is untestable by construction -- no case in this repo can
+    // run it -- so what is pinned here is that the step goes through a file
+    // scripts/requeue-no-rate.test.ts can exercise in-process and as a real
+    // subprocess.
+    expect(step).toContain("npx tsx scripts/requeue-no-rate.ts");
+    expect(step).not.toContain("--eval");
+  });
+
+  it("passes REQUEUE_LIMIT through as a repository variable, not a secret", () => {
+    // The knob that bounds a by-hand historical drain, and the one that stops
+    // the step dead at 0 without an edit. A `vars.` reference, like
+    // TOKEN_METADATA_LIMIT: it is a tuning number, not a credential.
+    expect(step).toMatch(/REQUEUE_LIMIT:\s*\$\{\{\s*vars\.REQUEUE_LIMIT\s*\}\}/);
   });
 
   it("stops the job when it fails, unlike the fill above it", () => {
