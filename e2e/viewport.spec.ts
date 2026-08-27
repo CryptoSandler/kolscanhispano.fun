@@ -1,53 +1,51 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * DESIGN.md's thesis, as a regression guard.
+ * DESIGN.md's layout rules, as a regression guard.
  *
- * *"The 36px row is the point of this direction: the leaderboard's top ten and
- * the live feed's last eight should share one 900px viewport without
- * scrolling."* That was measured once by hand, and it passed with one pixel to
- * spare — which is exactly the kind of property that stops being true the next
- * time someone adds a line to a panel head. It is worth a browser.
+ * **This file used to assert a thesis that no longer exists.** The previous
+ * direction ("Instrumento") claimed *"the leaderboard's top ten and the live
+ * feed's last eight should share one 900px viewport without scrolling"* and
+ * this spec measured every row at 36px to prove it. Commit `1f83420` replaced
+ * that direction on the owner's decision: rows are now 56px — *"enough for a
+ * 36px circular avatar, the bold name, and the handle or `Wallets ocultas`
+ * beneath it"* — and the document makes no claim at all about vertical fit. A
+ * guard for a retired claim is worse than no guard: it fails for the right
+ * reason exactly once and is then edited to whatever the page happens to do.
  *
- * The viewport is 1280×900 because those are the two numbers DESIGN.md names:
- * 1280px is the layout maximum, 900px is the viewport the thesis claims.
+ * What DESIGN.md still states, and what this file therefore still measures:
+ *
+ * - *"1280px maximum, 16px gutters."* — so nothing may push the page sideways.
+ * - *"**Rows are 56px**"* and *"fixed column widths so a live update never
+ *   reflows a table"*.
+ * - the two sentences that qualify the figures, on the page rather than behind
+ *   a hover.
+ *
+ * The viewport is 1280×900: 1280 is the layout maximum DESIGN.md names, and 900
+ * is a laptop, which is what the rows have to survive being read on.
  */
 test.use({ viewport: { width: 1280, height: 900 } });
 
 test.describe("the home page at 1280×900", () => {
-  test("does not scroll, in either axis", async ({ page }) => {
+  test("never scrolls horizontally, whatever the figures say", async ({ page }) => {
     await page.goto("/");
 
     // The rows have to be there for the assertion to mean anything: a page
     // that rendered nothing would pass every size check on this list.
     await expect(page.locator(".row-leaderboard")).toHaveCount(10);
-    // The feed holds more rows than it shows — it is a fixed-height column
-    // that scrolls internally — so what the budget depends on is the height of
-    // the list, which is eight rows exactly, and not how many rows exist.
     await expect(page.locator(".row-feed").first()).toBeVisible();
-    const feedList = await page.locator(".feed-list").boundingBox();
-    expect(Math.round(feedList!.height)).toBe(8 * 36);
 
     const box = await page.evaluate(() => ({
-      scrollHeight: document.documentElement.scrollHeight,
-      innerHeight: window.innerHeight,
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
     }));
 
-    expect(box.scrollHeight).toBeLessThanOrEqual(box.innerHeight);
     // A table of fixed-width columns is the easiest thing on this page to push
-    // past the viewport, and a horizontal scrollbar would also steal height.
+    // past the viewport.
     expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
   });
 
-  /**
-   * The thesis is about *these two things together*, so the guard says so
-   * rather than trusting the document height to imply it: both panels have to
-   * be wholly inside the viewport, not merely not-scrolling because something
-   * collapsed.
-   */
-  test("shows both sections whole, feed above leaderboard", async ({ page }) => {
+  test("puts the feed above the ranking, and every row at DESIGN.md's 56px", async ({ page }) => {
     await page.goto("/");
 
     // One panel, two hairline-divided sections: the feed, then the ranking.
@@ -58,16 +56,12 @@ test.describe("the home page at 1280×900", () => {
     const board = await sections.nth(1).boundingBox();
     expect(feed).not.toBeNull();
     expect(board).not.toBeNull();
-
-    expect(feed!.y).toBeGreaterThanOrEqual(0);
-    // Feed above ranking, not merely both present.
     expect(feed!.y + feed!.height).toBeLessThanOrEqual(board!.y);
-    expect(board!.y + board!.height).toBeLessThanOrEqual(900);
-    // Every row at DESIGN.md's 36px, which is the only reason the two fit.
+
     const heights = await page.locator(".row-leaderboard").evaluateAll((rows) =>
       rows.map((row) => Math.round(row.getBoundingClientRect().height)),
     );
-    expect(new Set(heights)).toEqual(new Set([36]));
+    expect(new Set(heights)).toEqual(new Set([56]));
   });
 
   /**
@@ -85,5 +79,23 @@ test.describe("the home page at 1280×900", () => {
       page.getByText(/posiciones cerradas ganadoras \/ posiciones cerradas/),
     ).toBeVisible();
     await expect(page.locator(".state-none")).toHaveText("sin cierres");
+  });
+
+  /**
+   * DESIGN.md, Identity and the last Don't: the header carries the wordmark,
+   * the subtitle, both `segmented` controls and the wallet slot — and the
+   * wallet slot is a label, not a control. *"Don't show a control that does not
+   * work"*: `/registro` does not exist yet, so nothing here may be clickable.
+   */
+  test("holds the wallet slot without pretending it is a flow", async ({ page }) => {
+    await page.goto("/");
+
+    await expect(page.getByText("Ranking de traders hispanos")).toBeVisible();
+    const registro = page.locator(".registro");
+    await expect(registro).toHaveText("Registro — próximamente");
+    await expect(registro).toHaveAttribute("aria-disabled", "true");
+    // Not a link, not a button, and not reachable by keyboard.
+    expect(await registro.evaluate((node) => node.tagName)).toBe("SPAN");
+    expect(await registro.evaluate((node) => node.hasAttribute("tabindex"))).toBe(false);
   });
 });
