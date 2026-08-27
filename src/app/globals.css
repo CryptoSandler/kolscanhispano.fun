@@ -213,10 +213,11 @@ a {
   min-width: 0;
 }
 
-/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700, with the
-   accent on the dot." The document fixes the family and the weight; the size
-   is not one of its typography roles, so it is set here at the headline's
-   measure — the wordmark is a heading, not a display figure. */
+/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700, with **`.fun`
+   in the accent** — the dot alone is invisible at 20px, measured rather than
+   assumed." The document fixes the family and the weight; the size is not one
+   of its typography roles, so it is set here at the headline's measure — the
+   wordmark is a heading, not a display figure. */
 .wordmark {
   font-size: 20px;
   font-weight: 700;
@@ -225,9 +226,11 @@ a {
   white-space: nowrap;
 }
 
-/* The dot, and only the dot. The accent lands on the mark — which is not a
-   figure — and nowhere else in this header. */
-.wordmark-dot {
+/* The whole `.fun`, dot included: DESIGN.md's Identity paragraph was corrected
+   in `b0f2a43` after the single accented period turned out to read as almost
+   nothing at 20px. The accent lands on the mark — which is not a figure — and
+   nowhere else in this header. */
+.wordmark-accent {
   color: var(--accent);
 }
 

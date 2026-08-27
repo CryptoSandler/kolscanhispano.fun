@@ -84,9 +84,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <header className="topbar">
             <div className="brand">
               {/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700,
-                  with the accent on the dot." The dot, and nothing else. */}
+                  with **`.fun` in the accent** — the dot alone is invisible at
+                  20px, measured rather than assumed." Corrected in `b0f2a43`;
+                  this used to accent the `.` and nothing else. */}
               <Link className="wordmark" href="/">
-                kolscanhispano<span className="wordmark-dot">.</span>fun
+                kolscanhispano<span className="wordmark-accent">.fun</span>
               </Link>
               <p className="brand-subtitle">Ranking de traders hispanos</p>
             </div>
