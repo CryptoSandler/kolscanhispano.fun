@@ -3648,7 +3648,7 @@ describe("requeueNoRate", () => {
    * constraint, so a failing assertion cannot leave the schema weakened for
    * the rest of the run.
    */
-  async function withoutTheRatePositiveConstraint(fn: () => Promise<void>): Promise<void> {
+  async function withoutUsdPositiveCheck(fn: () => Promise<void>): Promise<void> {
     await query("ALTER TABLE sol_price DROP CONSTRAINT sol_price_usd_positive");
     try {
       await fn();
@@ -3671,7 +3671,7 @@ describe("requeueNoRate", () => {
     expect(await parsePending()).toBe(1);
     expect((await rawTxRow()).parse_error).toBe("unsupported_quote_no_rate");
 
-    await withoutTheRatePositiveConstraint(async () => {
+    await withoutUsdPositiveCheck(async () => {
       await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '0')", [MINUTE]);
 
       for (const cycle of [1, 2, 3]) {
