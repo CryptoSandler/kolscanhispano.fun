@@ -2316,20 +2316,63 @@ describe("swaps quoted in a stablecoin this project cannot price", () => {
     expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_token_token");
   });
 
-  it("does not treat a sole USDT leg as anything but an ordinary token leg", () => {
-    // Deliberately NOT extended to `stable_rotation`: spec §4.3 names the
-    // stablecoin rotation as a kolscan.io behaviour to exclude, and this file
-    // reads that as the USDC case it has always meant. Widening a spec
-    // exclusion is not this task's call, and a SOL <-> USDT swap is a real
-    // SOL-quoted trade whose token happens to be a stablecoin.
+  it("calls a sole USDT leg against SOL the rotation it is, not a position in a dollar", () => {
+    // **This test used to assert `trade`, and that was the defect.** It read:
+    // "Deliberately NOT extended to `stable_rotation` ... a SOL <-> USDT swap
+    // is a real SOL-quoted trade whose token happens to be a stablecoin."
+    // The corpus says otherwise, and so does the rest of this function: the
+    // two-leg branch declines a USDT *quote* by name
+    // (`unsupported_quote_unpriced_stable`) on the grounds that USDT is not a
+    // token the wallet took a position in, and then the sole-leg branch below
+    // it opened exactly that position. Unpriceability is a reason to refuse a
+    // quote; it is not a reason to book a dollar as an asset.
+    //
+    // What the trade would have been is a USDT row in `pnl_position`, a cost
+    // basis in a dollar, and realized PnL out of SOL/USDT drift on a
+    // leaderboard.
+    //
+    // Rebuilt from a real JUPITER payload rather than from the invented
+    // numbers this test used to carry — a wallet rotating 5 SOL into 499.7373
+    // USDT, one USDT balance change and nothing else:
+    //
+    //     entry (WALLET)     native=-4998425829  changes=          fee=5953
+    //     entry (token acct) native=0            changes=USDT:499737300
+    //
+    // Red at 74c233a: `expected 'trade' to be 'stable_rotation'` — it was
+    // written as `buy 499.7373 for 4.998419876 SOL`, `parse_error` NULL.
     const payload = buildObservedSwapPayload({
       wallet: wallet.address,
-      nativeChangeLamports: -1_000_005_000,
-      feeLamports: 5_000,
+      nativeChangeLamports: -4_998_425_829,
+      feeLamports: 5_953,
       isFeePayer: true,
-      legs: [{ mint: USDT_MINT, decimals: 6, rawTokenAmount: "231710000" }],
+      legs: [{ mint: USDT_MINT, decimals: 6, rawTokenAmount: "499737300" }],
     });
-    expect(evaluateSwap(payload, wallet).outcome).toBe("trade");
+    expect(evaluateSwap(payload, wallet).outcome).toBe("stable_rotation");
+    expect(parseSwap(payload, wallet)).toBeNull();
+    // And silent, exactly as the USDC rotation already is: `parseErrorFor`
+    // maps `stable_rotation` to null, pinned once where that mapping lives.
+  });
+
+  it("treats the sole-USDC and sole-USDT rotations identically, in both directions", () => {
+    // The two stablecoins differ only in whether this project can price one
+    // against SOL, and a rotation verdict needs no price at all. Same shape,
+    // same answer, both ways round — so the next reader cannot conclude from
+    // one branch that the mints are handled differently here.
+    const rotation = (rotationMint: string, raw: string) =>
+      evaluateSwap(
+        buildObservedSwapPayload({
+          wallet: wallet.address,
+          nativeChangeLamports: raw.startsWith("-") ? 4_998_967_242 : -4_998_425_829,
+          feeLamports: 5_953,
+          isFeePayer: true,
+          legs: [{ mint: rotationMint, decimals: 6, rawTokenAmount: raw }],
+        }),
+        wallet,
+      ).outcome;
+    for (const rotationMint of [USDC_MINT, USDT_MINT]) {
+      expect(rotation(rotationMint, "499737300")).toBe("stable_rotation"); // SOL -> stable
+      expect(rotation(rotationMint, "-499971935")).toBe("stable_rotation"); // stable -> SOL
+    }
   });
 });
 

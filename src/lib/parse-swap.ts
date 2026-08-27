@@ -208,6 +208,34 @@ export { USDC_MINT, USDT_MINT, WSOL_MINT } from "./mints";
  */
 const UNPRICED_STABLE_MINTS: ReadonlySet<string> = new Set([USDT_MINT]);
 
+/**
+ * Every stablecoin this file recognises — the one it can price against SOL
+ * and the ones it cannot, named once so the two branches that ask about
+ * stablecoins cannot disagree about what one is.
+ *
+ * **Why the pricing distinction does not reach here.** `USDC_MINT` is
+ * separate from `UNPRICED_STABLE_MINTS` for one reason and one only:
+ * `sol_usd` is measured from the SOL/USDC pair, so a USDC amount is a USD
+ * amount by construction and a USDT amount is not. That decides whether a
+ * stablecoin leg can *normalise a quote* into SOL. A sole stablecoin leg
+ * against SOL asks a different question and needs no price at all: spec
+ * §4.3's SOL ↔ stablecoin rotation is not a trade because the wallet took no
+ * position, and a dollar is a dollar whatever this project knows about its
+ * price. So the rotation check below reads this set, while the quote branch
+ * keeps reading the other two.
+ *
+ * The rotation check was `sole.mint === USDC_MINT` alone until the corpus was
+ * replayed. Over 2,397 real mainnet SWAP payloads, a sole USDT leg against
+ * SOL fell straight past it into `settleTrade` and was written as a *trade in
+ * USDT*: measured at `74c233a`, `buy 499.7373 for 4.998419876 SOL` and
+ * `sell 499.971935 for 4.998983999 SOL`, both `parse_error` NULL. That is a
+ * position in a dollar in `pnl_position`, a cost basis in a dollar, and
+ * realized PnL booked out of SOL/USDT drift onto a leaderboard. The file
+ * already knew USDT was a stablecoin twenty lines up; only this branch had
+ * not been told.
+ */
+const STABLE_MINTS: ReadonlySet<string> = new Set([USDC_MINT, ...UNPRICED_STABLE_MINTS]);
+
 /** SOL, and therefore WSOL, has 9 decimals: one raw WSOL unit is one lamport. */
 const LAMPORT_DECIMALS = 9;
 
@@ -363,9 +391,10 @@ export type ParsedTrade = {
  *   transaction simply does not touch it. Not a trade, no error.
  * - `dust_only`: every token leg this wallet moved is below the dust floor
  *   (see `DUST_MAX_TOKENS_NUMERATOR`). Not a trade, no error.
- * - `stable_rotation`: the sole leg is a stablecoin, i.e. a SOL ↔ stablecoin
- *   rotation, which spec §4.3 says is *not a trade and is not indexed*. Not
- *   an error: it is correct behaviour, not a gap.
+ * - `stable_rotation`: the sole leg is a stablecoin — any of them, priceable
+ *   or not (`STABLE_MINTS`) — i.e. a SOL ↔ stablecoin rotation, which spec
+ *   §4.3 says is *not a trade and is not indexed*. Not an error: it is
+ *   correct behaviour, not a gap.
  * - `no_sol_leg`: a real token leg moved, but the wallet's net SOL/WSOL
  *   delta is exactly zero, so spec §4.3's "SOL/WSOL balance moves against a
  *   SPL token balance" is not satisfied — a transfer or an airdrop, not a
@@ -1514,7 +1543,14 @@ export function evaluateSwap(
   // leg beside it is a quote, handled above, not a rotation. Kept ahead of
   // the counterparty check below because a rotation writes no number either
   // way, and this is the older, spec-stated rule.
-  if (sole.mint === USDC_MINT) return { outcome: "stable_rotation" };
+  //
+  // **Every stablecoin, not just the priceable one.** This read
+  // `sole.mint === USDC_MINT` while the branch above already declined a USDT
+  // *quote* by name, so the same function recognised USDT as a stablecoin in
+  // one place and forgot it in the other — and a SOL <-> USDT rotation was
+  // written as a trade in USDT. Unpriceability is a reason to refuse a quote;
+  // it is not a reason to book a position. See `STABLE_MINTS`.
+  if (STABLE_MINTS.has(sole.mint)) return { outcome: "stable_rotation" };
 
   return settleTrade(payload, wallet.address, changes, sole, 0n);
 }
