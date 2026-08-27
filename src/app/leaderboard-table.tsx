@@ -1,5 +1,6 @@
 import type { LeaderboardUnit } from "@/lib/leaderboard";
 import { Avatar } from "./avatar";
+import { KolRow } from "./kol-row";
 import { formatPercent, formatSignedSol, formatSignedUsd } from "@/lib/format";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
 
@@ -7,17 +8,23 @@ import type { PublicLeaderboardEntry } from "@/lib/serialize";
  * DESIGN.md `row-leaderboard`, as a real `<table>`.
  *
  * Fixed column widths through `<colgroup>` and `table-layout: fixed`, because
- * DESIGN.md's rule is that a figure never reflows as data updates: with
- * automatic layout a KOL crossing from `9,99` to `10,01 SOL` widens its column
- * and shifts every row on the page.
+ * DESIGN.md's rule is *"fixed column widths so a live update never reflows a
+ * table"*: with automatic layout a KOL crossing from `9,99` to `10,01 SOL`
+ * widens its column and shifts every row on the page.
  *
- * Ranks 1–3 carry a 2px cyan bar on the left edge. No medal, no trophy, no
- * emoji — DESIGN.md forbids all three by name, and spec §2's "ranks 1–3 get
- * medals" is a description of the reference sites, which the design document
- * deliberately departs from.
+ * A server component. The one piece of client code on this surface is
+ * {@link KolRow}, which wraps each `<tr>` so the row can open the KOL modal;
+ * the cells are passed to it as children and are still rendered here, on the
+ * server.
  *
- * A server component: it holds no state, and everything it renders is already
- * on the server by the time the page is built.
+ * **The row carries two columns DESIGN.md's `row-leaderboard` paragraph does
+ * not enumerate** — `Cerradas` and `% ganadas`. That paragraph is not
+ * exhaustive: the same document's *"Every surface has two states"* table lists
+ * `| row, no closed episodes | win rate | sin cierres |`, which only means
+ * something if the populated row prints a win rate. `docs/references.md` §6
+ * settles the pair the same way, taking kolscan.io's record column —
+ * *"**kolscan.io.** We compute win rate, and `sin cierres` covers its
+ * absence"*.
  */
 export function LeaderboardTable({
   entries,
@@ -27,11 +34,9 @@ export function LeaderboardTable({
   entries: PublicLeaderboardEntry[];
   unit: LeaderboardUnit;
   /**
-   * The home page's top-ten summary drops the header row. Not for taste: the
-   * whole argument for this design is that ten leaderboard rows and eight feed
-   * rows fit one 900px viewport, and the header row is 25px of that budget
-   * with a caption beneath the table already naming both count columns. The
-   * full page keeps it.
+   * The home page's top-ten summary drops the header row: `/leaderboard` is
+   * where a reader goes to compare columns, and the caption beneath the table
+   * already names both count columns.
    */
   showHeader?: boolean;
 }) {
@@ -50,11 +55,11 @@ export function LeaderboardTable({
     and did not trade this window is information about that KOL, and the zeros
     are legible precisely because other rows carry real figures.
 
-    DESIGN.md — *"no zeroed rows, no ghost placeholders"*, with the measured case
-    that *"kolscan.io's leaderboard was captured twice showing fifty rows of
-    `+0.00 Sol` from a stalled indexer, which reads as fifty traders who all
-    broke exactly even"* — is about a surface with no data at all, where every
-    row is zero and the page as a whole asserts a measurement nobody made.
+    DESIGN.md — *"above all **no zeroed rows**: kolscan.io was captured twice
+    showing fifty rows of `+0.00 Sol` from a stalled indexer, which reads as
+    fifty traders who all broke exactly even"* — is about a surface with no data
+    at all, where every row is zero and the page as a whole asserts a
+    measurement nobody made.
 
     So the discriminator is whether **anything closed in this window**. If no
     entry has a closed episode the table is entirely zeros and carries nothing,
@@ -131,7 +136,6 @@ export function LeaderboardTable({
           ? "% ganadas = posiciones cerradas ganadoras / posiciones cerradas"
           : "Cerradas = ganadas / perdidas · % ganadas = posiciones cerradas ganadoras / posiciones cerradas"}
       </p>
-
     </>
   );
 }
@@ -140,11 +144,7 @@ export function LeaderboardTable({
  * The USD caveat. One sentence, `es-ES`, and it goes on **every** surface that
  * renders a USD figure — which is every leaderboard, because the table always
  * prints a USD amount: as the ranked column when `unit === "usd"`, and as the
- * secondary column in parentheses when it does not. It used to appear only on
- * `/leaderboard?unit=usd`, which left the secondary column unlabelled there
- * and the home panel's USD column unlabelled entirely. An unlabelled figure
- * that is *systematically overstated* is the exact case the sentence exists
- * for.
+ * one in parentheses when it does not.
  *
  * Why it is overstated: spec §4.1 fixes the USD value of a trade at its block
  * time. A trade whose block was not covered by a `sol_price` row contributes
@@ -152,14 +152,25 @@ export function LeaderboardTable({
  * still gives up its share of the cost. SOL has no equivalent failure.
  *
  * It is rendered by the callers rather than by this component, and both put it
- * on the qualifier line **above** the table, beside the window and `día UTC`:
- * those lines already exist, so the sentence costs no height, and the home
- * page's whole argument is what fits in 900px. On the page, in DESIGN.md's
- * `label` token, never behind a hover — a caveat you have to point at is a
- * figure published without one.
+ * on the qualifier line **above** the table, beside the window and `día UTC`.
+ * On the page, in DESIGN.md's `label` token, never behind a hover — a caveat
+ * you have to point at is a figure published without one.
  */
 export const USD_CAVEAT =
   "USD derivado del precio de SOL en el momento de cada operación; puede estar incompleto.";
+
+/**
+ * DESIGN.md: *"the medal glyph in the matching `podium-N`"*, and, in Colors,
+ * *"The podium is three tints, not three metals."* A tinted glyph is therefore
+ * required and an emoji medal is ruled out twice over — it carries its own
+ * colour, so it can be neither tinted nor kept out of the green/red the same
+ * document reserves for money. `★` takes `currentColor`.
+ *
+ * It is outside the latin subset `next/font` loads, so the browser resolves it
+ * from a system face. That is glyph fallback, not a second typeface: no rule in
+ * this codebase declares a font for it.
+ */
+const MEDAL = "★";
 
 function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: LeaderboardUnit }) {
   const primaryText = unit === "sol" ? entry.realizedSol : entry.realizedUsd;
@@ -171,36 +182,61 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
   // DESIGN.md: green and red mean direction of money and nothing else. A
   // window in which nothing was realized is neither, so it stays ink.
   const direction = signum(primaryText);
+  const podium = entry.rank <= 3 ? (entry.rank as 1 | 2 | 3) : null;
 
   return (
-    <tr className={entry.rank <= 3 ? "row-leaderboard is-podium" : "row-leaderboard"}>
-      <td className="num rank">{entry.rank}</td>
-      <td className="kol">
+    <KolRow name={entry.kol.name} slug={entry.kol.slug} podium={podium}>
+      <td>
         {/* The flex row lives in a span, not on the `td`: `display: flex` on a
             table cell takes it out of table layout, and the fixed column
             widths go with it. */}
-        <span className="kol-cell">
-          <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} />
-          {/* Plain text, not a link: `/kol/<slug>` is a later task, and a
-              name that navigates to a 404 is worse than a name that does not
-              navigate. The feed row reads the same way for the same reason. */}
-          <span className="kol-name">{entry.kol.name}</span>
+        <span className="rank-cell">
+          {/* DESIGN.md: "rank as zero-padded `numeric`". It does not fix the
+              width; three digits is what `docs/references.md` §6 captured
+              (`001.`) on the site the owner chose the podium from, and it is
+              the width at which a roster that grows past 99 does not change
+              shape. */}
+          <span className="num rank-num">{String(entry.rank).padStart(3, "0")}</span>
+          {/* Rendered on every row so the podium glyph does not shift the rank
+              column by its own width on ranks 1-3. */}
+          <span className={podium === null ? "medal" : `medal medal-${podium}`} aria-hidden="true">
+            {podium === null ? "" : MEDAL}
+          </span>
+        </span>
+      </td>
+      <td>
+        <span className="identity">
+          <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={36} />
+          <span className="identity-lines">
+            <span className="name">{entry.kol.name}</span>
+            {/*
+              DESIGN.md: "beneath it the `@handle` linked to X **or** `Wallets
+              ocultas` in `hidden`". This is the slot both references fill with
+              a truncated address, and what decides between the two here is what
+              decides it there: whether the KOL publishes its wallets.
+
+              Spec §7: "Spanish label wherever a wallet would otherwise appear:
+              **Wallets ocultas**". The X handle is the KOL's public persona
+              (spec §6), not a wallet — publishing it touches nothing the hidden
+              -wallet promise covers — but it is the identifier that stands in
+              this slot, so a KOL who withholds its wallets says so here
+              instead.
+            */}
+            {entry.kol.hideWallets ? (
+              <span className="hidden-wallets">Wallets ocultas</span>
+            ) : (
+              <a
+                className="handle"
+                href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label={`Perfil de ${entry.kol.name} en X`}
+              >
+                @{entry.kol.xHandle}
+              </a>
+            )}
+          </span>
           {entry.kol.cabalTag && <span className="chip-cabal">{entry.kol.cabalTag}</span>}
-          {/* The X handle is the KOL's public persona (spec §6), not a wallet:
-              nothing about publishing it touches the hidden-wallet promise. */}
-          <a
-            className="x-link"
-            href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
-            target="_blank"
-            rel="noreferrer noopener"
-            aria-label={`Perfil de ${entry.kol.name} en X`}
-          >
-            {/* A plain capital X, not U+1D54F. The double-struck glyph spec §2
-                sketches the row with is absent from Inter and falls back to
-                whatever the system has, which rendered a hairline mark half the
-                size of everything beside it. */}
-            X
-          </a>
         </span>
       </td>
       <td className="num closed">
@@ -220,9 +256,13 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
           formatPercent(entry.winRate)
         )}
       </td>
+      {/* DESIGN.md: "right-aligned, the SOL figure in `numeric-lg` coloured by
+          sign, and the USD total in `numeric` `ink-muted` in parentheses." The
+          unit toggle swaps which of the two is the ranked figure; the shape —
+          large and signed, then small and parenthesised — does not move. */}
       <td className={`num-lg pnl ${direction}`}>{primary}</td>
       <td className="num secondary">({secondary})</td>
-    </tr>
+    </KolRow>
   );
 }
 

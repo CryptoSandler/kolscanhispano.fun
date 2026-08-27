@@ -36,6 +36,7 @@ function entry(rank: number, overrides: Partial<PublicLeaderboardEntry> = {}): P
       xHandle: `kol${rank}`,
       cabalTag: null,
       avatarUrl: `/api/avatar/${crypto.randomUUID()}`,
+      hideWallets: false,
     },
     realizedSol: "0",
     realizedUsd: "0",
