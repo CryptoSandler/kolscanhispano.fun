@@ -80,7 +80,12 @@ export type BackfillResult = {
   stillUnpriced: number;
   /** Distinct `(kol_id, mint)` positions marked dirty — one per position, not per trade. */
   positionsMarked: number;
-  /** Whether the opening `refreshSolPrice` actually wrote a row. */
+  /**
+   * Whether the opening `refreshSolPrice` obtained a usable rate. Not
+   * "wrote a row": its insert is `ON CONFLICT DO NOTHING`, so a minute some
+   * other writer already recorded keeps the rate it has (see
+   * `refreshSolPrice` for why the first observation of a minute wins).
+   */
   rateRefreshed: boolean;
 };
 
@@ -107,7 +112,9 @@ export async function backfillPrices(
   // for this minute and the *next* run's trades resolve against something at
   // most one cycle old. `refreshSolPrice` writes nothing at all when the
   // request fails, so a DexScreener outage costs this run the newest minute
-  // and leaves every earlier rate resolvable.
+  // and leaves every earlier rate resolvable. It also leaves a minute that
+  // already has a row exactly as it found it -- that row may already be a
+  // trade's cost basis.
   //
   // `now` is injectable only so a test can pin which minute gets written;
   // production never passes it.
@@ -215,7 +222,7 @@ export async function main(): Promise<number> {
       `backfill-prices: examined ${result.examined} unpriced trade(s), filled ${result.filled}, ` +
         `${result.stillUnpriced} still have no rate for their minute, ` +
         `marked ${result.positionsMarked} position(s) dirty ` +
-        `(SOL/USD refresh ${result.rateRefreshed ? "wrote a row" : "wrote nothing"})`,
+        `(SOL/USD refresh ${result.rateRefreshed ? "got a rate" : "got nothing"})`,
     );
     return 0;
   } catch (error) {

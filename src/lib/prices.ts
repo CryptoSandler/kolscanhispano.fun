@@ -220,8 +220,26 @@ export function valueTrade(
 }
 
 /**
- * Fetches the current SOL/USDC pair from DexScreener and upserts today's
- * minute in `sol_price`. Returns whether a rate was actually written.
+ * Fetches the current SOL/USDC pair from DexScreener and records it against
+ * the current minute in `sol_price`. Returns whether DexScreener yielded a
+ * usable rate at all — not whether a row was written, which is a different
+ * question since the insert became `DO NOTHING`.
+ *
+ * **The first observation of a minute wins, and this function stopped being
+ * the exception to that.** The insert was `ON CONFLICT (minute) DO UPDATE SET
+ * usd = EXCLUDED.usd` while {@link fillSolPriceMinutes} — the other writer of
+ * this table — has always been `DO NOTHING`. An overwritten minute is not a
+ * corrected number: `parse-swap.ts` normalises a stablecoin-quoted swap at
+ * `solUsdForMinute`, so a rate this table already handed out may already be
+ * some trade's `sol_amount`, `price_sol`, `cost_sol` and leaderboard rank.
+ * Rewriting it leaves that trade following from a rate the table no longer
+ * claims for its block, with nothing recorded anywhere.
+ *
+ * That was latent while the only way to read a minute twice was two
+ * `backfill-prices` runs landing inside one minute. `requeueNoRate` (see
+ * `parse-swap.ts`) makes a mid-flight re-read of a minute an ordinary event,
+ * so it is now routine. Both writers of `sol_price` therefore agree: the
+ * first observation of a minute is the one that stands.
  *
  * On any failure — the request itself, a non-OK response, unparseable JSON,
  * no solana-chain SOL/USDC pair in the result, or a `priceUsd` this file
@@ -251,7 +269,7 @@ export async function refreshSolPrice(
   const minute = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
   await query(
     `INSERT INTO sol_price (minute, usd) VALUES ($1, $2)
-       ON CONFLICT (minute) DO UPDATE SET usd = EXCLUDED.usd`,
+       ON CONFLICT (minute) DO NOTHING`,
     [minute, usd],
   );
   return true;
@@ -381,13 +399,22 @@ export async function fillSolPriceMinutes(
   for (let minute = startMs; minute <= endMs; minute += MINUTE_MS) {
     const close = closes.get(minute);
     if (close === undefined) continue;
-    let usd: string;
+    let value: bigint;
     try {
-      usd = formatDecimal(parseDecimal(close));
+      value = parseDecimal(close);
     } catch {
       console.warn("fillSolPriceMinutes: a candle's close was not a decimal; that minute is left unfilled");
       continue;
     }
+    // A close of zero or less is not a rate — `evaluateSwap` refuses one, and
+    // since migration 009 so does the column. Left absent for the same reason
+    // an unreadable close is: this is a single statement for the whole range,
+    // so one rejected row would take every good minute with it.
+    if (value <= 0n) {
+      console.warn("fillSolPriceMinutes: a candle's close was not a positive rate; that minute is left unfilled");
+      continue;
+    }
+    const usd = formatDecimal(value);
     minutes.push(new Date(minute));
     rates.push(usd);
   }

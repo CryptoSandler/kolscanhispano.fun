@@ -424,7 +424,7 @@ describe("solUsdForMinute", () => {
 });
 
 describe("refreshSolPrice", () => {
-  it("upserts the current minute's rate from the SOL/USDC pair", async () => {
+  it("records the current minute's rate from the SOL/USDC pair", async () => {
     const now = new Date("2026-01-01T00:00:30.000Z");
     const { fn } = fetchQueue(
       jsonResponse(buildDexResponse([buildDexPair({ mint: WSOL_MINT, quoteMint: USDC_MINT, priceUsd: "150.25", liquidityUsd: 1_000_000 })])),
@@ -435,6 +435,32 @@ describe("refreshSolPrice", () => {
     expect(wrote).toBe(true);
     const usd = await solUsdAt(now);
     expect(usd).toBe(15025n * 10n ** 16n); // 150.25 scaled
+  });
+
+  it("leaves a minute it already recorded alone, whatever the second call is told", async () => {
+    // The first observation of a minute wins, in both writers of this table.
+    // A rate already in `sol_price` may already be a trade's cost basis --
+    // `parse-swap.ts` normalises a stablecoin-quoted swap at
+    // `solUsdForMinute` -- so overwriting it leaves that trade's `sol_amount`
+    // no longer following from the rate the table claims for its block.
+    // Values, not counts: a `DO UPDATE` passes a row count and fails here.
+    const now = new Date("2026-01-01T00:00:30.000Z");
+    const first = fetchQueue(
+      jsonResponse(buildDexResponse([buildDexPair({ mint: WSOL_MINT, quoteMint: USDC_MINT, priceUsd: "150.25", liquidityUsd: 1_000_000 })])),
+    );
+    await refreshSolPrice(first.fn, now);
+
+    const second = fetchQueue(
+      jsonResponse(buildDexResponse([buildDexPair({ mint: WSOL_MINT, quoteMint: USDC_MINT, priceUsd: "900.5", liquidityUsd: 1_000_000 })])),
+    );
+    const wrote = await refreshSolPrice(second.fn, new Date("2026-01-01T00:00:45.000Z"));
+
+    // It still reports the rate it obtained -- the request succeeded. What it
+    // does not do is move the row.
+    expect(wrote).toBe(true);
+    const rows = await query<{ usd: string }>("SELECT usd FROM sol_price");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].usd).toBe("150.25");
   });
 
   it("prefers the SOL/USDC pair even when a higher-liquidity SOL/other pair exists", async () => {
@@ -745,6 +771,28 @@ describe("fillSolPriceMinutes", () => {
     try {
       const candles = buildKlineSeries(from, 10, (i) => String(200 + i));
       (candles[3] as unknown[])[4] = "not-a-number";
+      const { fn } = klineFetch({ SOLUSDC: candles, SOLUSDT: [] });
+
+      const result = await fillSolPriceMinutes(from, to, fn);
+
+      expect(result.filled).toBe(9);
+      expect(result.missing).toBe(1);
+      expect(await solUsdForMinute(new Date("2026-08-25T12:03:00.000Z"))).toBeNull();
+      expect(await solUsdForMinute(new Date("2026-08-25T12:04:00.000Z"))).toBe(204n * 10n ** 18n);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("skips a candle whose close is zero instead of failing the whole range", async () => {
+    // A zero is a readable decimal and not a rate. `evaluateSwap` refuses one
+    // and migration 009's CHECK refuses one, and since this fill is a single
+    // statement for the whole range, a rejected row would take all nine good
+    // minutes down with it.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const candles = buildKlineSeries(from, 10, (i) => String(200 + i));
+      (candles[3] as unknown[])[4] = "0";
       const { fn } = klineFetch({ SOLUSDC: candles, SOLUSDT: [] });
 
       const result = await fillSolPriceMinutes(from, to, fn);
