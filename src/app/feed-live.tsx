@@ -110,10 +110,14 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
     return () => clearInterval(timer);
   }, []);
 
-  // Set after mount, never during render, so the server and the first client
-  // render agree and React does not report a hydration mismatch.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // Written to the DOM after mount rather than held in state: the attribute is
+  // for an outside observer, nothing in this component reads it, and a state
+  // update here would be a render nobody needs (and `react-hooks` is right to
+  // refuse `setState` in an effect for it).
+  const hydrationMark = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    hydrationMark.current?.setAttribute("data-hydrated", "");
+  }, []);
 
   return (
     /*
@@ -132,7 +136,7 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
         attribute exists on the client render and not on the server one, which
         is the cheapest true statement that React actually ran here.
       */
-      {...(mounted ? { "data-hydrated": "" } : {})}
+      ref={hydrationMark}
     >
       <div className="panel-head">
         <span className="live">

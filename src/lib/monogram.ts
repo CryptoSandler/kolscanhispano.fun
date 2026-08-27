@@ -25,8 +25,8 @@
  * They are what `.avatar` already paints in `globals.css`, so a row whose image
  * is still loading and a row whose image is the monogram look the same.
  */
-export const MONOGRAM_BACKGROUND = "#1c1f22";
-export const MONOGRAM_INK = "#767d84";
+export const MONOGRAM_BACKGROUND = "#23272c";
+export const MONOGRAM_INK = "#7e878f";
 
 /**
  * The one character the avatar shows. `?` when the name is empty or is nothing
