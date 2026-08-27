@@ -121,6 +121,50 @@ Four things are never simplified away, at any level: input validation at trust b
 security, error handling that prevents data loss, and accessibility basics. Laziness governs
 how much code gets written. It never governs what that code is allowed to skip.
 
+## An adversarial round before building a model change
+
+Any change to the model — what a number means, what a rule decides — and any
+large product decision gets one round **without code** first. The round asks for
+three things explicitly, and a round that produced only agreement did not happen:
+
+1. **The strongest case against.** Not caveats: the argument that the change is
+   wrong, made as well as its opponent would make it.
+2. **The collision with the real code.** What survives contact, what gets thrown
+   away, and what the repository already knows that the discussion does not. A
+   design argued only against itself has never met the thing it will run in.
+3. **An honest recommendation, with standing permission to say the idea is
+   wrong.** A reviewer who cannot return "don't build this" is not reviewing.
+
+Nothing is built until that round closes. Every rule in this file below was
+cheaper to learn this way than the way it was actually learned.
+
+## Every verdict cites the written norm
+
+A gate, a critique, or a design decision is made against the normative document
+**open** — `DESIGN.md`, `SECURITY.md`, `docs/spec-v1.md` — never against a memory
+of what it says. A verdict that cannot quote the line it rests on is not a verdict
+yet: read the document first, then rule.
+
+This is the same rule as verifying an environment fact, applied to the documents
+instead of the machine. Both failures look identical from outside — a confident
+claim with nothing under it.
+
+## Decisions with a door
+
+When the owner is not convinced of a one-way decision — a written promise, a
+prohibition in copy, a guarantee — it does not get decided for them.
+
+- Find the **neutral wording**: the phrasing that neither promises nor forbids.
+- Build the **mechanism that fits both futures**, so whichever way the decision
+  later goes, the code does not have to be unwound.
+- Record the policy as an **open decision belonging to the owner**, in the report
+  and in the document it would live in.
+
+Anything irreversible is written **once, and only when explicitly asked for**. A
+promise published early cannot be withdrawn quietly; a mechanism built for one
+future has to be rebuilt for the other. The door stays open until its owner
+chooses to close it.
+
 ## Verify an environment fact before writing it into a brief
 
 A claim about this environment — a key being present or absent, a service being reachable, a
