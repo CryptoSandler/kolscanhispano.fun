@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { query } from "./db";
+import { buildKlineSeries } from "./fixtures/binance";
 import { buildDexPair, buildDexResponse, buildHeliusAssetResponse } from "./fixtures/dexscreener";
 import { inventAddress } from "./ids";
 import { USDC_MINT, WSOL_MINT } from "./parse-swap";
 import {
+  BINANCE_KLINE_PAGE_SIZE,
   DEXSCREENER_BATCH_LIMIT,
   deriveTokenUpdate,
+  fillSolPriceMinutes,
   parseHeliusAsset,
   refreshSolPrice,
   solUsdAt,
@@ -520,5 +523,258 @@ describe("valueTrade", () => {
     // not carrying a float's tail.
     const third = ONE / 3n;
     expect(valueTrade(third, null, ONE).usdAmount).toBe("0.333333333333333333");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fillSolPriceMinutes — one row per minute, from Binance klines
+// ---------------------------------------------------------------------------
+
+/**
+ * A `fetch` that serves `candles` per symbol, honouring `startTime`,
+ * `endTime` and `limit` the way the real endpoint does, and recording every
+ * URL it was given. No test in this file reaches `api.binance.com`: the
+ * harness's network guard throws on the unmocked `fetch`, and the one case
+ * that omits an injected one asserts exactly that path.
+ */
+function klineFetch(bySymbol: Record<string, unknown[][]>): { fn: typeof fetch; calls: string[] } {
+  const calls: string[] = [];
+  const fn = (async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    calls.push(String(input));
+    const symbol = url.searchParams.get("symbol") ?? "";
+    const start = Number(url.searchParams.get("startTime"));
+    const end = Number(url.searchParams.get("endTime"));
+    const limit = Number(url.searchParams.get("limit") ?? 500);
+    const page = (bySymbol[symbol] ?? [])
+      .filter((candle) => Number(candle[0]) >= start && Number(candle[0]) <= end)
+      .slice(0, limit);
+    return new Response(JSON.stringify(page), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  return { fn, calls };
+}
+
+async function solPriceRows(): Promise<{ minute: string; usd: string }[]> {
+  const rows = await query<{ minute: Date; usd: string }>("SELECT minute, usd FROM sol_price ORDER BY minute");
+  return rows.map((row) => ({ minute: row.minute.toISOString(), usd: row.usd }));
+}
+
+describe("fillSolPriceMinutes", () => {
+  const from = new Date("2026-08-25T12:00:00.000Z");
+  const to = new Date("2026-08-25T12:09:00.000Z");
+
+  it("writes one row per minute in the range, at each candle's own close", async () => {
+    // Distinct closes per minute, so a writer off by one is visible as a wrong
+    // *value* and not only as a wrong count. That off-by-one is the exact
+    // failure `sol_price` cannot tolerate: `solUsdForMinute` reads the block's
+    // own minute, and the number it returns becomes a cost basis.
+    const { fn } = klineFetch({ SOLUSDC: buildKlineSeries(from, 10, (i) => String(200 + i)) });
+
+    const result = await fillSolPriceMinutes(from, to, fn);
+
+    expect(result.minutesRequested).toBe(10);
+    expect(result.filled).toBe(10);
+    expect(result.alreadyPresent).toBe(0);
+    expect(result.missing).toBe(0);
+    expect(result.fromFallback).toBe(0);
+    expect(await solPriceRows()).toEqual([
+      { minute: "2026-08-25T12:00:00.000Z", usd: "200" },
+      { minute: "2026-08-25T12:01:00.000Z", usd: "201" },
+      { minute: "2026-08-25T12:02:00.000Z", usd: "202" },
+      { minute: "2026-08-25T12:03:00.000Z", usd: "203" },
+      { minute: "2026-08-25T12:04:00.000Z", usd: "204" },
+      { minute: "2026-08-25T12:05:00.000Z", usd: "205" },
+      { minute: "2026-08-25T12:06:00.000Z", usd: "206" },
+      { minute: "2026-08-25T12:07:00.000Z", usd: "207" },
+      { minute: "2026-08-25T12:08:00.000Z", usd: "208" },
+      { minute: "2026-08-25T12:09:00.000Z", usd: "209" },
+    ]);
+    // Every filled minute now answers `solUsdForMinute`, which is the whole
+    // point: the `=` lookup, not the `<=` one.
+    expect(await solUsdForMinute(new Date("2026-08-25T12:03:30.000Z"))).toBe(203n * 10n ** 18n);
+  });
+
+  it("is idempotent: a second run over a filled range changes not one value", async () => {
+    const candles = buildKlineSeries(from, 10, (i) => String(200 + i));
+    const first = klineFetch({ SOLUSDC: candles });
+    await fillSolPriceMinutes(from, to, first.fn);
+    const before = await solPriceRows();
+
+    // The second run is served *different* closes for the same minutes. Row
+    // counts alone would pass against a `DO UPDATE`; the values are what
+    // proves nothing was overwritten.
+    const second = klineFetch({ SOLUSDC: buildKlineSeries(from, 10, (i) => String(900 + i)) });
+    const result = await fillSolPriceMinutes(from, to, second.fn);
+
+    expect(result.filled).toBe(0);
+    expect(result.alreadyPresent).toBe(10);
+    expect(await solPriceRows()).toEqual(before);
+  });
+
+  it("leaves a minute DexScreener already recorded exactly as it was", async () => {
+    // A row `refreshSolPrice` wrote is a real observation, and by the time
+    // this runs it may already be the cost basis of a trade. Overwriting it
+    // would leave that trade's `sol_amount` no longer following from the rate
+    // the table claims for its block.
+    const taken = new Date("2026-08-25T12:04:00.000Z");
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '111.5')", [taken]);
+    const { fn } = klineFetch({ SOLUSDC: buildKlineSeries(from, 10, (i) => String(200 + i)) });
+
+    const result = await fillSolPriceMinutes(from, to, fn);
+
+    expect(result.filled).toBe(9);
+    expect(result.alreadyPresent).toBe(1);
+    const rows = await solPriceRows();
+    expect(rows.find((row) => row.minute === taken.toISOString())?.usd).toBe("111.5");
+  });
+
+  it("falls back to the USDT book for a minute USDC has no candle for, and says it did", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const usdc = buildKlineSeries(from, 10, (i) => String(200 + i)).filter(
+        (candle) => Number(candle[0]) !== new Date("2026-08-25T12:06:00.000Z").getTime(),
+      );
+      const { fn, calls } = klineFetch({
+        SOLUSDC: usdc,
+        SOLUSDT: buildKlineSeries(from, 10, () => "777.25"),
+      });
+
+      const result = await fillSolPriceMinutes(from, to, fn);
+
+      expect(result.filled).toBe(10);
+      expect(result.missing).toBe(0);
+      expect(result.fromFallback).toBe(1);
+      // Only the gap comes from the fallback; the nine USDC minutes keep their
+      // own closes, so a fallback that quietly took over the whole range fails.
+      const rows = await solPriceRows();
+      expect(rows.find((row) => row.minute === "2026-08-25T12:06:00.000Z")?.usd).toBe("777.25");
+      expect(rows.find((row) => row.minute === "2026-08-25T12:05:00.000Z")?.usd).toBe("205");
+      expect(calls.some((url) => url.includes("symbol=SOLUSDT"))).toBe(true);
+      expect(warn.mock.calls.flat().join("\n")).toContain("SOLUSDT");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not ask the USDT book at all when USDC covered every minute", async () => {
+    const { fn, calls } = klineFetch({ SOLUSDC: buildKlineSeries(from, 10, (i) => String(200 + i)) });
+    await fillSolPriceMinutes(from, to, fn);
+    expect(calls.every((url) => url.includes("symbol=SOLUSDC"))).toBe(true);
+  });
+
+  it("counts a minute neither book has as missing rather than inventing one", async () => {
+    const gap = new Date("2026-08-25T12:06:00.000Z").getTime();
+    const drop = (candles: unknown[][]) => candles.filter((candle) => Number(candle[0]) !== gap);
+    const { fn } = klineFetch({
+      SOLUSDC: drop(buildKlineSeries(from, 10, (i) => String(200 + i))),
+      SOLUSDT: drop(buildKlineSeries(from, 10, () => "777.25")),
+    });
+
+    const result = await fillSolPriceMinutes(from, to, fn);
+
+    expect(result.filled).toBe(9);
+    expect(result.missing).toBe(1);
+    expect(await solUsdForMinute(new Date(gap))).toBeNull();
+  });
+
+  it("pages at the endpoint's 1000-candle limit rather than discovering it", async () => {
+    // 1,500 minutes: one full page, then the remainder. Asking for `limit`
+    // explicitly is what keeps this at two requests instead of three — the
+    // endpoint's own default is 500.
+    const wide = new Date("2026-08-20T00:00:00.000Z");
+    const { fn, calls } = klineFetch({ SOLUSDC: buildKlineSeries(wide, 1500, () => "150") });
+
+    const result = await fillSolPriceMinutes(wide, new Date(wide.getTime() + 1499 * 60_000), fn);
+
+    expect(result.minutesRequested).toBe(1500);
+    expect(result.filled).toBe(1500);
+    expect(result.truncated).toBe(false);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain(`limit=${BINANCE_KLINE_PAGE_SIZE}`);
+    expect(calls[1]).toContain("limit=500");
+  });
+
+  it("stops at its request cap and reports the run as truncated", async () => {
+    const wide = new Date("2026-08-20T00:00:00.000Z");
+    const { fn, calls } = klineFetch({ SOLUSDC: buildKlineSeries(wide, 1500, () => "150") });
+
+    const result = await fillSolPriceMinutes(wide, new Date(wide.getTime() + 1499 * 60_000), fn, 1);
+
+    expect(calls).toHaveLength(1);
+    expect(result.filled).toBe(BINANCE_KLINE_PAGE_SIZE);
+    expect(result.truncated).toBe(true);
+    // And it does not then spend the remaining budget asking USDT about the
+    // 500 minutes it simply never reached.
+    expect(calls.some((url) => url.includes("SOLUSDT"))).toBe(false);
+  });
+
+  it("writes nothing and does not throw when the request fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const offline = (async () => {
+        throw new TypeError("network down");
+      }) as typeof fetch;
+
+      const result = await fillSolPriceMinutes(from, to, offline);
+
+      expect(result.filled).toBe(0);
+      expect(result.truncated).toBe(true);
+      expect(await solPriceRows()).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("writes nothing on a non-OK response, and never the response body", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const rejecting = (async () => new Response("Too many requests, secret-looking text", { status: 429 })) as typeof fetch;
+
+      const result = await fillSolPriceMinutes(from, to, rejecting);
+
+      expect(result.filled).toBe(0);
+      expect(result.truncated).toBe(true);
+      expect(warn.mock.calls.flat().join("\n")).not.toContain("secret-looking text");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("skips a candle whose close is not a decimal instead of failing the whole range", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const candles = buildKlineSeries(from, 10, (i) => String(200 + i));
+      (candles[3] as unknown[])[4] = "not-a-number";
+      const { fn } = klineFetch({ SOLUSDC: candles, SOLUSDT: [] });
+
+      const result = await fillSolPriceMinutes(from, to, fn);
+
+      expect(result.filled).toBe(9);
+      expect(result.missing).toBe(1);
+      expect(await solUsdForMinute(new Date("2026-08-25T12:03:00.000Z"))).toBeNull();
+      expect(await solUsdForMinute(new Date("2026-08-25T12:04:00.000Z"))).toBe(204n * 10n ** 18n);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("ignores a candle outside the requested range", async () => {
+    // Binance is asked with both `startTime` and `endTime`, but a response
+    // that overshoots must not widen what gets written: the range is the
+    // caller's decision, not the upstream's.
+    const { fn } = klineFetch({ SOLUSDC: buildKlineSeries(from, 30, (i) => String(200 + i)) });
+
+    const result = await fillSolPriceMinutes(from, new Date("2026-08-25T12:04:00.000Z"), fn);
+
+    expect(result.filled).toBe(5);
+    expect(await solUsdForMinute(new Date("2026-08-25T12:05:00.000Z"))).toBeNull();
+  });
+
+  it("does nothing for an inverted range", async () => {
+    const { fn, calls } = klineFetch({ SOLUSDC: buildKlineSeries(from, 10) });
+    const result = await fillSolPriceMinutes(to, from, fn);
+    expect(result.minutesRequested).toBe(0);
+    expect(calls).toHaveLength(0);
+    expect(await solPriceRows()).toEqual([]);
   });
 });

@@ -47,6 +47,35 @@ export const DEXSCREENER_BATCH_LIMIT = 30;
 
 const DEXSCREENER_TOKENS_URL = "https://api.dexscreener.com/latest/dex/tokens/";
 
+const BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines";
+
+/**
+ * Binance's own cap on candles per `/api/v3/klines` call — ≈16.7 hours of
+ * one-minute candles. Verified 2026-08-27: `&limit=1000` returned exactly
+ * 1000. Asking for more is not an error, it is silently this.
+ */
+export const BINANCE_KLINE_PAGE_SIZE = 1000;
+
+/** The book whose denomination `sol_price` already holds. See {@link fillSolPriceMinutes}. */
+const SOL_PRICE_SYMBOL = "SOLUSDC";
+/** Only for a minute {@link SOL_PRICE_SYMBOL} has no candle for — more liquid, different denomination. */
+const SOL_PRICE_FALLBACK_SYMBOL = "SOLUSDT";
+
+/**
+ * Default ceiling on Binance requests per {@link fillSolPriceMinutes} call:
+ * four pages, ≈2.8 days of minutes, one weight-2 request each. A bound is not
+ * optional here — an unbounded loop over a mistyped `--from` would page
+ * through years of candles a minute at a time.
+ */
+export const DEFAULT_KLINE_REQUEST_CAP = 4;
+
+const MINUTE_MS = 60_000;
+
+/** The start of the minute containing `at`, matching what `solUsdForMinute` truncates to. */
+function minuteFloor(at: Date): number {
+  return Math.floor(at.getTime() / MINUTE_MS) * MINUTE_MS;
+}
+
 /** Spec §4.6's default floor, in USD. Overridable so a launch value can be tuned without a deploy. */
 const DEFAULT_PRICE_MIN_LIQUIDITY_USD = "1000";
 
@@ -115,17 +144,29 @@ export async function solUsdAt(minute: Date): Promise<bigint | null> {
  * rate stops being a display figure and becomes `sol_amount`, `price_sol`,
  * the position's `cost_sol` and the leaderboard's ranking. `solUsdAt`'s `<=`
  * bound would answer that question with whatever row happened to be most
- * recent — in this deployment, up to five minutes old, since nothing writes
- * `sol_price` once a minute yet (`scripts/backfill-prices.ts` writes one row
- * per run and the parse cron runs every five minutes). SOL's move over those
- * minutes is unknown and unmeasured, so a basis built on it is a number no
- * source ever reported for that block.
+ * recent, which is a rate SOL may have moved arbitrarily far from — unknown
+ * and unmeasured — so a basis built on it is a number no source ever reported
+ * for that block.
  *
- * A miss is therefore a refusal, not a fallback: `parse-swap.ts` declines the
+ * **What actually fills the minutes this asks for.** For a long time nothing
+ * did: `refreshSolPrice` wrote one row, at the current minute, once per run,
+ * and the parse cron runs every five minutes, so four minutes in five had no
+ * row *by construction* and every stablecoin-quoted swap landing in one of
+ * them was refused. {@link fillSolPriceMinutes} is what changed that — one
+ * row per minute from Binance's klines, run *before* the parse (see
+ * `scripts/backfill-sol-price.ts`). `refreshSolPrice` is still there and
+ * still needed: it is a second, independent source, and it is the only writer
+ * of the current minute, which the Binance fill deliberately leaves alone.
+ *
+ * A miss is still a refusal, not a fallback: `parse-swap.ts` declines the
  * swap and records it requeueably, so a `sol_price` row arriving later — a
- * historical import, a per-minute cron — can still fill it in. That is the
- * §4.6 distinction ("we don't know right now" leaves it alone) applied to a
- * rate rather than a token price.
+ * historical import, a wider `--from` on the fill — can still make it
+ * parseable. That is the §4.6 distinction ("we don't know right now" leaves
+ * it alone) applied to a rate rather than a token price. Note that
+ * "requeueable" is a property of the *row*, not a scheduled behaviour:
+ * `parsePending` filters on `parse_error IS NULL`, and nothing in this
+ * repository clears that column, so a swap refused once stays refused until
+ * something does.
  */
 export async function solUsdForMinute(minute: Date): Promise<bigint | null> {
   const [row] = await query<{ usd: string }>(
@@ -214,6 +255,263 @@ export async function refreshSolPrice(
     [minute, usd],
   );
   return true;
+}
+
+/**
+ * Fills `sol_price` with **one row per minute** across `[from, to]`, from
+ * Binance's public 1-minute klines. Returns what it did, minute by minute
+ * (see {@link SolPriceFill}).
+ *
+ * **Why this exists beside {@link refreshSolPrice}, and why it is not it.**
+ * `refreshSolPrice` writes one row — the current minute — per run, and the
+ * parse cron runs every five minutes, so four minutes in five have no row *by
+ * construction*. {@link solUsdForMinute} answers with the row for the block's
+ * own minute or nothing, because that rate becomes a cost basis rather than a
+ * display figure, so every stablecoin-quoted swap landing in one of those four
+ * minutes is refused `unsupported_quote_no_rate`. That is not a coverage gap
+ * to be chased: it is one writer producing one row where the consumer needs
+ * sixty. This function is the sixty.
+ *
+ * **Binance, and why the Helius credit budget in this file's header does not
+ * apply.** Helius sells historical *transactions*, not a price feed; there is
+ * no SOL/USD history to buy there at any credit price. DexScreener — the
+ * source `refreshSolPrice` uses — serves only the *current* price, which is
+ * exactly why it can write only the current minute. Binance's
+ * `/api/v3/klines` is public, keyless, free, and returns 1,000 one-minute
+ * candles per request (≈16.7 hours). Verified 2026-08-27:
+ *
+ *     $ curl ".../klines?symbol=SOLUSDC&interval=1m&limit=1000"
+ *       -> 1000 candles, 2026-08-26T08:55Z .. 2026-08-27T01:34Z,
+ *          0 missing minutes, x-mbx-used-weight-1m: 2
+ *     $ ...&startTime=<730 days ago>&limit=1000  -> 1000 candles, 0 missing
+ *
+ * **`SOLUSDC`, not `SOLUSDT`.** It is the denomination `sol_price` already
+ * holds — `refreshSolPrice` filters DexScreener to the SOL/**USDC** pair
+ * specifically — so nothing about the column's meaning changes silently. USDT
+ * is the more liquid book (367 trades against 37 in the minute checked), so
+ * it is the fallback for a minute `SOLUSDC` has no candle for; a gap must
+ * never become a silently missing minute. Falling back is counted in
+ * {@link SolPriceFill.fromFallback} and warned about, so a run that needed it
+ * says so.
+ *
+ * // ponytail: the fallback is recorded as a count and a log line, not a
+ * // `source` column on `sol_price`. Add the column (and a migration) if it
+ * // ever matters *per row* which book a rate came from — as it would the day
+ * // a third source is added, or the day a USDT-derived rate has to be
+ * // re-derived. Across 3,000 minutes sampled from three different eras the
+ * // fallback never fired once, so a migration for it today would be a column
+ * // that is always the same value.
+ *
+ * **The candle's close, and not its average.** `refreshSolPrice` records a
+ * spot price at an instant; a minute's close is the same kind of quantity at
+ * the same kind of instant, so the two writers put the same measure in the
+ * same column. An OHLC average or a VWAP would be a different measure quietly
+ * sharing it, and `solUsdForMinute`'s caller cannot tell them apart.
+ *
+ * **`ON CONFLICT DO NOTHING`, never `DO UPDATE`.** A minute already in the
+ * table is a real observation — `refreshSolPrice` wrote it from DexScreener,
+ * or an earlier run of this wrote it from Binance — and, once
+ * `parse-swap.ts` has normalised a swap against it, it is also the cost basis
+ * of a trade that already exists. Overwriting it would leave a `trade` row
+ * whose `sol_amount` no longer follows from the rate the table claims for its
+ * block. Re-running over a filled range therefore changes not one row's
+ * value, and errors on nothing.
+ *
+ * A failure — the request, a non-OK response, unparseable JSON, a close this
+ * file cannot read as a decimal — writes fewer rows, never a wrong one, and
+ * never throws: the caller is a cron step that must not stand between a
+ * webhook and a trade.
+ */
+export async function fillSolPriceMinutes(
+  from: Date,
+  to: Date,
+  fetchImpl: typeof fetch = fetch,
+  maxRequests: number = DEFAULT_KLINE_REQUEST_CAP,
+): Promise<SolPriceFill> {
+  const startMs = minuteFloor(from);
+  const endMs = minuteFloor(to);
+  if (endMs < startMs) {
+    return { minutesRequested: 0, filled: 0, alreadyPresent: 0, fromFallback: 0, missing: 0, requests: 0, truncated: false };
+  }
+  const minutesRequested = (endMs - startMs) / MINUTE_MS + 1;
+
+  const primary = await fetchKlineCloses(SOL_PRICE_SYMBOL, startMs, endMs, fetchImpl, maxRequests);
+  const closes = primary.closes;
+  let requests = primary.requests;
+  let fromFallback = 0;
+
+  // Only chase gaps when the primary pass actually covered the whole range.
+  // A run that stopped at its request cap (or at a failed request) has a tail
+  // of minutes it never asked about, and asking USDT for those would spend
+  // the remaining budget on the wrong end of the problem and report a
+  // fallback that was really a truncation.
+  if (!primary.truncated && requests < maxRequests) {
+    const gaps: number[] = [];
+    for (let minute = startMs; minute <= endMs; minute += MINUTE_MS) {
+      if (!closes.has(minute)) gaps.push(minute);
+    }
+    if (gaps.length > 0) {
+      const fallback = await fetchKlineCloses(
+        SOL_PRICE_FALLBACK_SYMBOL,
+        gaps[0],
+        gaps[gaps.length - 1],
+        fetchImpl,
+        maxRequests - requests,
+      );
+      requests += fallback.requests;
+      for (const minute of gaps) {
+        const close = fallback.closes.get(minute);
+        if (close === undefined) continue;
+        closes.set(minute, close);
+        fromFallback++;
+      }
+      if (fromFallback > 0) {
+        console.warn(
+          `fillSolPriceMinutes: ${fromFallback} minute(s) had no ${SOL_PRICE_SYMBOL} candle and were filled from ${SOL_PRICE_FALLBACK_SYMBOL}`,
+        );
+      }
+    }
+  }
+
+  // Normalise before writing, so a close this file cannot read as a decimal
+  // is a minute left absent rather than a `numeric` the database rejects for
+  // the whole batch.
+  const minutes: Date[] = [];
+  const rates: string[] = [];
+  for (let minute = startMs; minute <= endMs; minute += MINUTE_MS) {
+    const close = closes.get(minute);
+    if (close === undefined) continue;
+    let usd: string;
+    try {
+      usd = formatDecimal(parseDecimal(close));
+    } catch {
+      console.warn("fillSolPriceMinutes: a candle's close was not a decimal; that minute is left unfilled");
+      continue;
+    }
+    minutes.push(new Date(minute));
+    rates.push(usd);
+  }
+
+  let filled = 0;
+  if (minutes.length > 0) {
+    // One statement for the whole range. `RETURNING minute` is what
+    // distinguishes a minute this run wrote from one that was already there —
+    // the count the workflow log prints, and the assertion idempotency is
+    // checked with.
+    const inserted = await query<{ minute: Date }>(
+      `INSERT INTO sol_price (minute, usd)
+       SELECT * FROM unnest($1::timestamptz[], $2::numeric[])
+       ON CONFLICT (minute) DO NOTHING
+       RETURNING minute`,
+      [minutes, rates],
+    );
+    filled = inserted.length;
+  }
+
+  return {
+    minutesRequested,
+    filled,
+    alreadyPresent: minutes.length - filled,
+    fromFallback,
+    missing: minutesRequested - minutes.length,
+    requests,
+    truncated: primary.truncated,
+  };
+}
+
+/** What one {@link fillSolPriceMinutes} run did. Every field counts *minutes*, not rows returned by Binance. */
+export type SolPriceFill = {
+  /** Minutes in `[from, to]` inclusive. */
+  minutesRequested: number;
+  /** Minutes this run wrote a row for. */
+  filled: number;
+  /** Minutes a candle covered that already had a row — left exactly as they were. */
+  alreadyPresent: number;
+  /** Of the minutes covered, how many came from `SOLUSDT` because `SOLUSDC` had no candle. */
+  fromFallback: number;
+  /** Minutes no candle covered at all, from either book. */
+  missing: number;
+  /** Binance requests this run actually made. */
+  requests: number;
+  /** Whether the run stopped early — at its request cap, or at a failed request. */
+  truncated: boolean;
+};
+
+/**
+ * Pages `symbol`'s 1-minute closes over `[startMs, endMs]`, keyed by the
+ * candle's own open minute.
+ *
+ * Stops and reports `truncated` rather than throwing on any failure, and
+ * rather than looping past `maxRequests`: the caller is a cron step, and a
+ * partially filled range is a strictly better outcome than a step that fails
+ * and stops the parse behind it.
+ */
+async function fetchKlineCloses(
+  symbol: string,
+  startMs: number,
+  endMs: number,
+  fetchImpl: typeof fetch,
+  maxRequests: number,
+): Promise<{ closes: Map<number, string>; requests: number; truncated: boolean }> {
+  const closes = new Map<number, string>();
+  let cursor = startMs;
+  let requests = 0;
+
+  while (cursor <= endMs) {
+    if (requests >= maxRequests) return { closes, requests, truncated: true };
+
+    // `limit` is asked for explicitly rather than left to Binance's default of
+    // 500: the page size is 1,000 and discovering that at runtime would mean
+    // twice the requests for every range wider than 500 minutes.
+    const wanted = Math.min(BINANCE_KLINE_PAGE_SIZE, Math.floor((endMs - cursor) / MINUTE_MS) + 1);
+    const url =
+      `${BINANCE_KLINES_URL}?symbol=${symbol}&interval=1m` +
+      `&startTime=${cursor}&endTime=${endMs}&limit=${wanted}`;
+
+    // Counted *before* the call, not after it: a request that throws is still
+    // a request that was made, and a count that only tracks the successful
+    // ones would report a run as cheaper than it was — which is the number the
+    // request cap and the workflow log both exist to make visible.
+    requests++;
+    let body: unknown;
+    try {
+      const response = await fetchImpl(url);
+      if (!response.ok) {
+        // Never the body: an error page is a third party's text.
+        console.warn(`fillSolPriceMinutes: Binance answered ${response.status} for ${symbol}`);
+        return { closes, requests, truncated: true };
+      }
+      body = await response.json();
+    } catch {
+      console.warn(`fillSolPriceMinutes: the Binance request for ${symbol} failed`);
+      return { closes, requests, truncated: true };
+    }
+
+    if (!Array.isArray(body)) {
+      console.warn(`fillSolPriceMinutes: Binance's ${symbol} response was not an array of candles`);
+      return { closes, requests, truncated: true };
+    }
+    if (body.length === 0) break; // No candles left in the range: not a failure.
+
+    // Advance past the newest candle this page actually produced, never by a
+    // fixed page width: a page that came back short (or partly unreadable)
+    // must not cause the minutes after it to be skipped.
+    let newest = cursor;
+    for (const candle of body) {
+      if (!Array.isArray(candle)) continue;
+      const openTime = candle[0];
+      const close = candle[4];
+      if (typeof openTime !== "number" || !Number.isFinite(openTime)) continue;
+      if (typeof close !== "string") continue;
+      const minute = minuteFloor(new Date(openTime));
+      if (minute < startMs || minute > endMs) continue;
+      closes.set(minute, close);
+      if (minute > newest) newest = minute;
+    }
+    cursor = newest + MINUTE_MS;
+  }
+
+  return { closes, requests, truncated: false };
 }
 
 /**
