@@ -3685,7 +3685,15 @@ describe("requeueNoRate", () => {
         expect(await query("SELECT id FROM trade"), `cycle ${cycle}: trades`).toHaveLength(0);
       }
     });
-  });
+    // Explicit budget, not the file's 30s default: this case makes roughly
+    // fifteen sequential Neon round trips inside one `it`, where most cases
+    // here make one or two. It measured 5.2s idle, and failed once in a full
+    // suite run that was itself 8% slower than its neighbours -- a failure I
+    // could not reproduce in the two runs after it, and whose message was
+    // lost. Raising the budget removes the likeliest cause without hiding any
+    // other: an assertion failure still fails, at the same line, with its
+    // message intact.
+  }, 60_000);
 
   it("leaves the trade the row already wrote byte-identical, and writes the one it owed", async () => {
     // Two tracked wallets in one transaction: A's SOL-quoted buy was written
