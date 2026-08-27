@@ -431,8 +431,18 @@ describe("GET /api/leaderboard", () => {
    * Spec §7: no address and no signature ever leaves the server, and the
    * leaderboard has neither on its row — so the thing worth pinning is the
    * *shape*, which is what stops a query that starts selecting more, or a
-   * serializer that starts spreading its input, from shipping `hide_wallets`
-   * and a wallet id to a browser.
+   * serializer that starts spreading its input, from shipping a wallet id to a
+   * browser.
+   *
+   * **`hideWallets` is on the public shape on purpose**, and was added to it
+   * when the leaderboard row grew a two-line identity: DESIGN.md
+   * `row-leaderboard` puts, beneath the name, *"the `@handle` linked to X
+   * **or** `Wallets ocultas` in `hidden`"*, and nothing else on the row can
+   * decide between the two — `kol.x_handle` is `NOT NULL`, so its presence
+   * cannot. `PublicTrade.kol` has carried the same field for the same label
+   * since the feed row was built. It is a fact about what we publish, not a
+   * wallet: spec §7's promise is about the address and the signature, and both
+   * are still asserted absent below by their column names.
    */
   it("forwards exactly the public shape", async () => {
     const kol = await insertKol({ slug: "uno", cabalTag: "EJE" });
@@ -448,7 +458,7 @@ describe("GET /api/leaderboard", () => {
       ["kol", "losses", "rank", "realizedSol", "realizedUsd", "winRate", "wins"].sort(),
     );
     expect(Object.keys(entry.kol).sort()).toEqual(
-      ["avatarUrl", "cabalTag", "name", "slug", "xHandle"].sort(),
+      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "xHandle"].sort(),
     );
     for (const column of ["kol_id", "display_name", "cabal_tag", "realized_sol", "realized_usd",
       "hide_wallets", "wallet_id", "address", "x_handle"]) {

@@ -56,7 +56,7 @@ export const LEADERBOARD_TOP = 10;
  * further down.
  */
 const SELECT = `
-  SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, c.tag AS cabal_tag,
+  SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag AS cabal_tag,
          COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(d.realized_usd), 0) AS realized_usd,
          COALESCE(SUM(d.wins), 0)::int    AS wins,
@@ -66,7 +66,7 @@ const SELECT = `
     LEFT JOIN pnl_daily d
            ON d.kol_id = k.id AND d.day >= $1::date AND d.day < $2::date
    WHERE k.status = 'approved'
-   GROUP BY k.id, k.slug, k.display_name, k.x_handle, c.tag
+   GROUP BY k.id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag
    ORDER BY`;
 
 /**

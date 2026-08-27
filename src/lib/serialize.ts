@@ -104,6 +104,7 @@ export type LeaderboardRow = {
   display_name: string;
   x_handle: string;
   cabal_tag: string | null;
+  hide_wallets: boolean;
   realized_sol: string;
   realized_usd: string;
   wins: number;
@@ -121,6 +122,19 @@ export type PublicLeaderboardEntry = {
     xHandle: string;
     cabalTag: string | null;
     avatarUrl: string;
+    /**
+     * Whether this KOL's wallets are published — the same fact
+     * {@link PublicTrade} already carries, now on the ranked row too.
+     *
+     * DESIGN.md `row-leaderboard` puts, under the name, *"the `@handle`
+     * linked to X **or** `Wallets ocultas` in `hidden`"*. That slot is the one
+     * both reference sites fill with a truncated address, so what decides
+     * between the two is the same thing that decides it there: whether the KOL
+     * publishes its wallets. Nothing else on the row can answer that question
+     * — `x_handle` is `NOT NULL`, so its presence cannot — which is why the
+     * flag is serialized rather than inferred.
+     */
+    hideWallets: boolean;
   };
   realizedSol: string;
   realizedUsd: string;
@@ -167,6 +181,7 @@ export function serializeLeaderboardEntry(row: LeaderboardRow, rank: number): Pu
       xHandle: row.x_handle,
       cabalTag: row.cabal_tag,
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
+      hideWallets: row.hide_wallets,
     },
     realizedSol: row.realized_sol,
     realizedUsd: row.realized_usd,
