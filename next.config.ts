@@ -107,6 +107,28 @@ const nextConfig: NextConfig = {
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
+      // The avatar is the one API response that must be cached, and the blanket
+      // `no-store` above is wrong for it: it is a public, non-personal image,
+      // byte-identical for every viewer, keyed by `kol_id` and nothing else.
+      // Left uncacheable, a ten-row leaderboard costs ten requests to us and ten
+      // to unavatar on every paint.
+      //
+      // This entry comes *after* the `/(admin|api)` block on purpose. Next's
+      // rule is that when two entries match the same path and set the same
+      // header key, the later one wins -- so this replaces `Cache-Control` and
+      // leaves `X-Robots-Tag: noindex, nofollow` from that block untouched,
+      // which is what keeps avatars out of image search.
+      //
+      // The lifetimes themselves are set per response by the route, because a
+      // real image and the monogram an outage produces are worth remembering
+      // for very different lengths of time. This value is the floor a stale or
+      // misconfigured deploy falls back to.
+      {
+        source: "/api/avatar/:kolId",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=60, s-maxage=300" },
+        ],
+      },
       {
         source: "/admin",
         headers: [

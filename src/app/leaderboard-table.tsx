@@ -1,4 +1,5 @@
 import type { LeaderboardUnit } from "@/lib/leaderboard";
+import { Avatar } from "./avatar";
 import { formatPercent, formatSignedSol, formatSignedUsd } from "@/lib/format";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
 
@@ -179,7 +180,7 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
             table cell takes it out of table layout, and the fixed column
             widths go with it. */}
         <span className="kol-cell">
-          <Avatar name={entry.kol.name} />
+          <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} />
           {/* Plain text, not a link: `/kol/<slug>` is a later task, and a
               name that navigates to a 404 is worse than a name that does not
               navigate. The feed row reads the same way for the same reason. */}
@@ -234,17 +235,4 @@ function signum(text: string): "gain" | "loss" | "" {
   if (/^-0*(\.0*)?$/.test(text)) return "";
   if (text.startsWith("-")) return "loss";
   return /^0*(\.0*)?$/.test(text) ? "" : "gain";
-}
-
-/**
- * Spec §7: the avatar is keyed by `kol_id`, never by a wallet. The monogram is
- * the same 22px circle the image will occupy once `/api/avatar/<kol_id>`
- * exists, so nothing moves when it arrives — the feed row does the same.
- */
-function Avatar({ name }: { name: string }) {
-  return (
-    <span className="avatar" aria-hidden="true">
-      {name.trim().slice(0, 1).toUpperCase() || "?"}
-    </span>
-  );
 }

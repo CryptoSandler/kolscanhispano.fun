@@ -32,8 +32,16 @@
  *   — mints, amounts, timestamps, prices — stays in cleartext: it is not
  *   personal data"*, and §8.5 has DexScreener queried by mint.
  *
- * So the assertion is set equality against the base58 this fixture publishes
- * **deliberately**, enumerated here. Anything else — an address above all, but
+ * **So the assertion is set equality, not absence — do not "simplify" it back
+ * to `expect(findDisallowedBase58(html)).toEqual([])`.** That form can only be
+ * made to pass by weakening the fixture until nothing base58 is published at
+ * all, and a fixture that publishes nothing proves nothing: it asserts the
+ * absence of a string that was never supplied, which is the exact failure
+ * `serialize.ts` carries an optional `address` field to avoid.
+ *
+ * Set equality against the base58 this fixture publishes **deliberately**,
+ * enumerated here, is strictly stronger: it fails on an address, and it also
+ * fails on base58 nobody predicted. Anything else — an address above all, but
  * equally a hidden KOL's signature, or a mint that starts being rendered into
  * the page — fails, and adding it to the expected set is a visible, reviewable
  * act. That is the same shape as `ALLOWED_BASE58` itself.
@@ -296,6 +304,18 @@ describe("avatars are keyed by kol_id and served from this origin", () => {
     expect(html).not.toMatch(/<img[^>]+src="https?:/);
     for (const host of ["pbs.twimg.com", "unavatar.io", "cdn.kolscan.io"]) {
       expect(html).not.toContain(host);
+    }
+  });
+
+  it("points every rendered `<img>` at this origin, keyed by the kol id", () => {
+    // The props are one thing; what the browser is told to request is another,
+    // and it is the `<img src>` that a third party would actually see. Every
+    // row carries one now, so this is the assertion that would fail the day
+    // someone keyed the path by a handle or by an address.
+    const sources = [...html.matchAll(/<img[^>]+src="([^"]*)"/g)].map(([, src]) => src);
+    expect(sources.length, "an avatar on every row").toBeGreaterThanOrEqual(6);
+    for (const src of sources) {
+      expect(src).toMatch(/^\/api\/avatar\/[0-9a-f-]{36}$/);
     }
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Avatar } from "./avatar";
 import { formatRelative, formatSol, formatTokenAmount, formatUsdPrice } from "@/lib/format";
 import { FEED_PAGE_SIZE, type PublicTrade } from "@/lib/serialize";
 
@@ -181,7 +182,7 @@ export function FeedRow({
 
   return (
     <li className={`row-feed${isNew ? " is-new" : ""}`}>
-      <Avatar name={trade.kol.name} />
+      <Avatar name={trade.kol.name} src={trade.kol.avatarUrl} />
 
       <span className="row-sentence">
         <span className="kol-name">{trade.kol.name}</span>{" "}
@@ -236,26 +237,5 @@ export function FeedRow({
         </a>
       )}
     </li>
-  );
-}
-
-/**
- * Spec §7: the avatar is keyed by `kol_id`. kolscan.io serves
- * `cdn.kolscan.io/profiles/<wallet>.png` and leaks the address in an image URL
- * that no API response ever mentions; `PublicTrade.avatarUrl` cannot, because
- * the id is all it has.
- *
- * What renders today is the monogram, not that URL. The proxy behind
- * `/api/avatar/<kol_id>` is a later task, and an `<img>` pointed at it now
- * would fire fifty 404s per page load and show fifty broken-image glyphs: an
- * `onError` fallback does not help, because the request fails before React has
- * hydrated and attached the handler. The monogram is the same 22px circle the
- * image will occupy, so nothing moves when the image arrives.
- */
-function Avatar({ name }: { name: string }) {
-  return (
-    <span className="avatar" aria-hidden="true">
-      {name.trim().slice(0, 1).toUpperCase() || "?"}
-    </span>
   );
 }
