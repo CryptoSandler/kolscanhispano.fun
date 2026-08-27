@@ -19,8 +19,9 @@ import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { PublicLeaderboardEntry } from "@/lib/serialize";
+import type { PublicKolDetail, PublicLeaderboardEntry } from "@/lib/serialize";
 import { FeedLive } from "./feed-live";
+import { KolDetail } from "./kol-detail";
 import { LeaderboardTable } from "./leaderboard-table";
 
 /**
@@ -72,6 +73,42 @@ function emptyStates(): Record<string, [string, string]> {
     out[surface] = [lead, note];
   }
   return out;
+}
+
+/**
+ * The third row of the same table, whose empty cell is one sentence rather than
+ * a pair: `| `modal-kol` chart | line with points | `Sin operaciones cerradas
+ * en este período.` |`.
+ *
+ * It is parsed separately because its surface cell is not a single backticked
+ * word and {@link emptyStates}'s pattern deliberately does not reach it. Same
+ * rule, though: the sentence comes out of the document, never out of this file.
+ */
+function chartEmptyState(): string {
+  const match = DESIGN.match(/^\| `modal-kol` chart \| [^|]+ \| `([^`]+)` \|$/m);
+  if (!match) throw new Error("DESIGN.md no longer gives modal-kol's chart an empty state");
+  return match[1];
+}
+
+/** A KOL's period with nothing in it — the state the chart has to say in words. */
+function quietDetail(): PublicKolDetail {
+  return {
+    window: "diario",
+    kol: {
+      slug: "kol-uno",
+      name: "KOL Uno",
+      xHandle: "ejemplo_uno",
+      cabalTag: null,
+      avatarUrl: `/api/avatar/${crypto.randomUUID()}`,
+      hideWallets: false,
+    },
+    realizedSol: "0",
+    realizedUsd: "0",
+    volumeSol: "0",
+    tradeCount: 0,
+    series: [],
+    trades: [],
+  };
 }
 
 describe("DESIGN.md's empty states are what the surfaces render", () => {
@@ -166,5 +203,29 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
 
   it("still says so in words when there is no roster at all", () => {
     expect(leaderboardHtml([])).toContain(lead);
+  });
+});
+
+/**
+ * `modal-kol`'s chart, which is the third surface the two-states table names.
+ *
+ * A period with no closed episodes has no `pnl_daily` row at all — see
+ * `kol.ts` — so the series arrives empty, and the failure to guard against is
+ * *"an axis with nothing on it"*: an empty chart frame reads as a measurement
+ * that came out flat.
+ */
+describe("modal-kol's chart says its empty period in words, not as an empty axis", () => {
+  it("renders DESIGN.md's sentence, and no chart", () => {
+    const lead = chartEmptyState();
+    const html = renderToStaticMarkup(createElement(KolDetail, { detail: quietDetail() }));
+
+    expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
+    expect(html).not.toContain("<svg class=\"chart");
+    expect(html).not.toContain("chart-axis");
+    // No zeroed point standing in for a day that did not happen: DESIGN.md,
+    // "Absence is rendered as absence, never as a zero."
+    expect(html).not.toContain("<circle");
+    expect(html).not.toContain("skeleton");
+    for (const apology of ["Ups", "Lo sentimos"]) expect(html).not.toContain(apology);
   });
 });

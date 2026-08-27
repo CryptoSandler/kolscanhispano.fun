@@ -45,16 +45,32 @@
  * equally a hidden KOL's signature, or a mint that starts being rendered into
  * the page — fails, and adding it to the expected set is a visible, reviewable
  * act. That is the same shape as `ALLOWED_BASE58` itself.
+ *
+ * ## The modal is scanned in its **open** state
+ *
+ * `modal-kol` is a new surface and a new payload, and it is the one surface a
+ * page render does not reach: the dialog ships closed and empty, and fills from
+ * `/api/kol/<slug>` only after a click. So the scan below covers the union of
+ * the two pages' HTML **and** `KolDetail` rendered with what `readKolDetail`
+ * actually returns for both KOLs — the open modal, with a fixture that really
+ * stored an address and really stored signatures.
+ *
+ * Both KOLs are rendered, because the two halves of the promise are different
+ * code paths: the public one publishes a signature and must, the hidden one
+ * must not and reads `PRIVADO` instead.
  */
+import { createElement } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { aadFor, blindIndex, encrypt } from "@/lib/crypto";
 import { query } from "@/lib/db";
 import { readFeedPage } from "@/lib/feed";
 import { findDisallowedBase58 } from "@/lib/hygiene";
 import { inventAddress, inventSignature } from "@/lib/ids";
+import { readKolDetail } from "@/lib/kol";
 import { readLeaderboard } from "@/lib/leaderboard";
 import { addWallet } from "@/lib/wallets";
 import { utcDayString } from "@/lib/windows";
+import { KolDetail } from "./kol-detail";
 import HomePage from "./page";
 import LeaderboardPage from "./leaderboard/page";
 
@@ -158,11 +174,22 @@ let hiddenSignatures: string[];
 
 /** The union of both pages' emitted HTML. */
 let html: string;
+/** `modal-kol`, open, for both KOLs — the surface a page render never reaches. */
+let modalHtml: string;
+/**
+ * Everything a browser is handed, HTML and payloads alike: the two pages, and
+ * the modal in its open state. Every scan below runs over this rather than over
+ * the pages alone.
+ */
+let surfaces: string;
 /**
  * The props Next serialises into the flight payload beside that HTML, so the
  * browser can hydrate `FeedLive` and keep polling. `renderToStaticMarkup` does
  * not emit them — it is not the RSC renderer — so they are scanned from the
  * same reads the pages make, which is the payload's content exactly.
+ *
+ * `/api/kol/<slug>`'s body is in here too: it is a payload a browser receives,
+ * and it is the only place the modal's figures ever exist.
  */
 let props: string;
 
@@ -222,7 +249,18 @@ beforeAll(async () => {
     readFeedPage(),
     readLeaderboard({ window: "diario", unit: "sol" }),
   ]);
-  props = JSON.stringify({ trades: feed.trades, entries: leaderboard.entries });
+  // Both modals, opened. `readKolDetail` is what the route calls, so this is
+  // the payload the browser receives and `KolDetail` is what it renders from it.
+  const details = await Promise.all([
+    readKolDetail({ slug: "kol-abierto", window: "diario" }),
+    readKolDetail({ slug: "kol-oculto", window: "diario" }),
+  ]);
+  modalHtml = details
+    .map((detail) => renderToStaticMarkup(createElement(KolDetail, { detail: detail! })))
+    .join("");
+
+  props = JSON.stringify({ trades: feed.trades, entries: leaderboard.entries, details });
+  surfaces = html + modalHtml;
 });
 
 describe("the fixture is populated, so the assertions below are about a real page", () => {
@@ -255,12 +293,24 @@ describe("the fixture is populated, so the assertions below are about a real pag
       expect(html, `an X link for ${slug}`).toContain(`https://x.com/${slug}`);
     }
   });
+
+  it("opens both modals with real figures in them", () => {
+    // Without this the scans below could pass over an empty string, which is
+    // the failure `serialize.ts` carries an optional `address` field to avoid:
+    // asserting the absence of something that was never rendered.
+    expect(modalHtml).toContain("KOL-ABIERTO");
+    expect(modalHtml).toContain("KOL-OCULTO");
+    expect(modalHtml).toContain("+18,42 SOL");
+    expect(modalHtml).toContain("−4,10 SOL");
+    // The hidden KOL's trade rows say so where a signature link would be.
+    expect(modalHtml).toContain("PRIVADO");
+  });
 });
 
 describe("no wallet address reaches the rendered page", () => {
   it("prints none of the addresses the fixture stored", () => {
     for (const address of addresses) {
-      expect(html, "a wallet address in the emitted HTML").not.toContain(address);
+      expect(surfaces, "a wallet address in the emitted HTML").not.toContain(address);
       expect(props, "a wallet address in the hydration props").not.toContain(address);
       // Truncated counts as published: `docs/references.md` §5 records both
       // reference sites printing a `HFx9E1`-style chip on every public row.
@@ -274,10 +324,10 @@ describe("no wallet address reaches the rendered page", () => {
       // ~2·10⁻³, which over a suite run every day is a flake, not a guard. Six
       // is also what kolscan.io actually prints (`HFx9E1`).
       for (const length of [6, 8]) {
-        expect(html, `the first ${length} characters of an address`).not.toContain(
+        expect(surfaces, `the first ${length} characters of an address`).not.toContain(
           address.slice(0, length),
         );
-        expect(html, `the last ${length} characters of an address`).not.toContain(
+        expect(surfaces, `the last ${length} characters of an address`).not.toContain(
           address.slice(-length),
         );
       }
@@ -288,17 +338,20 @@ describe("no wallet address reaches the rendered page", () => {
     // The whole invariant, as one set comparison over the emitted HTML: text,
     // attributes, `href`s, `img src`s and `data-` attributes alike, because the
     // scan does not know what an attribute is.
-    expect(findDisallowedBase58(html).sort()).toEqual([...publicSignatures].sort());
+    expect(findDisallowedBase58(surfaces).sort()).toEqual([...publicSignatures].sort());
   });
 
   it("keeps a hidden KOL's signature off the page as well as its address", () => {
     for (const signature of hiddenSignatures) {
-      expect(html).not.toContain(signature);
+      expect(surfaces).not.toContain(signature);
       expect(props).not.toContain(signature);
     }
     // ...and says so in words, which is the only thing that stands where an
-    // address would (spec §7).
+    // address would (spec §7) — `Wallets ocultas` in the identity block on both
+    // surfaces, and `PRIVADO` where the modal's trade row would carry a link.
     expect(html).toContain("Wallets ocultas");
+    expect(modalHtml).toContain("Wallets ocultas");
+    expect(modalHtml).toContain("PRIVADO");
   });
 
   it("carries nothing base58 into the hydration props but mints and public signatures", () => {
@@ -321,9 +374,9 @@ describe("avatars are keyed by kol_id and served from this origin", () => {
     // `docs/references.md` §5, collision 2: kolscanbrasil.io hotlinks
     // `pbs.twimg.com`, so X sees every visitor's request. Spec §6.3 proxies
     // through `/api/avatar/<kol_id>` instead.
-    expect(html).not.toMatch(/<img[^>]+src="https?:/);
+    expect(surfaces).not.toMatch(/<img[^>]+src="https?:/);
     for (const host of ["pbs.twimg.com", "unavatar.io", "cdn.kolscan.io"]) {
-      expect(html).not.toContain(host);
+      expect(surfaces).not.toContain(host);
     }
   });
 
@@ -332,8 +385,10 @@ describe("avatars are keyed by kol_id and served from this origin", () => {
     // and it is the `<img src>` that a third party would actually see. Every
     // row carries one now, so this is the assertion that would fail the day
     // someone keyed the path by a handle or by an address.
-    const sources = [...html.matchAll(/<img[^>]+src="([^"]*)"/g)].map(([, src]) => src);
-    expect(sources.length, "an avatar on every row").toBeGreaterThanOrEqual(6);
+    const sources = [...surfaces.matchAll(/<img[^>]+src="([^"]*)"/g)].map(([, src]) => src);
+    // Every feed row and every ranked row, plus the 64px avatar in each modal's
+    // header.
+    expect(sources.length, "an avatar on every row").toBeGreaterThanOrEqual(8);
     for (const src of sources) {
       expect(src).toMatch(/^\/api\/avatar\/[0-9a-f-]{36}$/);
     }
