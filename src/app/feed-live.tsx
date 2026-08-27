@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "./avatar";
+import { cabalChipClass } from "@/lib/cabal";
 import { formatRelative, formatSol, formatTokenAmount, formatUsdPrice } from "@/lib/format";
 import { FEED_PAGE_SIZE, type PublicTrade } from "@/lib/serialize";
 
@@ -194,7 +195,7 @@ export function FeedRow({
             leave a double space in the middle of the sentence. */}
         {trade.kol.cabalTag && (
           <>
-            <span className="chip-cabal">{trade.kol.cabalTag}</span>{" "}
+            <span className={cabalChipClass(trade.kol.cabalTag)}>{trade.kol.cabalTag}</span>{" "}
           </>
         )}
         <span className={direction}>{verb}</span>{" "}

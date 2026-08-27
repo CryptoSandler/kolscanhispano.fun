@@ -100,6 +100,47 @@ describe("the stylesheet matches DESIGN.md", () => {
   });
 });
 
+/**
+ * Which background each row of the contrast table is measured against, read
+ * out of the sentence beneath it:
+ *
+ *   "The four cabal tints are measured against `surface-2 #1c2024`, the chip's
+ *    own background; every other row is against `surface-1`."
+ *
+ * Parsed rather than restated, for the same reason the palette is: a document
+ * that moves the chip onto another surface, or adds a second exception, must
+ * move this test with it or fail it. The alternative -- a hardcoded
+ * `{ "cabal-": "surface-2" }` in this file -- is a second source of truth about
+ * the one thing the guardian exists to prevent a second source of truth about.
+ *
+ * The exception exists because a chip has its own ground. `cabal-a` on
+ * `surface-1` measures 6.48 and on `surface-2` it measures 6.02; only the
+ * second is a statement about anything a reader will look at, and only the
+ * second is what `globals.css` renders.
+ */
+function measuredAgainst(colors: Record<string, string>): (token: string) => string {
+  const exception = squash(DESIGN).match(
+    /The four ([a-z0-9]+) tints are measured against `(surface-[0-9]+) (#[0-9a-f]{6})`/i,
+  );
+  const fallback = squash(DESIGN).match(/every other row is against `(surface-[0-9]+)`/i);
+  if (!exception || !fallback) {
+    throw new Error("DESIGN.md no longer says which surface its contrast table is measured against");
+  }
+
+  const [, family, exceptionSurface, exceptionHex] = exception;
+  // The sentence quotes the surface's hex as well as its name. If the palette
+  // above ever moves and the sentence does not, that is the document
+  // disagreeing with itself, and it fails here rather than being averaged over.
+  expect(colors[exceptionSurface], `${exceptionSurface} in the palette matches the sentence`).toBe(
+    exceptionHex.toLowerCase(),
+  );
+
+  const base = colors[fallback[1]];
+  expect(base, `${fallback[1]} is in the palette`).toBeTruthy();
+
+  return (token) => (token.startsWith(`${family}-`) ? colors[exceptionSurface] : base);
+}
+
 describe("the contrast table in DESIGN.md is true", () => {
   // The document publishes a ratio per token. Recomputing it from the
   // document's own hex values is what makes that table a claim rather than a
@@ -107,14 +148,15 @@ describe("the contrast table in DESIGN.md is true", () => {
   // table gets caught.
   it("matches the published ratio for every row, to two decimals", () => {
     const colors = designColors();
-    const surface = colors["surface-1"];
-    const rows = [...DESIGN.matchAll(/^\| `([a-z-]+) (#[0-9a-f]{6})` \| (\d+\.\d+) \| (\w+) \|$/gim)];
+    const surfaceFor = measuredAgainst(colors);
+    const rows = [...DESIGN.matchAll(/^\| `([a-z0-9-]+) (#[0-9a-f]{6})` \| (\d+\.\d+) \| (\w+) \|$/gim)];
     expect(rows.length, "rows in the contrast table").toBeGreaterThanOrEqual(7);
 
     for (const [, token, hex, published, verdict] of rows) {
       expect(colors[token], `${token} is still in the palette at the table's value`).toBe(hex);
+      const surface = surfaceFor(token);
       const measured = contrast(hex, surface);
-      expect(measured.toFixed(2), `${token} measured against surface-1`).toBe(published);
+      expect(measured.toFixed(2), `${token} measured against ${surface}`).toBe(published);
       expect(verdict).toBe("PASS");
       expect(measured, `${token} clears AA for normal text`).toBeGreaterThanOrEqual(4.5);
     }

@@ -59,6 +59,20 @@
   --podium-2-wash: #26200f;
   --podium-3-wash: #101f2b;
 
+  /* DESIGN.md `chip-cabal`: "its text in one of four tints assigned per cabal:
+     `cabal-a` violet, `cabal-b` pink, `cabal-c` peach, `cabal-d` slate. Four
+     fixed tokens rather than a generated hue, because a generated one can land
+     on green or red -- reserved here for money -- or on a podium tint."
+
+     They are the one family in this file measured against `surface-2` rather
+     than `surface-1`, because that is the chip's own background and the
+     document says so beside its contrast table. Named exactly as the document
+     names them, so the guardian's rename table needs no entry. */
+  --cabal-a: #a78bfa;
+  --cabal-b: #f472b6;
+  --cabal-c: #fdba74;
+  --cabal-d: #94a3b8;
+
   /* DESIGN.md: "**Rows are 56px** — enough for a 36px circular avatar, the
      bold name, and the handle or `Wallets ocultas` beneath it." */
   --row-height: 56px;
@@ -752,12 +766,16 @@ a {
 }
 
 /* DESIGN.md `chip-cabal`: "the group's 3–4 letter tag, `label`, `radius-sm`,
-   tinted per cabal." The tag, the `label` role and the radius are here; the
-   per-cabal tint is not, and is not invented: DESIGN.md publishes no cabal
-   palette and no contrast row for one, and its own rule is that "a new colour
-   enters this system only with its measured ratio in this table". A generated
-   hue would also be free to land on green or red, which the same document
-   reserves for direction of money. Recorded in the batch report. */
+   on `surface-2`, its text in one of four tints assigned per cabal."
+
+   `surface-2` is a filled ground rather than the hairline border the previous
+   draft carried, and that is load-bearing rather than cosmetic: the document
+   measures the four tints "against `surface-2 #1c2024`, the chip's own
+   background", so the published contrast ratios are only true of a chip that
+   actually sits on it. `design-tokens.test.ts` recomputes them.
+
+   Which of the four a cabal gets is decided by `src/lib/cabal.ts`, from the
+   tag alone, so the same cabal keeps its colour across renders and reloads. */
 .chip-cabal {
   flex: none;
   font-size: 11px;
@@ -765,9 +783,25 @@ a {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 2px 6px;
-  border: 1px solid var(--hairline-strong);
+  background: var(--surface-2);
   border-radius: var(--radius-sm);
   color: var(--ink-muted);
+}
+
+.chip-cabal-a {
+  color: var(--cabal-a);
+}
+
+.chip-cabal-b {
+  color: var(--cabal-b);
+}
+
+.chip-cabal-c {
+  color: var(--cabal-c);
+}
+
+.chip-cabal-d {
+  color: var(--cabal-d);
 }
 
 /* Fixed width: the age column is the one thing on the row that changes every

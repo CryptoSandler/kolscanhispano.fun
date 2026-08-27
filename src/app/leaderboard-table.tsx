@@ -1,3 +1,4 @@
+import { cabalChipClass } from "@/lib/cabal";
 import type { LeaderboardUnit } from "@/lib/leaderboard";
 import { Avatar } from "./avatar";
 import { KolRow } from "./kol-row";
@@ -236,7 +237,12 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
               </a>
             )}
           </span>
-          {entry.kol.cabalTag && <span className="chip-cabal">{entry.kol.cabalTag}</span>}
+          {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
+              tag alone, so the row and the modal's header cannot disagree
+              about which colour a cabal is. See `src/lib/cabal.ts`. */}
+          {entry.kol.cabalTag && (
+            <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
+          )}
         </span>
       </td>
       <td className="num closed">
