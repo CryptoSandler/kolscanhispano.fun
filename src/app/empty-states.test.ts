@@ -76,18 +76,24 @@ function emptyStates(): Record<string, [string, string]> {
 }
 
 /**
- * The third row of the same table, whose empty cell is one sentence rather than
- * a pair: `| `modal-kol` chart | line with points | `Sin operaciones cerradas
- * en este período.` |`.
+ * The rows of the same table whose empty cell is one sentence rather than a
+ * pair — `modal-kol`'s chart, `list-defi-trades`, and `modal-kol` on a failed
+ * load, the last two added by `4a2f2df` after this batch reported having to
+ * invent copy the document did not carry.
  *
- * It is parsed separately because its surface cell is not a single backticked
- * word and {@link emptyStates}'s pattern deliberately does not reach it. Same
- * rule, though: the sentence comes out of the document, never out of this file.
+ * They are parsed separately because their surface cells are not a single
+ * backticked word and {@link emptyStates}'s pattern deliberately does not reach
+ * them. Same rule, though: the sentence comes out of the document, never out of
+ * this file. The first backticked run in the empty cell is the copy — the
+ * failed-load row continues "with a retry" after it, which is a requirement on
+ * the surface rather than words to render.
  */
-function chartEmptyState(): string {
-  const match = DESIGN.match(/^\| `modal-kol` chart \| [^|]+ \| `([^`]+)` \|$/m);
-  if (!match) throw new Error("DESIGN.md no longer gives modal-kol's chart an empty state");
-  return match[1];
+function emptyCell(surface: string): string {
+  const row = DESIGN.split("\n").find((line) => line.startsWith(`| ${surface} |`));
+  if (!row) throw new Error(`DESIGN.md has no two-states row for ${surface}`);
+  const copy = row.split("|")[3]?.match(/`([^`]+)`/)?.[1];
+  if (!copy) throw new Error(`DESIGN.md's ${surface} row states no empty copy`);
+  return copy;
 }
 
 /** A KOL's period with nothing in it — the state the chart has to say in words. */
@@ -216,7 +222,7 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
  */
 describe("modal-kol's chart says its empty period in words, not as an empty axis", () => {
   it("renders DESIGN.md's sentence, and no chart", () => {
-    const lead = chartEmptyState();
+    const lead = emptyCell("`modal-kol` chart");
     const html = renderToStaticMarkup(createElement(KolDetail, { detail: quietDetail() }));
 
     expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
@@ -228,4 +234,31 @@ describe("modal-kol's chart says its empty period in words, not as an empty axis
     expect(html).not.toContain("skeleton");
     for (const apology of ["Ups", "Lo sentimos"]) expect(html).not.toContain(apology);
   });
+
+  /**
+   * `| `list-defi-trades` | the KOL's trades | `Sin operaciones en este
+   * período.` |`, added to the table by `4a2f2df`. This batch shipped that
+   * sentence before the document carried it and said so; now that it is
+   * normative, it is parsed rather than restated, like every other one here.
+   */
+  it("says the trade list's empty period in the document's words", () => {
+    const lead = emptyCell("`list-defi-trades`");
+    const html = renderToStaticMarkup(createElement(KolDetail, { detail: quietDetail() }));
+
+    expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
+    expect(html).not.toContain("row-trade");
+  });
+
+  /**
+   * The third new row — `| `modal-kol` on a failed load | the cards | `No se
+   * pudo cargar este KOL.` with a retry |` — is **not** asserted here, and the
+   * omission is deliberate rather than an oversight.
+   *
+   * That state only exists after a fetch has failed, which needs effects to
+   * run; `renderToStaticMarkup` does not run them, so a node-environment render
+   * of `KolModalHost` can never reach it. Asserting it against the *source* of
+   * that file is the shape of check this repository has already shipped and
+   * been wrong about. It is covered in `e2e/modal-kol.spec.ts`, where the
+   * request is aborted in a real browser and the retry is clicked.
+   */
 });

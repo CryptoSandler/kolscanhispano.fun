@@ -1155,3 +1155,30 @@ a.row-moment:hover {
   letter-spacing: 0.06em;
   color: var(--ink-subtle);
 }
+
+/* The retry in `modal-kol`'s failed-load state. DESIGN.md words the sentence
+   and requires "a retry"; it words no control, so this is the plainest one the
+   system already has a shape for — the `panel-link`'s ink, on a hairline, at
+   the `label` role. It is a real control and it works, which is the only thing
+   the last Don't asks of anything that looks like one. */
+.retry {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition:
+    color var(--hover),
+    background var(--hover);
+}
+
+.retry:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}

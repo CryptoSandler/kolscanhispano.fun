@@ -66,6 +66,13 @@ export function KolModalHost({
   const [period, setPeriod] = useState<LeaderboardWindow>(pageWindow);
   const [detail, setDetail] = useState<PublicKolDetail | null>(null);
   const [failed, setFailed] = useState(false);
+  /**
+   * Bumped by the retry control, and a dependency of the fetch effect — which
+   * is the whole mechanism. DESIGN.md's failed-load state is *"`No se pudo
+   * cargar este KOL.` **with a retry**"*, and a retry that re-ran the effect by
+   * clearing and re-setting `slug` would close and reopen the dialog.
+   */
+  const [attempt, setAttempt] = useState(0);
 
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
@@ -123,7 +130,7 @@ export function KolModalHost({
     })();
 
     return () => controller.abort();
-  }, [slug, period]);
+  }, [slug, period, attempt]);
 
   useEffect(() => {
     const element = dialog.current;
@@ -192,15 +199,28 @@ export function KolModalHost({
           {detail && <KolDetail detail={detail} segments={<Segments value={period} onChange={changePeriod} />} />}
 
           {failed && (
-            /* DESIGN.md gives `modal-kol` no failure state — its two-states
-               table covers empty, not unreachable. Written in the same voice as
-               the states it does specify: a statement of fact and what to do,
-               no "Ups", no illustration, no retry that hides the failure behind
-               a spinner. Recorded in the batch report as a gap in the document. */
+            /* DESIGN.md's two-states table, as corrected in `4a2f2df`:
+               `| modal-kol on a failed load | the cards |
+                `No se pudo cargar este KOL.` with a retry |`.
+
+               The sentence is verbatim. The retry is a real control that reruns
+               the same fetch in place — not a reload, and not a link that
+               closes the panel — because the state it recovers from is one
+               failed request. The document does not word the control; `Reintentar`
+               is the one word neutral Spanish has for it. */
             <div className="state-empty">
-              <p className="state-empty-lead">No pudimos cargar el detalle.</p>
+              <p className="state-empty-lead">No se pudo cargar este KOL.</p>
               <p className="state-empty-note">
-                Cierra este panel y vuelve a abrirlo desde la fila del KOL.
+                <button
+                  type="button"
+                  className="retry"
+                  onClick={() => {
+                    setFailed(false);
+                    setAttempt((n) => n + 1);
+                  }}
+                >
+                  Reintentar
+                </button>
               </p>
             </div>
           )}
