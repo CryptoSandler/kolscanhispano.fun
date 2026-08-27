@@ -164,7 +164,28 @@ main session's shell at the same moment, in the same working tree:
 
 So the repository config is not the variable; the committing **process** is. A
 subagent resolves a different identity than its parent in the same directory —
-the local `.git/config` that wins here does not win there. Until that is
+the local `.git/config` that wins here does not win there.
+
+### The source is local config; the include is only a net
+
+Diagnosed from the sibling repos: the ones that never leaked had `user.email`
+in their **own** `.git/config`. That file is read by every process that touches
+the repository, subagent included. `includeIf "gitdir:…"` is different in kind —
+it is a *condition the child process must resolve*, and sometimes it does not.
+
+So the identity is **set locally, per repository**, and the `includeIf` in
+`~/.gitconfig` stays as a backstop for repositories nobody remembered to set:
+
+    git config user.name    # no --global: empty output means it is NOT local
+    git config user.email   # if either is empty or resolves via an include, fix it now
+
+    git config --local user.name CryptoSandler
+    git config --local user.email 294572464+CryptoSandler@users.noreply.github.com
+
+Verify with `git config --show-origin user.email`: it must say `file:.git/config`,
+not the include's path. **Both keys matter** — checked 2026-08-27 across the five
+repositories under `~/proyectos`, one had the email locally but not the name, which
+would have put the personal *name* in a public history by exactly the same route. Until that is
 understood, treat any commit a subagent makes as suspect. The fix is one
 `git filter-branch --env-filter` while the branch is still unpushed; it is
 unavailable the moment it is public.
