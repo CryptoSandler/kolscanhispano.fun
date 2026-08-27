@@ -33,6 +33,7 @@ type FeedQueryRow = {
   mint: string;
   token_amount: string;
   sol_amount: string;
+  usd_amount: string | null;
   price_usd: string | null;
   block_time: Date;
   signature_enc: Buffer;
@@ -60,7 +61,7 @@ const APPROVED = "k.status = 'approved'";
 const AFTER_CURSOR = "(t.block_time, t.id) > ($1::timestamptz, $2::uuid)";
 
 const COLUMNS = `
-  t.id, t.kol_id, t.side, t.mint, t.token_amount, t.sol_amount, t.price_usd,
+  t.id, t.kol_id, t.side, t.mint, t.token_amount, t.sol_amount, t.usd_amount, t.price_usd,
   t.block_time, t.signature_enc,
   k.slug, k.display_name, k.hide_wallets,
   c.tag AS cabal_tag,
@@ -98,6 +99,24 @@ const AFTER_SQL = `SELECT ${COLUMNS} ${JOINS}
    WHERE ${APPROVED} AND ${AFTER_CURSOR}
    ORDER BY t.block_time ASC, t.id ASC
    LIMIT $3`;
+
+/**
+ * `modal-kol`'s `list-defi-trades`: one KOL's trades inside the window the
+ * modal is showing, newest first.
+ *
+ * Half-open on the instant, `>= from` and `< to`, so it cuts the same interval
+ * `windowBounds` hands the leaderboard and a trade at midnight belongs to
+ * exactly one window. The bounds are passed as ISO strings and cast here rather
+ * than left for `pg` to infer, which keeps the comparison in UTC whatever the
+ * session time zone is.
+ */
+const BY_KOL_SQL = `SELECT ${COLUMNS} ${JOINS}
+   WHERE ${APPROVED}
+     AND t.kol_id = $1::uuid
+     AND t.block_time >= $2::timestamptz
+     AND t.block_time < $3::timestamptz
+   ORDER BY t.block_time DESC, t.id DESC
+   LIMIT $4`;
 
 /**
  * The two probes behind {@link readFeedValidator}: one row, two tables, no
@@ -175,11 +194,45 @@ function toPublic(row: FeedQueryRow): PublicTrade {
     symbol: row.symbol,
     token_amount: row.token_amount,
     sol_amount: row.sol_amount,
+    usd_amount: row.usd_amount,
     price_usd: row.price_usd,
     block_time: row.block_time,
     signature: revealSignature(row),
     hide_wallets: row.hide_wallets,
   });
+}
+
+/**
+ * One KOL's trades inside a half-open instant range, newest first.
+ *
+ * This lives in `feed.ts` rather than beside the modal's other reads because
+ * everything that makes a trade publishable is already here and must stay in
+ * one place: the `status = 'approved'` filter, the AES-GCM decrypt of the
+ * stored signature, and {@link toPublic}'s single call into `serialize.ts`.
+ * A second query that selected trades and serialized them itself would be a
+ * second copy of spec §7's publication rule, and the whole design of this
+ * module is that there is exactly one.
+ *
+ * `trade_position_idx` is `(kol_id, mint, block_time)`, so the leading column
+ * carries this filter; the range is on the trailing one and is scanned inside
+ * the KOL's slice rather than across the table.
+ */
+export async function readKolTrades(options: {
+  kolId: string;
+  from: Date;
+  to: Date;
+  limit: number;
+}): Promise<PublicTrade[]> {
+  if (!Number.isInteger(options.limit) || options.limit < 0) {
+    throw new Error("limit must be a non-negative integer");
+  }
+  const rows = await query<FeedQueryRow>(BY_KOL_SQL, [
+    options.kolId,
+    options.from.toISOString(),
+    options.to.toISOString(),
+    options.limit,
+  ]);
+  return rows.map(toPublic);
 }
 
 /**

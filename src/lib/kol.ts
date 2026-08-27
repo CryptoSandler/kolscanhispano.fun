@@ -1,0 +1,197 @@
+/**
+ * One KOL's period, for DESIGN.md's `modal-kol`.
+ *
+ * The same split `feed.ts` and `leaderboard.ts` already make: the query lives
+ * here so the modal's route and any future server render apply one set of
+ * filters, and nothing here decides what is published — that is
+ * `serialize.ts`, which this module hands complete rows to.
+ *
+ * **It reads `pnl_daily`, like the leaderboard, and derives nothing.** Spec §3
+ * makes `trade` the only source of truth and `pnl_daily` the derived table the
+ * ranking is read from; a modal that recomputed realized PnL from the trade log
+ * would put a second, drifting copy of spec §4.5's exclusion rule in a query,
+ * and would let the row and the modal print two different numbers for the same
+ * KOL and the same window. They read the same table and the same window bounds,
+ * so they cannot.
+ *
+ * The two figures `pnl_daily` cannot answer — how many trades, and how much SOL
+ * changed hands — come from `trade` directly, because they are counts over the
+ * log rather than results of the replay.
+ *
+ * ## The chart's series
+ *
+ * `pnl_daily` is keyed `(kol_id, day)`, so the finest grain available is a UTC
+ * day. `Diario` therefore yields **one** point, and that is the honest render:
+ * intraday realized PnL is not a number this system has computed anywhere, and
+ * inventing one here by replaying episodes in a page query is exactly the shape
+ * of derivation the paragraph above refuses. `chart.ts` draws one point as a
+ * point.
+ *
+ * Days with nothing closed have no row at all and are simply absent from the
+ * series. That is deliberate: a zero inserted for them would read as "closed
+ * out flat today", which is a measurement, and DESIGN.md's rule is that
+ * *"Absence is rendered as absence, never as a zero."*
+ */
+import { query } from "./db";
+import { formatDecimal, parseDecimal } from "./decimal";
+import { readKolTrades } from "./feed";
+import {
+  serializeKolDetail,
+  type KolDetailRow,
+  type KolSeriesPoint,
+  type PublicKolDetail,
+} from "./serialize";
+import { utcDayString, windowBounds, type LeaderboardWindow } from "./windows";
+
+/**
+ * How many trades `list-defi-trades` carries.
+ *
+ * The same page size the feed uses, for the same reason: it is a list a reader
+ * scrolls, not a dataset, and a KOL who traded four hundred times in a month
+ * must not turn one modal into a four-hundred-row payload. The cap is
+ * documented on the surface rather than hidden — see `kol-detail.tsx`.
+ */
+export const KOL_TRADES_LIMIT = 50;
+
+/**
+ * A slug reaches this module straight from a URL path segment.
+ *
+ * The query is parameterised, so this is not about injection. It is about not
+ * sending an unbounded attacker-chosen string to Postgres on every request:
+ * `kol.slug` is written by the admin flow and is a short identifier, so
+ * anything past this bound is not a slug that can exist and is answered as
+ * "no such KOL" without a round trip.
+ */
+const MAX_SLUG_LENGTH = 128;
+
+/**
+ * `k.status = 'approved'` is spec §9's public-surface filter, in the query
+ * rather than after it: a suspended KOL must not be reachable by guessing its
+ * slug, and the caller cannot tell "suspended" from "never existed".
+ *
+ * The window join is the leaderboard's, half-open on `date` literals built by
+ * {@link utcDayString} — passing a `Date` would have `pg` send a timestamp for
+ * Postgres to cast in the *session* time zone, which is the local-time leak
+ * `windows.ts` exists to prevent.
+ */
+const DETAIL_SQL = `
+  SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets,
+         c.tag AS cabal_tag, (SELECT encode(w.address_hmac,'hex') FROM kol_wallet w WHERE w.kol_id = k.id LIMIT 1) AS address,
+         COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
+         COALESCE(SUM(d.realized_usd), 0) AS realized_usd
+    FROM kol k
+    LEFT JOIN cabal c ON c.id = k.cabal_id
+    LEFT JOIN pnl_daily d
+           ON d.kol_id = k.id AND d.day >= $2::date AND d.day < $3::date
+   WHERE k.slug = $1 AND k.status = 'approved'
+   GROUP BY k.id, c.tag`;
+
+/**
+ * `card-stats`' other two figures.
+ *
+ * Volume is the SOL both sides of every trade moved, which is what "volume"
+ * means for a swap: a buy spends SOL and a sell receives it, and adding them is
+ * turnover rather than a net. It is deliberately not the same measurement as
+ * realized PnL and is labelled as its own thing on the card.
+ */
+const ACTIVITY_SQL = `
+  SELECT COUNT(*)::int AS trade_count,
+         COALESCE(SUM(t.sol_amount), 0) AS volume_sol
+    FROM trade t
+   WHERE t.kol_id = $1::uuid
+     AND t.block_time >= $2::timestamptz
+     AND t.block_time < $3::timestamptz`;
+
+/**
+ * The chart's raw series: one row per day that closed something.
+ *
+ * `to_char` rather than the `date` itself, because `pg` parses a `date` into a
+ * `Date` at the *runner's* local midnight — so a UTC day would arrive as the
+ * previous day for the whole of this product's audience. The string is the
+ * value; nothing downstream reparses it.
+ */
+const SERIES_SQL = `
+  SELECT to_char(d.day, 'YYYY-MM-DD') AS day, d.realized_sol
+    FROM pnl_daily d
+   WHERE d.kol_id = $1::uuid AND d.day >= $2::date AND d.day < $3::date
+   ORDER BY d.day ASC`;
+
+/**
+ * What `DETAIL_SQL` alone produces. The two activity columns come from a
+ * different table and are joined on in {@link readKolDetail}; typing them out
+ * of this row is what stops `query<KolDetailRow>` from asserting the query
+ * returned columns it never selected.
+ */
+type IdentityRow = Omit<KolDetailRow, "trade_count" | "volume_sol">;
+
+type ActivityRow = { trade_count: number; volume_sol: string };
+type SeriesRow = { day: string; realized_sol: string };
+
+/**
+ * Daily realized PnL, accumulated.
+ *
+ * In `decimal.ts`'s scaled `bigint`, not in doubles: these are the same SOL
+ * figures the leaderboard prints, and a running sum is precisely where a float
+ * would start drifting. The last point is therefore *exactly* the window total
+ * `DETAIL_SQL` summed in Postgres, which is what lets the chart and the modal's
+ * header be read as one statement.
+ */
+function accumulate(rows: SeriesRow[]): KolSeriesPoint[] {
+  let running = 0n;
+  return rows.map((row) => {
+    running += parseDecimal(row.realized_sol);
+    return { day: row.day, cumulativeSol: formatDecimal(running) };
+  });
+}
+
+export type KolDetailQuery = {
+  slug: string;
+  window: LeaderboardWindow;
+  /** Injectable so a caller can pin the window; defaults to the current instant. */
+  now?: Date;
+};
+
+/**
+ * `null` when there is no such KOL **or** it is not on a public surface. The
+ * two are one answer on purpose: whether a slug exists is not information this
+ * read owes an anonymous caller (the same rule `/api/avatar` follows).
+ */
+export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolDetail | null> {
+  if (options.slug.length === 0 || options.slug.length > MAX_SLUG_LENGTH) return null;
+
+  const bounds = windowBounds(options.window, options.now ?? new Date());
+  const from = utcDayString(bounds.from);
+  const to = utcDayString(bounds.to);
+
+  const [row] = await query<IdentityRow>(DETAIL_SQL, [options.slug, from, to]);
+  if (!row) return null;
+
+  // Three reads over three different tables, none of which needs another's
+  // result. In sequence they would be three Neon round trips on the way to
+  // opening one modal.
+  const [activity, series, trades] = await Promise.all([
+    query<ActivityRow>(ACTIVITY_SQL, [
+      row.kol_id,
+      bounds.from.toISOString(),
+      bounds.to.toISOString(),
+    ]),
+    query<SeriesRow>(SERIES_SQL, [row.kol_id, from, to]),
+    readKolTrades({
+      kolId: row.kol_id,
+      from: bounds.from,
+      to: bounds.to,
+      limit: KOL_TRADES_LIMIT,
+    }),
+  ]);
+
+  return serializeKolDetail({
+    // `COUNT(*)` and `SUM` over an empty set give `0` and, with the COALESCE,
+    // `'0'` -- so a KOL with no trades in the window is a real zero here, not a
+    // missing row. What the *screen* does with that is a different rule: see
+    // `kol-detail.tsx`.
+    row: { ...row, trade_count: activity[0].trade_count, volume_sol: activity[0].volume_sol },
+    window: options.window,
+    series: accumulate(series),
+    trades,
+  });
+}

@@ -13,6 +13,7 @@ const base = {
   symbol: "EJE",
   token_amount: "100",
   sol_amount: "1.5",
+  usd_amount: "225",
   price_usd: "0.01",
   block_time: new Date("2026-08-25T12:00:00Z"),
   signature: inventSignature(),
@@ -68,6 +69,13 @@ describe("serializeTrade", () => {
         "solAmount",
         "symbol",
         "tokenAmount",
+        // `modal-kol`'s `list-defi-trades` needs "its USD equivalent" beside
+        // the SOL amount, which is the trade's `usd_amount` (spec §4.1, fixed
+        // at its block) and not the per-token `priceUsd` the feed row prints.
+        // It is on this shape rather than on a second one because
+        // `serialize.ts` is the single place that decides what leaves the
+        // server, and a second trade serializer would be a second place.
+        "usdAmount",
       ].sort(),
     );
     expect(Object.keys(out.kol).sort()).toEqual(

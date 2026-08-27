@@ -23,6 +23,8 @@
  * `decimal.ts` exists to keep out of money.
  */
 
+import type { LeaderboardWindow } from "./windows";
+
 /**
  * Spec §10: one page of the feed.
  *
@@ -52,6 +54,7 @@ export type FeedRow = {
   symbol: string | null;
   token_amount: string;
   sol_amount: string;
+  usd_amount: string | null;
   price_usd: string | null;
   block_time: Date;
   signature: string | null;
@@ -86,6 +89,20 @@ export type PublicTrade = {
   symbol: string | null;
   tokenAmount: string;
   solAmount: string;
+  /**
+   * What the SOL leg was worth in USD **at its block**, spec §4.1 — the trade's
+   * `usd_amount`, `sol_amount x sol_usd`, not a re-pricing.
+   *
+   * `null` when no `sol_price` row covered the block: migration 005's *"looked,
+   * no rate existed"*. Never `0`, which would be a claim that the trade was
+   * worth nothing. DESIGN.md's `state-unpriced` is what renders it.
+   *
+   * It is read by `list-defi-trades` inside `modal-kol` — *"each with verb, SOL
+   * amount by sign and **its USD equivalent**"* — and by nothing else. The feed
+   * row states a *price* (`priceUsd`, per token) rather than a value, which is a
+   * different figure and is why both are on this shape.
+   */
+  usdAmount: string | null;
   priceUsd: string | null;
   blockTime: string;
   signature: string | null;
@@ -214,9 +231,122 @@ export function serializeTrade(row: FeedRow): PublicTrade {
     symbol: row.symbol,
     tokenAmount: row.token_amount,
     solAmount: row.sol_amount,
+    usdAmount: row.usd_amount,
     priceUsd: row.price_usd,
     blockTime: row.block_time.toISOString(),
     // The whole invariant, in one expression.
     signature: row.hide_wallets ? null : row.signature,
+  };
+}
+
+/**
+ * One KOL as the detail query produces it: identity, plus the window's totals.
+ *
+ * `address` is optional and the query never selects it, for the same reason
+ * {@link FeedRow} and {@link LeaderboardRow} carry one — it lets the invariant
+ * test hand this function a row that really does contain an address, so
+ * "the output does not contain it" asserts something.
+ */
+export type KolDetailRow = {
+  kol_id: string;
+  slug: string;
+  display_name: string;
+  x_handle: string;
+  cabal_tag: string | null;
+  hide_wallets: boolean;
+  realized_sol: string;
+  realized_usd: string;
+  /** Trades executed inside the window, both sides. */
+  trade_count: number;
+  /** SOL turned over inside the window: the sum of both sides' `sol_amount`. */
+  volume_sol: string;
+  address?: string | null;
+};
+
+/**
+ * One point on `card-pnl-evolution`'s line: a UTC day, and realized PnL
+ * **accumulated** from the start of the window to the end of that day.
+ *
+ * Cumulative rather than per-day because DESIGN.md calls the card an
+ * *evolution*, and because it makes the last point equal the figure the modal's
+ * header prints — one number said twice cannot disagree with itself.
+ *
+ * The day is a `YYYY-MM-DD` string built by Postgres' `to_char`, never a
+ * `Date`: `pnl_daily.day` is a `date`, and `pg` would parse one into a
+ * `Date` at the *runner's* local midnight — the local-time leak `windows.ts`
+ * exists to keep out, one layer up.
+ */
+export type KolSeriesPoint = { day: string; cumulativeSol: string };
+
+/** Everything a public response may carry about one KOL's period, and nothing more. */
+export type PublicKolDetail = {
+  /**
+   * The window that was actually summed.
+   *
+   * Read by the modal, which refetches when its segment changes: a response
+   * that arrives after the reader has moved on is discarded by comparing this
+   * against the segment now selected, rather than by cancelling a request the
+   * browser may already have delivered.
+   */
+  window: LeaderboardWindow;
+  kol: {
+    slug: string;
+    name: string;
+    /** The public persona spec §2 puts the `𝕏` link on. Not a wallet. */
+    xHandle: string;
+    cabalTag: string | null;
+    avatarUrl: string;
+    /** See {@link PublicLeaderboardEntry}: it decides the address slot, never the handle. */
+    hideWallets: boolean;
+  };
+  realizedSol: string;
+  realizedUsd: string;
+  /** `card-stats`: volume, in SOL. */
+  volumeSol: string;
+  /** `card-stats`: trades. */
+  tradeCount: number;
+  /** `card-pnl-evolution`'s line. Empty when nothing closed in the window. */
+  series: KolSeriesPoint[];
+  /** `list-defi-trades`, newest first, capped by the caller. */
+  trades: PublicTrade[];
+};
+
+/**
+ * The detail response.
+ *
+ * Every field is consumed by `modal-kol` and nothing is carried "in case":
+ * `window` discards a stale segment's response, `kol` is the header, the two
+ * realized figures are the header's PnL and `card-chain-pnl`'s one line,
+ * `volumeSol` and `tradeCount` are `card-stats`, `series` is the chart and
+ * `trades` is `list-defi-trades`.
+ *
+ * Spec §7 holds here exactly as it does on the feed: no address is a field of
+ * this shape, and each trade's signature has already passed through
+ * {@link serializeTrade}, which drops it for a hidden KOL. There is no second
+ * decision about publication anywhere in this file.
+ */
+export function serializeKolDetail(options: {
+  row: KolDetailRow;
+  window: LeaderboardWindow;
+  series: KolSeriesPoint[];
+  trades: PublicTrade[];
+}): PublicKolDetail {
+  const { row } = options;
+  return {
+    window: options.window,
+    kol: {
+      slug: row.slug,
+      name: row.display_name,
+      xHandle: row.x_handle,
+      cabalTag: row.cabal_tag,
+      avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
+      hideWallets: row.hide_wallets,
+    },
+    realizedSol: row.realized_sol,
+    realizedUsd: row.realized_usd,
+    volumeSol: row.volume_sol,
+    tradeCount: row.trade_count,
+    series: options.series,
+    trades: options.trades,
   };
 }

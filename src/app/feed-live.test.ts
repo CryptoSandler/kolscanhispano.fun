@@ -41,6 +41,7 @@ function trade(overrides: Partial<PublicTrade> = {}): PublicTrade {
     symbol: "FIX",
     tokenAmount: "2",
     solAmount: "1",
+    usdAmount: "150",
     priceUsd: "0.5",
     blockTime: BLOCK_TIME,
     signature: null,

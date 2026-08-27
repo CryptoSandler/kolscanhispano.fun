@@ -377,8 +377,14 @@ describe("GET /api/feed", () => {
     const [got] = await trades(response);
 
     expect(Object.keys(got).sort()).toEqual(
+      // `usdAmount` joined the shared trade shape for `modal-kol`'s
+      // `list-defi-trades` ("its USD equivalent"): it is the trade's
+      // `usd_amount`, fixed at its block by spec §4.1, and a different figure
+      // from the per-token `priceUsd` this feed row prints. One serializer, one
+      // shape, so the feed carries it too -- extended here rather than the
+      // assertion loosened, and it is still exact set equality.
       ["blockTime", "id", "kol", "mint", "priceUsd", "side", "signature", "solAmount", "symbol",
-       "tokenAmount"].sort(),
+       "tokenAmount", "usdAmount"].sort(),
     );
     expect(Object.keys(got.kol).sort()).toEqual(
       ["avatarUrl", "cabalTag", "hideWallets", "name", "slug"].sort(),
@@ -387,7 +393,7 @@ describe("GET /api/feed", () => {
     // Every column name the query touches. A spread of the database row would
     // put each of them in the body verbatim.
     for (const column of ["hide_wallets", "display_name", "kol_id", "cabal_tag", "block_time",
-      "sol_amount", "token_amount", "price_usd", "signature_enc", "wallet_id",
+      "sol_amount", "token_amount", "usd_amount", "price_usd", "signature_enc", "wallet_id",
       "signature_hmac", "address"]) {
       expect(text).not.toContain(column);
     }
