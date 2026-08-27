@@ -21,7 +21,7 @@
 
   --ink: #f2f4f5;
   --ink-muted: #a8aeb4;
-  --ink-subtle: #6b7178;
+  --ink-subtle: #767d84;
 
   --accent: #22d3ee;
   --on-accent: #04191d;
@@ -29,7 +29,12 @@
 
   --gain: #2ea043;
   --loss: #e5484d;
-  --stale: #8a6d3b;
+  --stale: #967740;
+  /* Direction of money is gain/loss; `neutral` is the absence of a
+     direction -- a zero, an unranked row. It follows ink-subtle by
+     design, and is named separately so a later change to one does not
+     silently move the other. */
+  --neutral: #767d84;
 
   --row-height: 36px;
   --gutter: 16px;

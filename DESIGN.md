@@ -8,7 +8,7 @@ colors:
   primary-hover: "#67e8f9"
   ink: "#f2f4f5"
   ink-muted: "#a8aeb4"
-  ink-subtle: "#6b7178"
+  ink-subtle: "#767d84"
   canvas: "#08090a"
   surface-1: "#101113"
   surface-2: "#16181b"
@@ -17,8 +17,8 @@ colors:
   hairline-strong: "#2f333a"
   semantic-gain: "#2ea043"
   semantic-loss: "#e5484d"
-  semantic-neutral: "#6b7178"
-  semantic-stale: "#8a6d3b"
+  semantic-neutral: "#767d84"
+  semantic-stale: "#967740"
 typography:
   display-lg: { fontFamily: "Inter Tight", fontSize: 36px, fontWeight: 600, lineHeight: 1.1, letterSpacing: -1.2px }
   headline:   { fontFamily: "Inter Tight", fontSize: 22px, fontWeight: 600, lineHeight: 1.2, letterSpacing: -0.4px }
@@ -40,6 +40,20 @@ reader as competent. What was deliberately not taken is its identity: the lavend
 Linear Display face, and the airy marketing rhythm of the source, which is a promotional page and
 not an instrument. Cyan, Inter Tight, and a 36px row are what make this ours.
 
+## Identity
+
+The direction is **Instrumento**. The name is the whole brief: this is a panel someone leaves
+open beside their trading, not a page they visit. It is dense, quiet, and answers a glance.
+
+The wordmark is the domain, set in Inter Tight at display weight with the accent on the dot —
+no logo, no illustration, no mascot. `kolscanhispano.fun` is the brand, so the name does the
+work and nothing has to be drawn.
+
+**The accent is cyan `#22d3ee`, chosen partly because neither reference uses it.** kolscan.io
+runs a purple-leaning dark chrome; kolscanbrasil.io declares `theme-color #111315` with no
+chromatic accent on the row at all. Reading as the genre must not mean reading as them, and the
+accent is the cheapest place to be unmistakably ours. It never touches a figure — see below.
+
 ## Colors
 
 `canvas #08090a` under everything. Panels at `surface-1`, hover `surface-2`, selected `surface-3`.
@@ -51,6 +65,29 @@ wordmark, the focus ring, the selected timeframe, the live indicator, and one pr
 **Green and red are reserved for direction of money.** `semantic-gain #2ea043`,
 `semantic-loss #e5484d`. No status pill, no validation message, no chart series may use them.
 `semantic-stale` marks a price we no longer trust.
+
+### Contrast, measured
+
+WCAG 2.1 relative luminance, computed against `surface-1 #101113` (the panel every row sits on;
+`canvas` is darker still, so every ratio there is higher). Measured 2026-08-27, not estimated:
+
+| Token | Ratio | AA normal (4.5) |
+|---|---|---|
+| `ink #f2f4f5` | 17.12 | PASS |
+| `ink-muted #a8aeb4` | 8.44 | PASS |
+| `ink-subtle #767d84` | 4.53 | PASS |
+| `semantic-gain #2ea043` | 5.60 | PASS |
+| `semantic-loss #e5484d` | 4.83 | PASS |
+| `semantic-stale #967740` | 4.51 | PASS |
+| `primary #22d3ee` | 10.45 | PASS |
+
+Every token clears AA for normal text, which is the bar that matters here because **the figures
+are body-sized**. Two were lifted to get there: `ink-subtle` from `#6b7178` (3.83) and
+`semantic-stale` from `#8a6d3b` (3.90). Both had passed only the large-text bar, and both are
+used at 11–13px on data that means something — a muted label that cannot be read is not muted,
+it is missing. `semantic-neutral` follows `ink-subtle` to the same value.
+
+A new colour enters this system only with its measured ratio written into this table.
 
 ## Typography
 
@@ -90,6 +127,34 @@ segment `surface-3` with cyan text. Footnote `día UTC` in `label` `ink-subtle`.
 **`chip-hidden-wallets`** — `Wallets ocultas` in `label` `ink-subtle` on `surface-2`.
 
 **`state-unpriced`** — `sin precio` in `label` `semantic-stale`, never a dash or a red −100 %.
+
+## Every surface has two states
+
+A surface is not designed until both are. The populated state is the easy half; the empty state
+is the one a visitor sees first, and today it is the **only** one they can see — the webhook is
+collecting but nothing is parsed, so every surface on this site is empty until the cron secrets
+are loaded.
+
+**An empty state says what will be here. It does not apologise.** No "Ups", no "Lo sentimos", no
+shrug illustration, no spinner pretending to be progress. It is set in `body` `ink-muted` inside
+the same panel and the same hairline the populated state uses, so the page's structure is legible
+before its data is — the reader learns the shape of the thing while it is still empty.
+
+It also **never fabricates**: no zeroed rows, no ghost placeholders, no skeleton shimmer standing
+in for records that do not exist. kolscan.io's leaderboard was captured twice showing fifty rows
+of `+0.00 Sol` from a stalled indexer, which reads as fifty traders who all broke exactly even.
+That is the failure this rule exists to prevent: an empty state that lies is worse than an empty
+page.
+
+| Surface | Populated | Empty |
+|---|---|---|
+| `leaderboard` | ranked rows, PnL by sign | `Todavía no hay operaciones cerradas.` / `Aquí va el ranking por PnL realizado del período, en cuanto los KOL del padrón cierren su primera posición.` |
+| `feed` | rows arriving at the top | `El feed está esperando la primera operación.` / `Cada compra y cada venta de los KOL del padrón aparece aquí, en cuanto la cadena la confirma.` |
+| `leaderboard` row, no closed episodes | win rate figure | `sin cierres` — never `0 %`, which claims a measurement nobody made |
+| any figure with no price | the number | `sin precio` in `semantic-stale` — never a dash, never a red −100 % |
+
+The last two are the same rule as the first, applied to one cell instead of one panel: **absence
+is rendered as absence, never as a zero.**
 
 ## Do's and Don'ts
 
