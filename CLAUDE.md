@@ -51,6 +51,47 @@ backstop, not a licence. Don't start a suite in one session while another
 session is running one: the second just sits there, and a session waiting
 20 minutes on a lock looks exactly like a session that has hung.
 
+## Kill processes by PID, never by name
+
+`pkill -f vitest` matches every vitest in the process table, not the one you
+started. Measured in another repo: one such call killed two suites belonging to
+other sessions, which then reported failures with no cause anywhere in their own
+logs — the most expensive kind of wrong answer, because the evidence lands in a
+session that did nothing wrong.
+
+Capture the PID when you start the process and kill that:
+
+    npm test & PID=$!
+    ...
+    kill "$PID"
+
+The same holds for `killall`, for `pkill -f next`, and for any pattern that could
+match a sibling session. If you did not start it, you do not get to kill it. A
+process you cannot identify by PID is one you leave alone and report.
+
+## A branch with migrations gets its own test database
+
+A migration changes the shape the whole suite runs against, so a branch carrying
+one cannot share `tests` with every other branch: whichever branch runs second
+sees the other's schema. Create a Neon branch **from `production`** — the schema
+the migration will actually meet — named for the branch, point
+`TEST_DATABASE_URL` at it in `.env.local`, and delete it when the branch merges.
+It dies with the branch; it is not a second permanent environment.
+
+`production` is the parent, not `tests`: branching from `tests` inherits whatever
+half-applied state the last branch left, which is the thing this rule exists to
+avoid.
+
+## The suite lock goes on a direct connection
+
+`vitest.globalSetup.ts` takes its advisory lock over the **direct** Neon endpoint,
+the one without `-pooler`. Session-scoped locks do not survive PgBouncer
+transaction pooling: through the pooler the lock is taken on whatever backend the
+statement happened to land on and released the moment that statement returns, so
+the guard silently protects nothing while continuing to look like it works.
+
+Anything else in the suite may use the pooled endpoint. The lock may not.
+
 ## Default posture: lazy senior
 
 A skill only fires when the model judges it relevant, and this applies to every change, so
