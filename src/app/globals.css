@@ -1,63 +1,88 @@
 /*
- * DESIGN.md, direction B ("Instrumento"), is the binding authority for every
- * value in this file. The tokens below are transcribed from its front matter;
- * changing one here without changing it there makes the design system a lie.
+ * DESIGN.md is the binding authority for every value in this file. The tokens
+ * below are transcribed from its front matter and `design-tokens.test.ts`
+ * re-reads that front matter on every run, so changing one here without
+ * changing it there is a test failure rather than a silent lie.
  *
- * Three rules from that document are load-bearing and easy to break by
+ * Four rules from that document are load-bearing and easy to break by
  * accident:
  *   1. Cyan is the only chromatic accent and never touches a figure.
  *   2. Green and red mean direction of money and nothing else — no status,
- *      no validation, no chart series.
+ *      no validation, no chart series. The podium's three tints exist as
+ *      their own tokens precisely so the podium does not spend `--gain`.
  *   3. Every number is JetBrains Mono with tabular figures.
+ *   4. "A new colour enters this system only with its measured ratio in
+ *      [DESIGN.md's contrast] table." Nothing here invents a colour.
  */
 
 :root {
-  --canvas: #08090a;
-  --surface-1: #101113;
-  --surface-2: #16181b;
-  --surface-3: #1c1f22;
-  --hairline: #212429;
-  --hairline-strong: #2f333a;
+  /* DESIGN.md: "`canvas #0f1113` under everything ... Panels at `surface-1`,
+     hover `surface-2`, selected `surface-3`." */
+  --canvas: #0f1113;
+  --surface-1: #16191c;
+  --surface-2: #1c2024;
+  --surface-3: #23272c;
+  --hairline: #2a2f35;
+  --hairline-strong: #39404a;
 
-  --ink: #f2f4f5;
-  --ink-muted: #a8aeb4;
-  --ink-subtle: #767d84;
+  --ink: #eef1f3;
+  --ink-muted: #a5adb5;
+  --ink-subtle: #7e878f;
 
+  /* DESIGN.md: "**The accent stays cyan `#22d3ee`** ... It marks the wordmark,
+     focus rings, the selected tab, and the live indicator. **It never touches
+     a figure.**" `--on-accent` is the ink for a filled accent surface; the
+     only surface that will carry one is the modal's close control (task B),
+     so today it is held by the token table alone. */
   --accent: #22d3ee;
   --on-accent: #04191d;
   --accent-hover: #67e8f9;
 
-  --gain: #2ea043;
-  --loss: #e5484d;
-  --stale: #967740;
+  --gain: #3ecf7f;
+  --loss: #f2555a;
+  --stale: #c9a227;
   /* Direction of money is gain/loss; `neutral` is the absence of a
      direction -- a zero, an unranked row. It follows ink-subtle by
      design, and is named separately so a later change to one does not
      silently move the other. */
-  --neutral: #767d84;
+  --neutral: #7e878f;
 
-  --row-height: 36px;
+  /* DESIGN.md: "**The podium is three tints, not three metals.** Rank 1 green,
+     2 amber, 3 blue — a wash behind the row (`podium-N-wash`) and the medal
+     glyph in the matching `podium-N`." Named exactly as the document names
+     them, which is why `design-tokens.test.ts`'s rename table needs no new
+     entry for them. */
+  --podium-1: #4ade80;
+  --podium-2: #fbbf24;
+  --podium-3: #7dd3fc;
+  --podium-1-wash: #12251a;
+  --podium-2-wash: #26200f;
+  --podium-3-wash: #101f2b;
+
+  /* DESIGN.md: "**Rows are 56px** — enough for a 36px circular avatar, the
+     bold name, and the handle or `Wallets ocultas` beneath it." */
+  --row-height: 56px;
   --gutter: 16px;
-  --panel-padding: 14px;
+  --panel-padding: 16px;
   /* Vertical rhythm between stacked blocks. DESIGN.md's `gutter` is the
-     12-column *column* gutter; the space between two panels is not that
-     measurement and does not have to equal it. At 1280x900 the page has
-     18 rows of content and about 250px for everything else, so the
-     difference is eight real pixels. */
+     column gutter; the space between two panels is not that measurement and
+     does not have to equal it. */
   --stack: 12px;
 
-  --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
   --radius-pill: 999px;
 
-  --data-in: 120ms ease-out;
+  --data-in: 140ms ease-out;
   --hover: 90ms linear;
 
-  /* next/font supplies these; the stacks are the fallback while a face loads
-     and on a build that could not fetch one. */
+  /* DESIGN.md, Typography: "**Inter** for all text and **JetBrains Mono** for
+     all figures." Two faces, not three — this direction has no display face
+     distinct from the body one, so there is no `--font-display`.
+     `next/font` supplies the variables; the stacks are the fallback while a
+     face loads and on a build that could not fetch one. */
   --font-body: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: var(--font-inter-tight), var(--font-inter), system-ui, sans-serif;
   --font-numeric: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo, monospace;
 
   color-scheme: dark;
@@ -69,9 +94,6 @@
   box-sizing: border-box;
 }
 
-/* `h2` and `h3` belong here as much as `h1` does. Leaving them out cost the
-   leaderboard panel 36px of user-agent margin — more than a whole row — and
-   the page's height budget is measured in rows. */
 html,
 body,
 h1,
@@ -83,11 +105,12 @@ ul {
   padding: 0;
 }
 
+/* DESIGN.md `body`: Inter, 14px, 1.45. */
 body {
   background: var(--canvas);
   color: var(--ink);
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
@@ -96,57 +119,120 @@ a {
   color: inherit;
 }
 
+/* ---------- type roles ---------- */
+
+/* One class per role in DESIGN.md's `typography` block, so a component asks
+   for a role rather than restating a size. `body` is the page default and
+   therefore has no class. */
+
+.display-lg {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.8px;
+}
+
+.headline {
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.3px;
+}
+
+/* DESIGN.md: "KOL names are **bold** (`name`, 700). That weight is the row's
+   anchor." Used by the leaderboard row's identity block and by the feed row,
+   so the two cannot drift. */
+.name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* DESIGN.md: "**`Wallets ocultas` is grey italic** (`hidden`, `ink-subtle`) —
+   the reference sets it apart from a real identifier by style, and so do we."
+   And `chip-hidden`: "not a chip: `Wallets ocultas` in `hidden`, inline, no
+   border." So: no background, no border, no uppercase — the previous
+   direction's chip was all three. */
+.hidden-wallets {
+  font-size: 13px;
+  font-weight: 400;
+  font-style: italic;
+  line-height: 1.2;
+  color: var(--ink-subtle);
+}
+
+/* DESIGN.md's `label` token sets no line-height, so it would inherit the
+   body's 1.45 — loose leading for an 11px uppercase caption. */
+.label {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+}
+
 /* ---------- layout ---------- */
 
-/* The bottom padding was 48px of dead air below the legal line. On a page
-   whose entire argument is that it fits in 900px, 48px is more than a
-   leaderboard row spent on nothing. */
 .shell {
   max-width: 1280px;
   margin: 0 auto;
   padding: 0 var(--gutter) 16px;
 }
 
+/* DESIGN.md, Layout: "Header: wordmark and subtitle left, nav centre, unit and
+   window controls plus the wallet action right." */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--gutter);
-  height: 48px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--hairline);
-}
-
-/* Spec §11: a typographic wordmark, one accent colour, dark background. The
-   accent lands on the mark — which is not a figure — and nowhere else here. */
-.wordmark {
-  font-family: var(--font-display);
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
-  text-decoration: none;
-}
-
-.wordmark .tld {
-  color: var(--accent);
+  flex-wrap: wrap;
 }
 
 .brand {
   display: flex;
-  align-items: center;
-  gap: 22px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+}
+
+/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700, with the
+   accent on the dot." The document fixes the family and the weight; the size
+   is not one of its typography roles, so it is set here at the headline's
+   measure — the wordmark is a heading, not a display figure. */
+.wordmark {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* The dot, and only the dot. The accent lands on the mark — which is not a
+   figure — and nowhere else in this header. */
+.wordmark-dot {
+  color: var(--accent);
+}
+
+.brand-subtitle {
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.2;
 }
 
 .nav {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
 }
 
-/* Cyan marks the wordmark, the focus ring, the selected timeframe, the live
-   indicator and one primary action — DESIGN.md lists them, and the current nav
-   item is not on the list. Ink against ink-muted says the same thing without
-   spending the accent a second time in the same 56px. */
+/* Cyan marks the wordmark, the focus ring, the selected segment and the live
+   indicator — DESIGN.md lists them, and the current nav item is not on the
+   list. Ink against ink-muted says the same thing without spending the accent
+   a second time in the same header. */
 .nav-link {
   color: var(--ink-muted);
   text-decoration: none;
@@ -156,6 +242,26 @@ a {
 .nav-link:hover,
 .nav-link.is-current {
   color: var(--ink);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* The wallet action's slot, held by a label rather than by a control.
+   Spec §6 makes `/registro` the only page that ever connects a wallet and it
+   does not exist yet; DESIGN.md's last Don't is "**Don't** show a control that
+   does not work." So: muted, no hover, no pointer, not focusable. */
+.registro {
+  color: var(--ink-subtle);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
 }
 
 /* Spec §1.9. Rendered only when the setting exists, so this styles a state the
@@ -178,17 +284,13 @@ a {
   background: var(--surface-2);
 }
 
-/* DESIGN.md's `label` token sets no line-height, so it was inheriting the
-   body's 1.45 — loose leading for an 11px uppercase caption, and two pixels a
-   line on a page counted in pixels. */
-.label {
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.3;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-subtle);
+.page-head {
+  margin-top: var(--stack);
+}
+
+.page-subtitle {
+  color: var(--ink-muted);
+  margin-top: 2px;
 }
 
 .panel {
@@ -200,10 +302,9 @@ a {
 
 /* The home page puts the feed and the leaderboard in **one** panel with a
    hairline between them, rather than two cards each with its own padding and
-   border. DESIGN.md's depth model is surface steps and hairlines — a divided
-   instrument panel is more its idiom than two floating boxes — and it gives
-   back a padding pair, a border pair and a gap, which at 1280x900 is part of
-   the difference between fitting and not. */
+   border. DESIGN.md's depth model is surface steps and hairlines — "there are
+   no shadows except the modal's scrim" — and a divided panel is more its idiom
+   than two floating boxes. */
 .panel-section + .panel-section {
   border-top: 1px solid var(--hairline);
   padding-top: var(--stack);
@@ -218,17 +319,6 @@ a {
   margin-bottom: 8px;
 }
 
-/* DESIGN.md's `headline` token, in full: the line-height is 1.2, not the
-   body's 1.45. Inheriting the body value made every headline 6px taller than
-   the system says it is. */
-.headline {
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.4px;
-}
-
 .live {
   display: inline-flex;
   align-items: center;
@@ -238,7 +328,7 @@ a {
 .live-dot {
   width: 6px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent);
   flex: none;
 }
@@ -250,10 +340,9 @@ a {
 }
 
 .panel-link {
-  font-family: var(--font-body);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-muted);
   text-decoration: none;
@@ -264,18 +353,20 @@ a {
   color: var(--ink);
 }
 
-/* ---------- segmented-window ---------- */
+/* ---------- segmented ---------- */
 
+/* DESIGN.md `segmented`: "`Diario · Semanal · Mensual` and `SOL · USD` as pill
+   segments; selected segment `surface-3` with cyan text. All three windows are
+   real aggregations; none is a disabled stub." Links rather than buttons —
+   every combination is a URL, so the state survives a reload and the control
+   ships no script of its own. */
 .controls {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-/* DESIGN.md `segmented-window`: pill segments, the selected one on surface-3
-   with cyan text. Links rather than buttons — every combination is a URL, so
-   the state survives a reload and the page ships no script for it. */
 .segmented {
   display: inline-flex;
   gap: 2px;
@@ -285,15 +376,14 @@ a {
 }
 
 .segment {
-  font-family: var(--font-body);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-muted);
   text-decoration: none;
   padding: 5px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition:
     color var(--hover),
     background var(--hover);
@@ -308,33 +398,27 @@ a {
   color: var(--accent);
 }
 
-/* `día UTC`, and the USD caveat. Under the control, where the reader choosing
-   a window is the reader who needs the boundary. */
+/* `día UTC`, and the USD caveat. Above the figures they qualify, never behind
+   a hover. */
 .control-note {
-  margin-top: 6px;
+  margin-bottom: 10px;
 }
 
 .table-note {
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 /* ---------- empty states ---------- */
 
 /* DESIGN.md, "Every surface has two states": *An empty state says what will be
-   here. It does not apologise.* It sits inside the same panel and the same
-   hairline the populated state uses — the feed's inside `.feed-list`, which
-   already reserves eight rows — so the page's structure is legible before its
-   data is.
+   here and does not apologise* — no "Ups", no shrug illustration, no spinner
+   pretending to be progress, and above all no zeroed rows. It sits inside the
+   same panel and the same hairline the populated state uses, so the page's
+   structure is legible before its data is.
 
    Two lines, both in the `body` token, which is the page default and therefore
    declares no face or size here: the statement of fact in `ink`, and what will
-   occupy the space in `ink-muted`. Nothing else. No illustration, no spinner,
-   no skeleton shimmer and no zeroed rows — DESIGN.md's measured case is
-   kolscan.io's leaderboard showing fifty rows of `+0.00 Sol` off a stalled
-   indexer, which reads as fifty traders who all broke exactly even.
-
-   The padding matches what the populated state's first row would have sat at,
-   so the block starts where the data will. */
+   occupy the space in `ink-muted`. */
 .state-empty {
   padding: 12px 2px;
 }
@@ -349,9 +433,9 @@ a {
 
 /* ---------- leaderboard ---------- */
 
-/* Fixed layout is the point: DESIGN.md requires that a live update never
-   reflow a column, and automatic layout widens the PnL column the moment a
-   figure crosses from 9,99 to 10,01. */
+/* Fixed layout is the point: DESIGN.md requires "fixed column widths so a live
+   update never reflows a table", and automatic layout widens the PnL column the
+   moment a figure crosses from 9,99 to 10,01. */
 .leaderboard {
   width: 100%;
   table-layout: fixed;
@@ -359,24 +443,27 @@ a {
 }
 
 .col-rank {
-  width: 40px;
+  width: 68px;
 }
 
-.col-closed,
+.col-closed {
+  width: 84px;
+}
+
 .col-rate {
-  width: 92px;
+  width: 96px;
 }
 
 .col-primary {
-  width: 172px;
+  width: 168px;
 }
 
 .col-secondary {
-  width: 150px;
+  width: 132px;
 }
 
 .leaderboard th {
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
   text-align: left;
   vertical-align: middle;
@@ -398,57 +485,107 @@ a {
   text-overflow: ellipsis;
 }
 
+/* DESIGN.md `row-leaderboard`: "56px, hairline bottom, `surface-2` on hover,
+   whole row clickable and focusable (it opens the modal)." */
 .row-leaderboard {
   transition: background var(--hover);
 }
 
-.row-leaderboard:hover {
+/* The pointer only appears once there is something to open — see
+   `kol-modal.tsx`. A cursor that promises a click nothing answers is the same
+   lie as a disabled tab with a tooltip. */
+.row-leaderboard.is-clickable {
+  cursor: pointer;
+}
+
+/* "Ranks 1–3 additionally carry their `podium-N-wash` background." */
+.row-leaderboard.is-podium-1 {
+  background: var(--podium-1-wash);
+}
+
+.row-leaderboard.is-podium-2 {
+  background: var(--podium-2-wash);
+}
+
+.row-leaderboard.is-podium-3 {
+  background: var(--podium-3-wash);
+}
+
+/* The hover state is stated for `row-leaderboard` without exception, so it
+   applies to the podium too: the wash says which rank a row is, the hover says
+   which row the pointer is on, and the second has to win while it lasts or the
+   top three stop responding to the cursor. */
+.row-leaderboard:hover,
+.row-leaderboard:focus-visible {
   background: var(--surface-2);
 }
 
-/* The transparent border on every row is what keeps the podium bar from
-   shifting the rank column by 2px on ranks 1–3. */
-.row-leaderboard td:first-child {
-  border-left: 2px solid transparent;
-}
-
-/* DESIGN.md: a 2px cyan bar on the left edge — no medals, no trophies, no
-   emoji. The accent is on the edge, never on the figure. */
-.row-leaderboard.is-podium td:first-child {
-  border-left: 2px solid var(--accent);
-}
-
-.leaderboard .rank {
-  color: var(--ink-subtle);
-  text-align: right;
-}
-
-.kol-cell {
+/* The rank cell holds two things and must not reflow between them, so the flex
+   row lives in a span: `display: flex` on a `td` takes it out of table layout
+   and the fixed column widths go with it. */
+.rank-cell {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.rank-num {
+  color: var(--ink-subtle);
+}
+
+/* The medal box is rendered on every row, empty below rank 3, so the podium
+   glyph does not shift the rank column by its own width. */
+.medal {
+  flex: none;
+  width: 14px;
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+}
+
+.medal-1 {
+  color: var(--podium-1);
+}
+
+.medal-2 {
+  color: var(--podium-2);
+}
+
+.medal-3 {
+  color: var(--podium-3);
+}
+
+/* DESIGN.md: "36px circular avatar from `/api/avatar/<kol_id>`; a two-line
+   identity block — `name` on top, and beneath it the `@handle` linked to X
+   **or** `Wallets ocultas` in `hidden`; the cabal chip". */
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
-.leaderboard td.kol {
-  padding-right: 12px;
+.identity-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
-.kol-cell .kol-name {
+.identity-lines > * {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.x-link {
-  flex: none;
-  color: var(--ink-subtle);
+.handle {
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--ink-muted);
   text-decoration: none;
-  font-size: 12px;
-  font-weight: 600;
   transition: color var(--hover);
 }
 
-.x-link:hover {
+.handle:hover {
   color: var(--ink);
 }
 
@@ -459,15 +596,17 @@ a {
   text-align: right;
 }
 
+/* DESIGN.md `row-leaderboard`: "the USD total in `numeric` `ink-muted` in
+   parentheses." */
 .leaderboard .secondary {
-  color: var(--ink-subtle);
+  color: var(--ink-muted);
 }
 
 /* DESIGN.md `numeric-lg`, and the one figure on the row that carries a sign
    colour. */
 .num-lg {
   font-family: var(--font-numeric);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -497,7 +636,7 @@ a {
   font-family: var(--font-body);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--stale);
 }
@@ -511,7 +650,7 @@ a {
   font-family: var(--font-body);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-subtle);
 }
@@ -520,23 +659,20 @@ a {
 
 /* The container reserves its height so the first trade of the session does not
    grow the page under the reader's cursor, and so the empty state occupies the
-   space the rows will. */
+   space the rows will. `overflow-y` keeps a busy minute inside the panel
+   instead of pushing the leaderboard off the screen.
+
+   Six rows, not the eight the previous direction reserved: the row token grew
+   from 36px to 56px, so eight rows would now be 448px of feed above the
+   ranking. Six holds roughly the block the feed already occupied. DESIGN.md
+   does not fix this count — it says nothing about the feed's height — so it is
+   a judgement, recorded here rather than presented as a rule. */
 .feed-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  /* DESIGN.md: *a fixed-height column that grows at the top*, and eight rows
-     is the height its thesis names — the leaderboard's ten and the feed's
-     eight share one 900px viewport. `min-height` reserved the space but did
-     not cap it, so a busy minute pushed the panel to fifty rows and the
-     leaderboard below it off the screen: the thesis held only while nothing
-     was happening. A fixed height keeps the newest eight where the reader is
-     looking and puts the rest one scroll away, inside the panel, where it
-     cannot move anything else on the page. */
-  height: calc(8 * var(--row-height));
+  height: calc(6 * var(--row-height));
   overflow-y: auto;
-  /* The rows are the scroll surface, so the last one's hairline should not
-     double up with the panel's own padding. */
   overscroll-behavior: contain;
 }
 
@@ -551,9 +687,8 @@ a {
   overflow: hidden;
 }
 
-/* DESIGN.md motion: 120ms, functional, and never on position — a row that
-   slid into place would announce itself, and would also be the one thing the
-   document forbids animating. Opacity only. */
+/* DESIGN.md motion `data-in`: 140ms, functional, and never on position — a row
+   that slid into place would announce itself. Opacity only. */
 .row-feed.is-new {
   animation: feed-in var(--data-in);
 }
@@ -567,23 +702,29 @@ a {
   }
 }
 
+/* DESIGN.md motion `reduced: none`. */
 @media (prefers-reduced-motion: reduce) {
   .row-feed.is-new {
     animation: none;
   }
 }
 
+/* The box is reserved by the span, so a slow image, a failed image and a
+   monogram all occupy the same square and nothing on the row moves.
+   `--avatar-size` is set by the component: 36px on the leaderboard row, per
+   DESIGN.md, and 22px in the feed's one-line sentence, which the document does
+   not size. */
 .avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
+  width: var(--avatar-size, 22px);
+  height: var(--avatar-size, 22px);
+  border-radius: var(--radius-pill);
   flex: none;
   display: grid;
   place-items: center;
   background: linear-gradient(135deg, var(--surface-3), var(--surface-2));
   border: 1px solid var(--hairline-strong);
   color: var(--ink-subtle);
-  font-size: 10px;
+  font-size: calc(var(--avatar-size, 22px) * 0.42);
   font-weight: 600;
   overflow: hidden;
 }
@@ -601,10 +742,6 @@ a {
   text-overflow: ellipsis;
 }
 
-.kol-name {
-  font-weight: 500;
-}
-
 .symbol {
   font-weight: 500;
 }
@@ -614,28 +751,23 @@ a {
   color: var(--ink-muted);
 }
 
-/* DESIGN.md `chip-cabal`: a 2px chip, hairline border, muted ink. Not a
-   colour, because colour in this system already means something. */
+/* DESIGN.md `chip-cabal`: "the group's 3–4 letter tag, `label`, `radius-sm`,
+   tinted per cabal." The tag, the `label` role and the radius are here; the
+   per-cabal tint is not, and is not invented: DESIGN.md publishes no cabal
+   palette and no contrast row for one, and its own rule is that "a new colour
+   enters this system only with its measured ratio in this table". A generated
+   hue would also be free to land on green or red, which the same document
+   reserves for direction of money. Recorded in the batch report. */
 .chip-cabal {
-  font-size: 10px;
-  padding: 1px 5px;
-  border: 1px solid var(--hairline);
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-sm);
   color: var(--ink-muted);
-}
-
-/* DESIGN.md `chip-hidden-wallets`. Spec §7: this is the only thing that
-   appears where an address would have. */
-.chip-hidden-wallets {
-  flex: none;
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-subtle);
-  background: var(--surface-2);
-  border-radius: var(--radius-sm);
-  padding: 2px 6px;
 }
 
 /* Fixed width: the age column is the one thing on the row that changes every
