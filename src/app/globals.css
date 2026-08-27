@@ -318,6 +318,35 @@ a {
   margin-top: 6px;
 }
 
+/* ---------- empty states ---------- */
+
+/* DESIGN.md, "Every surface has two states": *An empty state says what will be
+   here. It does not apologise.* It sits inside the same panel and the same
+   hairline the populated state uses — the feed's inside `.feed-list`, which
+   already reserves eight rows — so the page's structure is legible before its
+   data is.
+
+   Two lines, both in the `body` token, which is the page default and therefore
+   declares no face or size here: the statement of fact in `ink`, and what will
+   occupy the space in `ink-muted`. Nothing else. No illustration, no spinner,
+   no skeleton shimmer and no zeroed rows — DESIGN.md's measured case is
+   kolscan.io's leaderboard showing fifty rows of `+0.00 Sol` off a stalled
+   indexer, which reads as fifty traders who all broke exactly even.
+
+   The padding matches what the populated state's first row would have sat at,
+   so the block starts where the data will. */
+.state-empty {
+  padding: 12px 2px;
+}
+
+.state-empty-lead {
+  color: var(--ink);
+}
+
+.state-empty-note {
+  color: var(--ink-muted);
+}
+
 /* ---------- leaderboard ---------- */
 
 /* Fixed layout is the point: DESIGN.md requires that a live update never
@@ -442,11 +471,6 @@ a {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
-}
-
-.table-empty {
-  color: var(--ink-subtle);
-  padding: 12px 2px;
 }
 
 /* ---------- numbers ---------- */
@@ -627,11 +651,6 @@ a {
 a.row-age:hover {
   color: var(--ink-muted);
   transition: color var(--hover);
-}
-
-.feed-empty {
-  color: var(--ink-subtle);
-  padding: 12px 2px;
 }
 
 .footnote {

@@ -133,8 +133,22 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
             isNew={arriving.has(trade.id)}
           />
         ))}
+        {/*
+          DESIGN.md, "Every surface has two states": the empty state is set in
+          the same panel and the same hairline the populated state uses — here,
+          inside `.feed-list`, which already reserves eight rows — so the page's
+          structure is legible before its data is. Two lines, verbatim from that
+          document's table: the fact, then what will occupy the space. No
+          illustration, no spinner, no skeleton, and no zeroed rows.
+        */}
         {trades.length === 0 && (
-          <li className="feed-empty">Todavía no hay operaciones registradas.</li>
+          <li className="state-empty">
+            <p className="state-empty-lead">El feed está esperando la primera operación.</p>
+            <p className="state-empty-note">
+              Cada compra y cada venta de los KOL del padrón aparece aquí, en cuanto la cadena la
+              confirma.
+            </p>
+          </li>
         )}
       </ul>
     </section>

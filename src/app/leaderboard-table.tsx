@@ -34,8 +34,26 @@ export function LeaderboardTable({
    */
   showHeader?: boolean;
 }) {
+  /*
+    DESIGN.md, "Every surface has two states". The empty state stays inside the
+    panel and the hairline the table sits in, and says what will be here without
+    apologising — two lines, verbatim from that document's table. The caption
+    below the table goes with the table: it defines a column that is not there.
+
+    No header row over nothing and no zeroed rows: DESIGN.md's rule is that an
+    empty state *never fabricates*, with kolscan.io's fifty rows of `+0.00 Sol`
+    from a stalled indexer as the measured case.
+  */
   if (entries.length === 0) {
-    return <p className="table-empty">Todavía no hay KOLs en la clasificación.</p>;
+    return (
+      <div className="state-empty">
+        <p className="state-empty-lead">Todavía no hay operaciones cerradas.</p>
+        <p className="state-empty-note">
+          Aquí va el ranking por PnL realizado del período, en cuanto los KOL del padrón cierren su
+          primera posición.
+        </p>
+      </div>
+    );
   }
 
   return (
