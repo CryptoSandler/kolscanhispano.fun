@@ -1,203 +1,193 @@
 ---
-version: alpha
+version: beta
 name: kolscanhispano
-description: "A near-black instrument panel for a Solana trade tracker on #08090a, with hairline-bordered charcoal panels and a single cyan accent (#22d3ee) that never appears on a number. Inter Tight sets display at tight negative tracking; JetBrains Mono with tabular figures sets every figure. Rows run at 36px so a full leaderboard and a live feed fit one screen together, radii stay at 4px, and motion is 120ms and functional — a state changed, not a thing announced. The system reads as a trading instrument: dense, quiet, and legible at a glance."
+description: "A dark leaderboard-first tracker for Solana KOLs. Near-black #0f1113 ground, panels a step above it, and a podium whose first three rows carry a green, amber and blue tint. Names in bold, hidden wallets in grey italic, cabal tags as coloured chips, circular avatars served from our own origin. One SOL figure per row, signed and coloured, with the USD total in parentheses at the end. Inter sets text, JetBrains Mono sets every figure with tabular numerals. The reference is the kolscan genre; the identity, the accent and every asset are ours."
 colors:
   primary: "#22d3ee"
   on-primary: "#04191d"
   primary-hover: "#67e8f9"
-  ink: "#f2f4f5"
-  ink-muted: "#a8aeb4"
-  ink-subtle: "#767d84"
-  canvas: "#08090a"
-  surface-1: "#101113"
-  surface-2: "#16181b"
-  surface-3: "#1c1f22"
-  hairline: "#212429"
-  hairline-strong: "#2f333a"
-  semantic-gain: "#2ea043"
-  semantic-loss: "#e5484d"
-  semantic-neutral: "#767d84"
-  semantic-stale: "#967740"
+  ink: "#eef1f3"
+  ink-muted: "#a5adb5"
+  ink-subtle: "#7e878f"
+  canvas: "#0f1113"
+  surface-1: "#16191c"
+  surface-2: "#1c2024"
+  surface-3: "#23272c"
+  hairline: "#2a2f35"
+  hairline-strong: "#39404a"
+  semantic-gain: "#3ecf7f"
+  semantic-loss: "#f2555a"
+  semantic-neutral: "#7e878f"
+  semantic-stale: "#c9a227"
+  podium-1: "#4ade80"
+  podium-2: "#fbbf24"
+  podium-3: "#7dd3fc"
+  podium-1-wash: "#12251a"
+  podium-2-wash: "#26200f"
+  podium-3-wash: "#101f2b"
 typography:
-  display-lg: { fontFamily: "Inter Tight", fontSize: 36px, fontWeight: 600, lineHeight: 1.1, letterSpacing: -1.2px }
-  headline:   { fontFamily: "Inter Tight", fontSize: 22px, fontWeight: 600, lineHeight: 1.2, letterSpacing: -0.4px }
-  body:       { fontFamily: Inter, fontSize: 13px, fontWeight: 400, lineHeight: 1.45 }
-  label:      { fontFamily: Inter, fontSize: 11px, fontWeight: 500, letterSpacing: 0.04em, textTransform: uppercase }
+  display-lg: { fontFamily: "Inter", fontSize: 30px, fontWeight: 700, lineHeight: 1.15, letterSpacing: -0.8px }
+  headline:   { fontFamily: "Inter", fontSize: 20px, fontWeight: 650, lineHeight: 1.2, letterSpacing: -0.3px }
+  body:       { fontFamily: Inter, fontSize: 14px, fontWeight: 400, lineHeight: 1.45 }
+  name:       { fontFamily: Inter, fontSize: 15px, fontWeight: 700, lineHeight: 1.2 }
+  hidden:     { fontFamily: Inter, fontSize: 13px, fontWeight: 400, fontStyle: italic }
+  label:      { fontFamily: Inter, fontSize: 11px, fontWeight: 500, letterSpacing: 0.06em, textTransform: uppercase }
   numeric:    { fontFamily: "JetBrains Mono", fontSize: 13px, fontWeight: 500, fontVariantNumeric: "tabular-nums" }
-  numeric-lg: { fontFamily: "JetBrains Mono", fontSize: 17px, fontWeight: 600, fontVariantNumeric: "tabular-nums" }
-rounded: { sm: 2px, md: 4px, lg: 6px, pill: 999px }
-spacing: { row-height: 36px, gutter: 16px, panel-padding: 14px }
-motion:  { data-in: "120ms ease-out", hover: "90ms linear", reduced: "none" }
+  numeric-lg: { fontFamily: "JetBrains Mono", fontSize: 16px, fontWeight: 600, fontVariantNumeric: "tabular-nums" }
+rounded: { sm: 3px, md: 6px, lg: 10px, pill: 999px }
+spacing: { row-height: 56px, gutter: 16px, panel-padding: 16px }
+motion:  { data-in: "140ms ease-out", hover: "90ms linear", reduced: "none" }
 ---
 
 ## Overview
 
-Base direction: Linear's design analysis. What was taken is its structure — the deepest dark
-canvas in the catalogue, charcoal panels separated by hairlines rather than shadows, one accent
-used on the mark and on focus and nowhere decorative, and a technical density that treats the
-reader as competent. What was deliberately not taken is its identity: the lavender `#5e6ad2`, the
-Linear Display face, and the airy marketing rhythm of the source, which is a promotional page and
-not an instrument. Cyan, Inter Tight, and a 36px row are what make this ours.
+This direction **supersedes "Instrumento"** (the 36px hairline instrument panel, `#08090a`,
+cyan-on-charcoal) by **the owner's decision on 2026-08-27**, after a visual gate on the
+preview. The earlier direction is not a rejected alternative to be argued with — it was
+built, reviewed and replaced on sight of the reference. What survives from it: the accent,
+the tabular-figures rule, the two-states rule, and the prohibition on green and red for
+anything that is not money.
+
+What changes: the ground lifts to `#0f1113`, rows grow from 36px to 56px to hold a circular
+avatar and two lines of identity, the podium gains medals and tinted rows, and the KOL
+detail becomes a modal rather than a page.
+
+The reference is the kolscan genre — **both** kolscan.io (SOL-only, so its row maps
+directly) and kolscanbrasil.io (the podium, the badges, the modal). See
+`docs/references.md` §6 for what was taken from which and why. Nothing is copied: no asset,
+no logo, no face, no string.
 
 ## Identity
 
-The direction is **Instrumento**. The name is the whole brief: this is a panel someone leaves
-open beside their trading, not a page they visit. It is dense, quiet, and answers a glance.
+The wordmark is the domain in Inter 700, with the accent on the dot. Subtitle:
+**"Ranking de traders hispanos"**. No logo, no mascot, no illustration.
 
-The wordmark is the domain, set in Inter Tight at display weight with the accent on the dot —
-no logo, no illustration, no mascot. `kolscanhispano.fun` is the brand, so the name does the
-work and nothing has to be drawn.
-
-**The accent is cyan `#22d3ee`, chosen partly because neither reference uses it.** kolscan.io
-runs a purple-leaning dark chrome; kolscanbrasil.io declares `theme-color #111315` with no
-chromatic accent on the row at all. Reading as the genre must not mean reading as them, and the
-accent is the cheapest place to be unmistakably ours. It never touches a figure — see below.
+**The accent stays cyan `#22d3ee`** and neither reference uses it. It marks the wordmark,
+focus rings, the selected tab, and the live indicator. **It never touches a figure.**
 
 ## Colors
 
-`canvas #08090a` under everything. Panels at `surface-1`, hover `surface-2`, selected `surface-3`.
-Hairlines separate; shadows do not exist in this system.
+`canvas #0f1113` under everything — near the ground the genre uses, deliberately not
+identical to it. Panels at `surface-1`, hover `surface-2`, selected `surface-3`. Hairlines
+separate; there are no shadows except the modal's scrim.
 
-**Cyan `#22d3ee` is the only chromatic accent** and it is forbidden on numbers. It marks the
-wordmark, the focus ring, the selected timeframe, the live indicator, and one primary action.
+**Green and red are direction of money and nothing else.** `semantic-gain #3ecf7f`,
+`semantic-loss #f2555a`. No status pill, no chart series, no validation message may use them.
 
-**Green and red are reserved for direction of money.** `semantic-gain #2ea043`,
-`semantic-loss #e5484d`. No status pill, no validation message, no chart series may use them.
-`semantic-stale` marks a price we no longer trust.
+**The podium is three tints, not three metals.** Rank 1 green, 2 amber, 3 blue — a wash
+behind the row (`podium-N-wash`) and the medal glyph in the matching `podium-N`. It is the
+reference's gradient, in our palette.
 
 ### Contrast, measured
 
-WCAG 2.1 relative luminance, computed against `surface-1 #101113` (the panel every row sits on;
-`canvas` is darker still, so every ratio there is higher). Measured 2026-08-27, not estimated:
+WCAG 2.1, against `surface-1 #16191c`. Measured 2026-08-27:
 
 | Token | Ratio | AA normal (4.5) |
 |---|---|---|
-| `ink #f2f4f5` | 17.12 | PASS |
-| `ink-muted #a8aeb4` | 8.44 | PASS |
-| `ink-subtle #767d84` | 4.53 | PASS |
-| `semantic-gain #2ea043` | 5.60 | PASS |
-| `semantic-loss #e5484d` | 4.83 | PASS |
-| `semantic-stale #967740` | 4.51 | PASS |
-| `primary #22d3ee` | 10.45 | PASS |
+| `ink #eef1f3` | 15.56 | PASS |
+| `ink-muted #a5adb5` | 7.77 | PASS |
+| `ink-subtle #7e878f` | 4.83 | PASS |
+| `semantic-gain #3ecf7f` | 8.77 | PASS |
+| `semantic-loss #f2555a` | 5.23 | PASS |
+| `semantic-stale #c9a227` | 7.30 | PASS |
+| `primary #22d3ee` | 9.77 | PASS |
+| `podium-1 #4ade80` | 10.13 | PASS |
+| `podium-2 #fbbf24` | 10.57 | PASS |
+| `podium-3 #7dd3fc` | 10.58 | PASS |
 
-Every token clears AA for normal text, which is the bar that matters here because **the figures
-are body-sized**. Two were lifted to get there: `ink-subtle` from `#6b7178` (3.83) and
-`semantic-stale` from `#8a6d3b` (3.90). Both had passed only the large-text bar, and both are
-used at 11–13px on data that means something — a muted label that cannot be read is not muted,
-it is missing. `semantic-neutral` follows `ink-subtle` to the same value.
-
-A new colour enters this system only with its measured ratio written into this table.
+`ink` on each podium wash: 14.18, 14.28, 14.78 — all PASS. A new colour enters this system
+only with its measured ratio in this table; `design-tokens.test.ts` recomputes every row.
 
 ## Typography
 
-Inter Tight for display and headline with real negative tracking. Inter for body and labels.
-**JetBrains Mono with tabular figures for every number** — PnL, percentages, SOL and USD amounts,
-token quantities, prices, ages. A column of figures must align on the decimal for its whole
-height.
+**Inter** for all text and **JetBrains Mono** for all figures. Both are SIL Open Font
+License — chosen for licence first and proximity second, because a paid face cannot be
+identified-and-matched without copying the thing that makes it paid.
+
+**Every figure is tabular**: PnL, percentages, SOL and USD amounts, quantities, prices,
+ages, ranks. A column of figures aligns on the decimal for its whole height.
+
+- KOL names are **bold** (`name`, 700). That weight is the row's anchor.
+- **`Wallets ocultas` is grey italic** (`hidden`, `ink-subtle`) — the reference sets it
+  apart from a real identifier by style, and so do we.
 
 Spanish `es-ES` numerals throughout: `+18,42 SOL`, `1.802,4`, `68,4 %`.
 
-**One documented exception: the avatar monogram is set in `system-ui`.** The
-fallback avatar is an SVG served from `/api/avatar/<kol_id>` and consumed inside an
-`<img>`, and an image loaded that way is an isolated document — it cannot reach the
-`@font-face` rules `next/font` installs on the page, so Inter Tight is unavailable
-to it no matter how it is declared. Embedding the face in the SVG would mean
-shipping a font subset on every fallback avatar, for one or two letters.
-
-This is a platform boundary, not an oversight, and it is written here so that no
-future audit files it as a typography regression. It applies **only** to the
-monogram glyph inside that SVG. Every other letter and every figure on this site
-uses the faces above, and the rule that all figures are tabular is unaffected — a
-monogram is a letter, never a number.
+**One documented exception: the avatar monogram is set in `system-ui`.** The fallback avatar
+is an SVG served from `/api/avatar/<kol_id>` and consumed inside an `<img>`, which is an
+isolated document that cannot reach `next/font`'s `@font-face`. A platform boundary, not an
+oversight; it applies only to that glyph, and never to a figure.
 
 ## Layout
 
-12 columns, 1280px maximum, 16px gutters. The 36px row is the point of this direction: the
-leaderboard's top ten and the live feed's last eight should share one 900px viewport without
-scrolling. Leaderboard is a table with fixed column widths so figures never reflow as data
-updates. Feed is a fixed-height column that grows at the top.
+1280px maximum, 16px gutters. **Rows are 56px** — enough for a 36px circular avatar, the
+bold name, and the handle or `Wallets ocultas` beneath it. Fixed column widths so a live
+update never reflows a table.
 
-## Shapes & Depth
-
-4px radii on panels, 2px on chips, pill only on segmented toggles. Depth is surface steps and
-hairlines, never a shadow or a glow.
+Header: wordmark and subtitle left, nav centre, unit and window controls plus the wallet
+action right.
 
 ## Components
 
-**`row-leaderboard`** — 36px, hairline bottom, `surface-2` on hover. Rank in `numeric`
-`ink-subtle`; avatar 22px; name `body` 500; cabal tag a 2px chip; `wins / losses` and win rate in
-`numeric` `ink-muted`; PnL in `numeric-lg` by sign; secondary unit in `numeric` `ink-subtle`.
-Ranks 1–3 carry a 2px cyan bar on the left edge — no medals, no trophies.
+**`row-leaderboard`** — 56px, hairline bottom, `surface-2` on hover, whole row clickable and
+focusable (it opens the modal). Left to right: rank as zero-padded `numeric` with the medal
+glyph on ranks 1–3; 36px circular avatar from `/api/avatar/<kol_id>`; a two-line identity
+block — `name` on top, and beneath it the `@handle` linked to X **or** `Wallets ocultas` in
+`hidden`; the cabal chip; then right-aligned, the SOL figure in `numeric-lg` coloured by
+sign, and the USD total in `numeric` `ink-muted` in parentheses.
 
-**`row-feed`** — 36px, hairline bottom. Avatar, name, verb, amount, token quantity, symbol,
-price, relative time right-aligned. Sign colour on the verb and amount only. A new row appears
-at the top over `motion.data-in` with no layout shift: the container reserves its height.
+Ranks 1–3 additionally carry their `podium-N-wash` background.
 
-**`segmented-window`** — `Diario · Semanal · Mensual` and `SOL · USD` as pill segments, selected
-segment `surface-3` with cyan text. Footnote `día UTC` in `label` `ink-subtle`.
+**`chip-cabal`** — the group's 3–4 letter tag, `label`, `radius-sm`, tinted per cabal.
 
-**`chip-hidden-wallets`** — `Wallets ocultas` in `label` `ink-subtle` on `surface-2`.
+**`chip-hidden`** — not a chip: `Wallets ocultas` in `hidden`, inline, no border. It occupies
+the slot where the reference prints a truncated address, which is what makes it read as
+native rather than as something withheld.
 
-**`state-unpriced`** — `sin precio` in `label` `semantic-stale`, never a dash or a red −100 %.
+**`segmented`** — `Diario · Semanal · Mensual` and `SOL · USD` as pill segments; selected
+segment `surface-3` with cyan text. All three windows are real aggregations; none is a
+disabled stub.
+
+**`modal-kol`** — opened from a row, dismissible by `Esc`, backdrop click and a close button;
+focus trapped; the trigger row regains focus on close. Header: 64px avatar, `name`, cabal
+chip, `@handle` or `Wallets ocultas`, and the period's total PnL in `numeric-lg` by sign.
+**Where the reference prints a truncated address, we print nothing.**
+
+Then, in order: **`card-pnl-evolution`** — a line chart in `semantic-gain` (or
+`semantic-loss` when the period is negative) with point markers, `1D · 7D · 30D` segments,
+and a time axis; **`card-stats`** — PnL total, trades, volume; **`card-chain-pnl`** — one
+line, SOL, because that is every chain we index; **`list-defi-trades`** — the KOL's trades,
+each with verb, SOL amount by sign and its USD equivalent, and where the wallet is hidden
+the row reads `PRIVADO` with a padlock instead of a signature link.
+
+**`state-unpriced`** — `sin precio` in `semantic-stale`, never a dash, never a red −100 %.
 
 ## Every surface has two states
 
-A surface is not designed until both are. The populated state is the easy half; the empty state
-is the one a visitor sees first, and today it is the **only** one they can see — the webhook is
-collecting but nothing is parsed, so every surface on this site is empty until the cron secrets
-are loaded.
-
-**An empty state says what will be here. It does not apologise.** No "Ups", no "Lo sentimos", no
-shrug illustration, no spinner pretending to be progress. It is set in `body` `ink-muted` inside
-the same panel and the same hairline the populated state uses, so the page's structure is legible
-before its data is — the reader learns the shape of the thing while it is still empty.
-
-It also **never fabricates**: no zeroed rows, no ghost placeholders, no skeleton shimmer standing
-in for records that do not exist. kolscan.io's leaderboard was captured twice showing fifty rows
-of `+0.00 Sol` from a stalled indexer, which reads as fifty traders who all broke exactly even.
-That is the failure this rule exists to prevent: an empty state that lies is worse than an empty
-page.
+A surface is not designed until both are. **An empty state says what will be here and does
+not apologise** — no "Ups", no shrug illustration, no spinner pretending to be progress, and
+above all **no zeroed rows**: kolscan.io was captured twice showing fifty rows of `+0.00 Sol`
+from a stalled indexer, which reads as fifty traders who all broke exactly even.
 
 | Surface | Populated | Empty |
 |---|---|---|
 | `leaderboard` | ranked rows, PnL by sign | `Todavía no hay operaciones cerradas.` / `Aquí va el ranking por PnL realizado del período, en cuanto los KOL del padrón cierren su primera posición.` |
 | `feed` | rows arriving at the top | `El feed está esperando la primera operación.` / `Cada compra y cada venta de los KOL del padrón aparece aquí, en cuanto la cadena la confirma.` |
-| `leaderboard` row, no closed episodes | win rate figure | `sin cierres` — never `0 %`, which claims a measurement nobody made |
-| any figure with no price | the number | `sin precio` in `semantic-stale` — never a dash, never a red −100 % |
+| `modal-kol` chart | line with points | `Sin operaciones cerradas en este período.` |
+| row, no closed episodes | win rate | `sin cierres` — never `0 %` |
+| any figure with no price | the number | `sin precio` |
 
-The last two are the same rule as the first, applied to one cell instead of one panel: **absence
-is rendered as absence, never as a zero.**
+Absence is rendered as absence, never as a zero.
 
 ## Do's and Don'ts
 
-- **Do** fit the leaderboard and the feed on one screen; that is this direction's whole thesis.
+- **Do** keep every figure tabular and every name bold.
 - **Do** fix column widths so a live update never reflows a table.
 - **Do** keep cyan off every figure.
-- **Don't** use green or red for anything that is not profit or loss.
-- **Don't** animate beyond 120ms, and never animate position.
-- **Don't** add a medal, a flame, a rocket, or any emoji to a rank.
-
-## Directions considered and rejected
-
-Two other directions were built to the same brief, with mockups of the leaderboard and the feed,
-and are kept in `docs/design/` for the record. They were rejected on their merits; do not
-reintroduce them piecemeal.
-
-**A — Editorial** (base: Vercel's report-website guidance). Instrument Serif display, amber
-accent, 44px rows, 240ms motion. It read well and sat furthest from the crypto genre, which was
-its appeal. Rejected because its comfort costs rows: at 44px the leaderboard's top ten and the
-live feed cannot share a viewport, and this product is one people leave open. A serif display
-also fights the tabular figures it sits above rather than framing them. **Do not** reach back for
-the serif, the 44px row, or the 240ms fade.
-
-**C — Terminal** (base: ClickHouse). Pure black, monospace as the default voice, 28px rows, 2px
-radii, magenta accent. Its inversion of the source — colouring figures by meaning rather than by
-brand — was the right instinct and is preserved here. Rejected because monospace as body text
-costs reading speed on everything that is not a number (names, verbs, labels, legal copy), pure
-black plus a saturated accent sits close to the contrast floor, and 28px rows are dense past the
-point where a glance finds the row it wants. **Do not** reach back for mono body text, the pure
-black canvas, or the 28px row.
-
-What survived from both: A's discipline about decoration, and C's rule that a figure is coloured
-only by what it means.
+- **Don't** print a wallet address on any surface, truncated included. Both references do;
+  `SECURITY.md` and spec §8 forbid it and a test asserts it over rendered HTML.
+- **Don't** hotlink an avatar. Every photo comes from `/api/avatar/<kol_id>`.
+- **Don't** use green or red for anything that is not profit or loss. The podium tints are
+  `podium-N`, which is why they exist as their own tokens.
+- **Don't** show a control that does not work. A window we cannot aggregate is not a
+  disabled tab with a tooltip; it is absent.
