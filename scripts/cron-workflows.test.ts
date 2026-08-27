@@ -218,3 +218,53 @@ describe(".github/workflows/recompute-dirty.yml: prune step", () => {
     expect(step).not.toContain("WALLET_HMAC_KEY");
   });
 });
+
+/**
+ * The parse workflow gained a step in FRONT of the parse in R1: the per-minute
+ * `sol_price` fill. Both its position and its `continue-on-error` are
+ * decisions, and both are the kind that a later edit would undo without
+ * noticing.
+ *
+ * - It runs **before** `parse-pending.ts`. `parsePending` refuses a
+ *   stablecoin-quoted swap whose block minute has no `sol_price` row and
+ *   writes `parse_error`, which takes the row out of the pending query
+ *   (`parsed_at IS NULL AND parse_error IS NULL`); nothing in this repository
+ *   clears that column, so the refusal is permanent in practice. A fill moved
+ *   after the parse would write the minute the parse had just declined.
+ * - It is the one step in this repo allowed to fail without stopping the job.
+ *   Everything else in these workflows is ordered so that a failing step
+ *   cannot stand between a webhook and a trade; this step is deliberately in
+ *   front of the parse, so it needs `continue-on-error` to keep that rule
+ *   true. Deleting it would let a Binance outage stop ingestion.
+ */
+describe(".github/workflows/parse-pending.yml: sol_price fill step", () => {
+  const text = readFileSync(".github/workflows/parse-pending.yml", "utf8");
+  const stepAt = text.indexOf("Fill sol_price for the minutes about to be parsed");
+  const step = text.slice(stepAt, text.indexOf("- name: Run parsePending"));
+
+  it("runs the fill in the same workflow, before the parse", () => {
+    const fillAt = text.indexOf("npx tsx scripts/backfill-sol-price.ts");
+    const parseAt = text.indexOf("npx tsx scripts/parse-pending.ts");
+    expect(fillAt).toBeGreaterThan(-1);
+    expect(parseAt).toBeGreaterThan(-1);
+    expect(fillAt).toBeLessThan(parseAt);
+  });
+
+  it("does not stop the parse when it fails", () => {
+    expect(step).toMatch(/^\s*continue-on-error:\s*true\s*$/m);
+    // And it is the only step that carries the flag: it is an exemption from
+    // this repo's ordering rule, not a general licence.
+    // Anchored to the start of a line so the prose above the step -- which
+    // names the flag -- is not counted as a second one.
+    expect((text.match(/^\s*continue-on-error:\s*true\s*$/gm) ?? []).length).toBe(1);
+  });
+
+  it("gives the step the one secret it needs, and no key it cannot use", () => {
+    // Its import graph has no wallets.ts on it, and Binance's klines endpoint
+    // is public and keyless, so DATABASE_URL is the whole list.
+    expect(step).toMatch(/DATABASE_URL:\s*\$\{\{\s*secrets\.DATABASE_URL\s*\}\}/);
+    expect(step).not.toContain("WALLET_ENC_KEY");
+    expect(step).not.toContain("WALLET_HMAC_KEY");
+    expect(step).not.toContain("HELIUS_API_KEY");
+  });
+});

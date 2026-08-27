@@ -4,31 +4,35 @@ name: Parse pending trades
 # touch dirty. See src/lib/parse-swap.ts's parsePending, run here through
 # scripts/parse-pending.ts.
 #
-# Then prices what it just wrote, through scripts/backfill-prices.ts. The two
-# steps are one workflow because they are one cadence and one dependency:
-# insertTrade values a trade from the newest sol_price row at or before its
-# block time, and nothing else writes sol_price, so without a rate writer on
-# the parser's own cadence every new trade is recorded with a NULL
-# usd_amount -- which is the state the whole table was in. The backfill's
-# first act is refreshSolPrice: one free DexScreener request, no Helius
-# credits, no key.
+# It is preceded by scripts/backfill-sol-price.ts, which gives sol_price a row
+# for every minute of the last three hours from Binance's public 1-minute
+# klines, and followed by scripts/backfill-prices.ts, which prices the trades
+# the parse just wrote. Two writers of sol_price and two different questions,
+# which is why the fill is in front and the pricing behind:
 #
-# What that refresh actually reaches, stated precisely because an earlier
-# version of this comment overstated it: refreshSolPrice writes ONE row, at
-# the CURRENT minute, and solUsdAt bounds its search at
-# `minute <= block_time`. So this run's refresh covers only a trade whose
-# block time falls in that same minute. Every other trade -- which is nearly
-# all of them -- is filled from a row an EARLIER run wrote. That is what the
-# cadence buys: after the first cycle sol_price carries a row every five
-# minutes, so each new trade lands after one of them and is filled by the
-# next run at the latest. A rate is never back-dated onto a trade that
-# happened before it (spec 4.1: USD is the value at trade time, never
-# re-priced), so trades older than the very first sol_price row stay NULL
-# permanently and the backfill counts them out loud.
+#   - IN FRONT, because parse-swap.ts's solUsdForMinute asks for the block's
+#     OWN minute (`minute = ...`, not `<=`) when it normalises a
+#     stablecoin-quoted swap to SOL -- that rate becomes the cost basis, not a
+#     display figure -- and a miss there is a refusal that writes parse_error
+#     and takes the row out of the pending queue for good. Rates for a minute
+#     have to exist BEFORE the parse reads it, and refreshSolPrice alone could
+#     never provide them: it writes one row, at the current minute, once per
+#     run, so four minutes in five had no row at all by construction.
 #
-# The order is parse-then-backfill and not the reverse. The backfill is the
-# only thing that revisits a trade -- nothing ever revisits a parsed raw_tx
-# row -- so it has to run after the rows it is meant to price exist.
+#   - BEHIND, because backfill-prices.ts is the only thing that revisits a
+#     trade -- nothing ever revisits a parsed raw_tx row -- so it has to run
+#     after the rows it is meant to price exist. Its own opening act is
+#     refreshSolPrice, one free DexScreener request, which covers the CURRENT
+#     minute: the one minute the Binance fill deliberately leaves alone,
+#     because a candle still in progress has a close that keeps moving and the
+#     fill's ON CONFLICT DO NOTHING would freeze it. usd_amount is filled
+#     through solUsdAt's `minute <= block_time` bound, which tolerates a stale
+#     rate precisely because it only re-renders an already-exact SOL figure.
+#
+# A rate is never back-dated onto a trade that happened before it (spec 4.1:
+# USD is the value at trade time, never re-priced), so trades older than the
+# earliest sol_price row stay NULL permanently and the backfill counts them
+# out loud.
 #
 # Then a third step, scripts/refresh-token-metadata.ts, gives the mints those
 # trades name a symbol. It is here, and last, for two separate reasons. Here,
@@ -39,8 +43,9 @@ name: Parse pending trades
 # and its USD value. Symbols are what the feed shows; the two steps above are
 # what it is showing.
 #
-# The three scripts take different advisory locks, so a later one cannot be
-# blocked by an earlier one, and each exits non-zero on its own failure.
+# The four scripts take different advisory locks, so a later one cannot be
+# blocked by an earlier one, and each exits non-zero on its own failure. Only
+# the first is marked continue-on-error, for the reason stated on it.
 #
 # This runs the work directly on a GitHub-hosted runner instead of calling an
 # HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
@@ -93,6 +98,48 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # First, and before the parse, which is the property this step has --
+      # see scripts/backfill-sol-price.ts for the full reasoning.
+      #
+      # parsePending refuses a stablecoin-quoted swap whose block minute has
+      # no sol_price row (unsupported_quote_no_rate) and writes parse_error,
+      # which takes the row OUT of the pending queue: `WHERE parsed_at IS NULL
+      # AND parse_error IS NULL`. Nothing in this repository clears that
+      # column, so in practice that refusal is permanent, not deferred. A fill
+      # that ran after the parse would write the exact minute the parse had
+      # just declined, one cycle too late, for a row nothing looks at again.
+      #
+      # `continue-on-error: true` is the other half of it, and it is not
+      # timidity. This repo's own rule is that a step which fails stops the
+      # ones behind it, and that nothing optional may stand between a webhook
+      # and a trade (see the metadata step below, which is last for exactly
+      # that reason). Putting a third-party HTTP call in FRONT of the parse
+      # inverts that -- a Binance outage or a 429 would stop ingestion
+      # entirely. So the step keeps an honest exit code (the script exits 1 on
+      # a real failure and that shows in the Actions UI), and the job carries
+      # on to the parse regardless. What is lost when it fails is one cycle of
+      # rates, which the next run's 180-minute window fills back in.
+      #
+      # DATABASE_URL only, of the three secrets, and that is the accurate list
+      # rather than a shortened one: this script's import graph is env.ts,
+      # lock.ts, lock-key.ts, db.ts, prices.ts, decimal.ts and mints.ts, with
+      # no wallets.ts on it, so neither WALLET_* key is readable by anything it
+      # runs. Handing this step keys it cannot use would only widen what a
+      # compromised step could exfiltrate. Binance's klines endpoint is public
+      # and keyless, so there is no third secret to add here either.
+      #
+      # The emptiness guards for all three secrets live on the parse step
+      # below rather than being duplicated here: without DATABASE_URL this
+      # step fails on its own and is then skipped past by continue-on-error,
+      # and the parse step -- which must stop -- states the diagnosis once.
+      - name: Fill sol_price for the minutes about to be parsed
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npx tsx scripts/backfill-sol-price.ts
 
       - name: Run parsePending
         env:
