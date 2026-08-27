@@ -13,5 +13,7 @@ playwright-report
 # signature is in the filename. Spec §8.3 keeps those out of the tree.
 fixtures/helius
 
-# Vercel project link: holds projectId and orgId, and this repo is public.
+# Vercel CLI: the linked project's ids (this repo is public), and the .env it
+# pulls down.
 .vercel
+.env
