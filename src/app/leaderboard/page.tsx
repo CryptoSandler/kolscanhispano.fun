@@ -1,5 +1,6 @@
 import { parseUnit, readLeaderboard } from "@/lib/leaderboard";
-import { parseWindow, type LeaderboardWindow } from "@/lib/windows";
+import { WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { KolModalHost } from "../kol-modal-host";
 import { LeaderboardTable, USD_CAVEAT } from "../leaderboard-table";
 
 /** The window is relative to now and the rows behind it change as trades land. */
@@ -8,12 +9,6 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Clasificación · kolscanhispano.fun",
   description: "PnL realizado de KOLs hispanohablantes en Solana, por día, semana y mes UTC.",
-};
-
-const WINDOW_LABELS: Record<LeaderboardWindow, string> = {
-  diario: "Diario",
-  semanal: "Semanal",
-  mensual: "Mensual",
 };
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -78,8 +73,15 @@ export default async function LeaderboardPage({
         <p className="label control-note">día UTC · {USD_CAVEAT}</p>
 
         {/* Spec §4.8's definition is written by `LeaderboardTable`, beneath the
-            column it defines. */}
-        <LeaderboardTable entries={leaderboard.entries} unit={unit} />
+            column it defines.
+
+            `KolModalHost` provides `KolModalContext`, which is what makes each
+            row clickable and focusable — DESIGN.md `row-leaderboard`, "it opens
+            the modal". It is handed this page's window so a modal opens on the
+            period its row was ranked in. */}
+        <KolModalHost window={window}>
+          <LeaderboardTable entries={leaderboard.entries} unit={unit} />
+        </KolModalHost>
       </section>
     </>
   );

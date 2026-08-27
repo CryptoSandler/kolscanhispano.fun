@@ -859,3 +859,299 @@ a.row-age:hover {
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
+
+/* ---------- modal-kol ---------- */
+
+/* DESIGN.md `modal-kol`: "opened from a row, dismissible by `Esc`, backdrop
+   click and a close button; focus trapped; the trigger row regains focus on
+   close."
+
+   A native `<dialog>` opened with `showModal()`. The scrim below is the one
+   shadow this system has: "Hairlines separate; there are no shadows except the
+   modal's scrim." `--radius-lg` is the largest radius the document publishes
+   and this is its largest surface; the document does not assign it, so that
+   pairing is a judgement recorded here rather than a rule quoted. */
+.modal-kol {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.modal-kol::backdrop {
+  background: rgb(0 0 0 / 0.62);
+}
+
+/* DESIGN.md motion `data-in`: 140ms, and never on position — a panel that slid
+   in would announce itself. Opacity only, like the feed's arriving row. */
+.modal-kol[open] {
+  animation: modal-in var(--data-in);
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* DESIGN.md motion `reduced: none`. */
+@media (prefers-reduced-motion: reduce) {
+  .modal-kol[open] {
+    animation: none;
+  }
+}
+
+/* `min-height` reserves the space the loaded modal will occupy, so the panel
+   does not grow under the reader between the click and the response — the same
+   reservation `.feed-list` makes for its rows. The document does not fix this
+   height; it is the height the four cards come to. */
+.modal-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack);
+  padding: var(--panel-padding);
+  min-height: 420px;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Cyan marks "the wordmark, focus rings, the selected tab, and the live
+   indicator" and a close control is on none of those lists, so this is a
+   surface step and ink rather than a filled accent button. `--on-accent` is
+   therefore still consumed by nothing but the token table — see the batch
+   report. */
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    color var(--hover),
+    background var(--hover);
+}
+
+.modal-close:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+
+/* DESIGN.md: "Header: 64px avatar, `name`, cabal chip, `@handle` or `Wallets
+   ocultas`, and the period's total PnL in `numeric-lg` by sign. **Where the
+   reference prints a truncated address, we print nothing.**"
+
+   The right padding is the close control's box: without it the PnL would run
+   underneath it at a narrow width. */
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 40px var(--stack) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.modal-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.modal-pnl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+
+/* The cards are separated by hairlines inside one panel rather than being four
+   nested boxes: DESIGN.md's depth model is surface steps and hairlines, and the
+   modal is already a step above the page. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card + .card {
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--stack);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* DESIGN.md `card-pnl-evolution`: "a line chart in `semantic-gain` (or
+   `semantic-loss` when the period is negative) with point markers". The sign is
+   stated once, as the class on the `<svg>`, and `currentColor` carries it to
+   the line and the markers alike. A period that realized nothing is neither
+   gain nor loss and stays ink — the same rule the row's figure follows.
+
+   `aspect-ratio` rather than a fixed height with `preserveAspectRatio="none"`:
+   a non-uniform scale would turn every circular marker into an ellipse. */
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 1;
+  overflow: visible;
+  color: var(--ink);
+}
+
+.chart.gain {
+  color: var(--gain);
+}
+
+.chart.loss {
+  color: var(--loss);
+}
+
+.chart-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* The viewBox is scaled to the card's width, and without this the stroke is
+     scaled with it — a 2px line drawn at 1.3x. */
+  vector-effect: non-scaling-stroke;
+}
+
+.chart circle {
+  fill: currentColor;
+}
+
+/* The time axis: the first and last day the series carries. */
+.chart-axis {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* The chart's empty state occupies the space the chart would, so opening a
+   quiet period does not produce a modal of a different height. */
+.chart-empty {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  text-align: center;
+}
+
+/* DESIGN.md `card-stats`: "PnL total, trades, volume." Three figures in a row,
+   each labelled, wrapping rather than shrinking on a narrow viewport. */
+.card-stats {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--gutter);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 104px;
+}
+
+/* DESIGN.md `card-chain-pnl`: "one line, SOL, because that is every chain we
+   index." One line, so no table and no header row that would imply a second. */
+.chain-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* DESIGN.md `list-defi-trades`. Five rows of the fifty `KOL_TRADES_LIMIT`
+   carries are visible and the rest scroll inside the card, so a busy month does
+   not push the modal past the viewport.
+
+   **These rows are 36px, not the 56px of Layout's "Rows are 56px".** That
+   sentence gives its own reason — "enough for a 36px circular avatar, the bold
+   name, and the handle or `Wallets ocultas` beneath it" — and none of it
+   applies here: this row is one line, inside a modal whose header already names
+   the KOL once, so it carries no avatar and no second line. Recorded in the
+   batch report as a judgement rather than a rule the document states. */
+.trade-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: calc(5 * 36px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.row-trade {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.row-trade .symbol {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trade-usd {
+  flex: none;
+}
+
+/* Fixed width, shared with `.privado`, so the last column lines up whether a
+   row ends in a link or in the label that stands where one would. */
+.row-moment {
+  flex: none;
+  width: 112px;
+  text-align: right;
+  color: var(--ink-subtle);
+}
+
+a.row-moment:hover {
+  color: var(--ink-muted);
+  transition: color var(--hover);
+}
+
+/* DESIGN.md `list-defi-trades`: "where the wallet is hidden the row reads
+   `PRIVADO` with a padlock instead of a signature link." It is the sibling of
+   `chip-hidden` — it occupies the slot the reference fills with a link, in
+   `ink-subtle`, so it reads as native rather than as something withheld. */
+.privado {
+  flex: none;
+  width: 112px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--ink-subtle);
+}

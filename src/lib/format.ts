@@ -195,3 +195,43 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
   if (hours < 24) return `hace ${hours} h`;
   return `hace ${Math.floor(hours / 24)} d`;
 }
+
+/**
+ * The direction a signed amount points, as the class name that colours it.
+ *
+ * DESIGN.md: *"Green and red are direction of money and nothing else"*, and a
+ * window in which nothing was realized is neither — so `0`, `0.00` and `-0` all
+ * come out empty and the figure stays ink.
+ *
+ * Read off the string rather than parsed into anything: a leading `-` is the
+ * only thing Postgres puts in front of a negative `numeric`.
+ *
+ * It lives here rather than in either component because the leaderboard row,
+ * the modal's header and the modal's chart all colour by the same rule, and
+ * three copies of it would eventually disagree about what a zero is.
+ */
+export function amountDirection(text: string): "gain" | "loss" | "" {
+  if (/^-0*(\.0*)?$/.test(text)) return "";
+  if (text.startsWith("-")) return "loss";
+  return /^0*(\.0*)?$/.test(text) ? "" : "gain";
+}
+
+/**
+ * A block's instant, fixed and in UTC: `25/08 14:32 UTC`.
+ *
+ * The feed row prints a relative age because it is a live surface and the row
+ * is about *how recently*; the modal's trade list is a period's record, where
+ * "hace 3 d" is worse than the date. Fixed also means it does not depend on a
+ * clock, so it renders identically on the server and in the browser.
+ *
+ * `UTC` is stated because it is the boundary every window in this product is
+ * cut on (spec §4.9), and an unlabelled time would be read as local.
+ * `Intl.DateTimeFormat` is not used: it would take the *runner's* zone unless
+ * told otherwise, which is the failure `windows.ts` exists to prevent, and the
+ * ISO string already holds the fields in order.
+ */
+export function formatUtcMoment(iso: string): string {
+  const [date, time] = iso.split("T");
+  const [, month, day] = date.split("-");
+  return `${day}/${month} ${time.slice(0, 5)} UTC`;
+}

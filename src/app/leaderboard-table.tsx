@@ -2,7 +2,7 @@ import { cabalChipClass } from "@/lib/cabal";
 import type { LeaderboardUnit } from "@/lib/leaderboard";
 import { Avatar } from "./avatar";
 import { KolRow } from "./kol-row";
-import { formatPercent, formatSignedSol, formatSignedUsd } from "@/lib/format";
+import { amountDirection, formatPercent, formatSignedSol, formatSignedUsd } from "@/lib/format";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
 
 /**
@@ -181,8 +181,10 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
     unit === "sol" ? formatSignedUsd(secondaryText) : formatSignedSol(secondaryText);
 
   // DESIGN.md: green and red mean direction of money and nothing else. A
-  // window in which nothing was realized is neither, so it stays ink.
-  const direction = signum(primaryText);
+  // window in which nothing was realized is neither, so it stays ink. The rule
+  // lives in `format.ts` because the modal colours its header and its chart by
+  // the same one.
+  const direction = amountDirection(primaryText);
   const podium = entry.rank <= 3 ? (entry.rank as 1 | 2 | 3) : null;
 
   return (
@@ -277,15 +279,4 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
       <td className="num secondary">({secondary})</td>
     </KolRow>
   );
-}
-
-/**
- * The sign of a `numeric` string, without parsing it into anything. A leading
- * `-` is the only thing Postgres puts in front of a negative, and `0`, `0.00`
- * and `-0` all have to come out neutral.
- */
-function signum(text: string): "gain" | "loss" | "" {
-  if (/^-0*(\.0*)?$/.test(text)) return "";
-  if (text.startsWith("-")) return "loss";
-  return /^0*(\.0*)?$/.test(text) ? "" : "gain";
 }

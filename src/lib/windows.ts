@@ -28,6 +28,25 @@ export const LEADERBOARD_WINDOWS = ["diario", "semanal", "mensual"] as const;
 
 export type LeaderboardWindow = (typeof LEADERBOARD_WINDOWS)[number];
 
+/**
+ * How each window is named on screen, in neutral Spanish.
+ *
+ * DESIGN.md `segmented`: *"`Diario · Semanal · Mensual` ... as pill segments"*.
+ * It lives beside the windows themselves because three surfaces name them now —
+ * the header's control, `/leaderboard`'s subtitle and `modal-kol`'s segments —
+ * and three copies of a label table is how one of them ends up saying
+ * `Mensual` for `semanal`.
+ *
+ * This module imports nothing but itself, so a client component can reach it
+ * without dragging the Postgres driver into the browser bundle, which is why
+ * the labels are here rather than in `leaderboard.ts`.
+ */
+export const WINDOW_LABELS: Record<LeaderboardWindow, string> = {
+  diario: "Diario",
+  semanal: "Semanal",
+  mensual: "Mensual",
+};
+
 /** `from` inclusive, `to` exclusive — the half-open interval a `day` column filters on. */
 export type WindowBounds = { from: Date; to: Date };
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { WINDOW_LABELS } from "@/lib/windows";
 
 /**
  * DESIGN.md, Layout: *"Header: wordmark and subtitle left, nav centre, unit and
@@ -37,12 +38,6 @@ import { useSearchParams } from "next/navigation";
  * lives in `@/lib/leaderboard`, which imports the Postgres driver, and a client
  * component importing it would pull `pg` into the browser bundle.
  */
-const WINDOW_LABELS: Record<string, string> = {
-  diario: "Diario",
-  semanal: "Semanal",
-  mensual: "Mensual",
-};
-
 const UNIT_LABELS: Record<string, string> = { sol: "SOL", usd: "USD" };
 
 export function LeaderboardControls({
@@ -71,7 +66,7 @@ export function LeaderboardControls({
             aria-current={option === window ? "true" : undefined}
             href={href({ window: option })}
           >
-            {WINDOW_LABELS[option] ?? option}
+            {WINDOW_LABELS[option as keyof typeof WINDOW_LABELS] ?? option}
           </Link>
         ))}
       </div>

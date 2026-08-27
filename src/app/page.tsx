@@ -2,6 +2,7 @@ import Link from "next/link";
 import { readFeedPage } from "@/lib/feed";
 import { LEADERBOARD_TOP, readLeaderboard } from "@/lib/leaderboard";
 import { FeedLive } from "./feed-live";
+import { KolModalHost } from "./kol-modal-host";
 import { LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
 
 /**
@@ -58,8 +59,20 @@ export default async function HomePage() {
           No header row: `/leaderboard` is where a reader goes to compare
           columns, and the caption `LeaderboardTable` writes beneath itself
           names both count columns for the summary.
+
+          `KolModalHost` is the provider task A left the seam for: DESIGN.md
+          `row-leaderboard` says the "whole row [is] clickable and focusable (it
+          opens the modal)", and the row's affordance is switched on by the
+          presence of a provider rather than by a flag. The table stays a server
+          component -- a client component may wrap server-rendered children --
+          so every figure below is still formatted on the server.
+
+          The window is this panel's own, `diario`, so the PnL in a modal's
+          header is the same figure as the row that opened it.
         */}
-        <LeaderboardTable entries={leaderboard.entries} unit="sol" showHeader={false} />
+        <KolModalHost window="diario">
+          <LeaderboardTable entries={leaderboard.entries} unit="sol" showHeader={false} />
+        </KolModalHost>
       </section>
     </div>
   );
