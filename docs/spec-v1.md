@@ -187,6 +187,16 @@ A trade is a swap where the wallet's SOL/WSOL balance moves against a SPL token 
 - **Token ↔ token swaps**: close leg A and open leg B at the implied SOL value of the trade.
 - **SOL ↔ stablecoin rotation is not a trade** and is not indexed. kolscan.io counts these, which is
   why its trade log shows entries like `Sell 167 USDC`.
+- **Stablecoin ↔ stablecoin rotation is not a trade either.** Decided extension, batch 2,
+  commit `9a42a1c`. The rule above named SOL on one side, so a USDC↔USDT swap fell through
+  the stable branch — USDC read as the quote, USDT as the token — and was written as a
+  position in a dollar, priced off the other dollar at `sol_usd`. Two such rows existed in a
+  2,397-transaction sample of real mainnet swaps: `sell 178.034051 for 0.89020365 SOL` and
+  `buy 143.573972 for 0.71789742 SOL`, in wallets whose entire real native movement was the
+  transaction fee (17,117 and 13,541 lamports). The reason is the one already in this
+  section: the wallet took no position. Whether a stablecoin can be priced is a reason to
+  refuse a *quote*; it is not a reason to book a *position*. `parse-swap.ts` names the union
+  once as `STABLE_MINTS` so the rotation test and the quote branch cannot drift apart again.
 - **Transfers between wallets of the same KOL are netted out**, not recorded as a sell and a buy.
 
 ### 4.4 Fees
