@@ -20,7 +20,29 @@ loadEnvLocal();
  * `next dev` rather than a production build, because the assertion is about
  * layout and the CSS is identical either way — and a build would add a minute
  * to a command whose whole point is that it is quick to run.
+ *
+ * ## The host is `localhost`, and it is load-bearing
+ *
+ * It used to be `127.0.0.1`, and **that silently ran every spec with no client
+ * JavaScript at all.** Next 16 "blocks cross-origin requests to dev-only assets
+ * and endpoints during development by default", where the allowed origin is
+ * *"the hostname the server was initialized with (`localhost` by default)"*
+ * (`node_modules/next/dist/docs/.../allowedDevOrigins.md`). `127.0.0.1` is a
+ * different origin from `localhost` by that rule, so every request for
+ * `/_next/static/chunks/*` came back `403`, nothing hydrated, and no event
+ * handler on the page was ever attached.
+ *
+ * It went unnoticed because the only spec here measured server-rendered layout,
+ * which is identical with the bundle blocked. The moment a spec needed a click
+ * to do something — `modal-kol.spec.ts` — all twelve of its cases failed on a
+ * dialog that never opened.
+ *
+ * The fix is the harness, not `next.config.ts`: `allowedDevOrigins` would widen
+ * what the dev server accepts to make a test speak to it wrongly, where asking
+ * on the origin the server actually serves costs one word.
  */
+const HOST = "localhost";
+
 const PORT = Number(process.env.E2E_PORT ?? 3210);
 
 export default defineConfig({
@@ -30,13 +52,13 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
-    baseURL: `http://127.0.0.1:${PORT}`,
+    baseURL: `http://${HOST}:${PORT}`,
     ...devices["Desktop Chrome"],
   },
   projects: [{ name: "chromium" }],
   webServer: {
     command: `npm run dev -- --port ${PORT}`,
-    url: `http://127.0.0.1:${PORT}/leaderboard`,
+    url: `http://${HOST}:${PORT}/leaderboard`,
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
