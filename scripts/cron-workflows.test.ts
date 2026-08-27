@@ -240,7 +240,9 @@ describe(".github/workflows/recompute-dirty.yml: prune step", () => {
 describe(".github/workflows/parse-pending.yml: sol_price fill step", () => {
   const text = readFileSync(".github/workflows/parse-pending.yml", "utf8");
   const stepAt = text.indexOf("Fill sol_price for the minutes about to be parsed");
-  const step = text.slice(stepAt, text.indexOf("- name: Run parsePending"));
+  // Ends at the requeue step that R2 put between this one and the parse, so
+  // this block keeps testing the fill step alone rather than both of them.
+  const step = text.slice(stepAt, text.indexOf("- name: Requeue rows whose missing rate"));
 
   it("runs the fill in the same workflow, before the parse", () => {
     const fillAt = text.indexOf("npx tsx scripts/backfill-sol-price.ts");
@@ -262,6 +264,57 @@ describe(".github/workflows/parse-pending.yml: sol_price fill step", () => {
   it("gives the step the one secret it needs, and no key it cannot use", () => {
     // Its import graph has no wallets.ts on it, and Binance's klines endpoint
     // is public and keyless, so DATABASE_URL is the whole list.
+    expect(step).toMatch(/DATABASE_URL:\s*\$\{\{\s*secrets\.DATABASE_URL\s*\}\}/);
+    expect(step).not.toContain("WALLET_ENC_KEY");
+    expect(step).not.toContain("WALLET_HMAC_KEY");
+    expect(step).not.toContain("HELIUS_API_KEY");
+  });
+});
+
+/**
+ * R2 put a fourth step in this workflow, between the fill and the parse: the
+ * requeue. Three properties, each of them a decision the round before it paid
+ * for.
+ *
+ * - **Position.** It clears `parse_error` on the rows whose block minute the
+ *   fill has just given a rate, and the parse is what turns them into trades.
+ *   Moved behind the parse it opens rows nothing reads until the next cycle;
+ *   moved in front of the fill it finds the same minutes still empty.
+ * - **No `continue-on-error`.** The fill carries it because it is a
+ *   third-party HTTP call standing in front of ingestion. This is one
+ *   statement against the same database the parse is about to use, so a
+ *   failure here is one the parse would meet anyway and must stop the job.
+ * - **DATABASE_URL and nothing else.** `parse-swap.ts` decrypts payloads, but
+ *   `crypto.ts` loads its keys per call rather than at import and this path
+ *   decrypts nothing -- the gate reads `raw_tx.block_time`, a plaintext
+ *   column. Handing it keys it cannot use would only widen what a compromised
+ *   step could exfiltrate.
+ */
+describe(".github/workflows/parse-pending.yml: requeue step", () => {
+  const text = readFileSync(".github/workflows/parse-pending.yml", "utf8");
+  const stepAt = text.indexOf("- name: Requeue rows whose missing rate");
+  const step = text.slice(stepAt, text.indexOf("- name: Run parsePending"));
+
+  it("runs the requeue between the fill and the parse", () => {
+    const fillAt = text.indexOf("npx tsx scripts/backfill-sol-price.ts");
+    const parseAt = text.indexOf("npx tsx scripts/parse-pending.ts");
+    expect(stepAt).toBeGreaterThan(-1);
+    expect(stepAt).toBeGreaterThan(fillAt);
+    expect(stepAt).toBeLessThan(parseAt);
+  });
+
+  it("calls requeueNoRate, and nothing stands in for it", () => {
+    // No script of its own -- one statement does not need a cron entry point
+    // -- so what is pinned here is the call itself.
+    expect(step).toContain("requeueNoRate");
+    expect(step).toContain("src/lib/parse-swap.ts");
+  });
+
+  it("stops the job when it fails, unlike the fill above it", () => {
+    expect(step).not.toMatch(/^\s*continue-on-error:/m);
+  });
+
+  it("gives the step the one secret it needs, and no key it cannot use", () => {
     expect(step).toMatch(/DATABASE_URL:\s*\$\{\{\s*secrets\.DATABASE_URL\s*\}\}/);
     expect(step).not.toContain("WALLET_ENC_KEY");
     expect(step).not.toContain("WALLET_HMAC_KEY");

@@ -13,6 +13,7 @@ import {
   parseErrorFor,
   parsePending,
   parseSwap,
+  requeueNoRate,
   readTradeHeader,
   type EnhancedTx,
   type SwapOutcome,
@@ -3585,6 +3586,218 @@ describe("parsePending", () => {
     // Untouched: not marked parsed, and NOT stamped malformed_payload.
     expect(raw.parsed_at).toBeNull();
     expect(raw.parse_error).toBeNull();
+  });
+});
+
+/**
+ * The half of `REQUEUEABLE_ERRORS` that had no mechanism until R2:
+ * `requeueNoRate` clears `parse_error` on the rows whose missing minute has
+ * since acquired a usable rate.
+ *
+ * What these three cases are for, in order: that a minute holding a rate the
+ * parser will refuse anyway does **not** open the door (the loop), that
+ * walking a row through the parse a second time cannot disturb the trade its
+ * first pass already wrote (idempotency), and that a row whose second parse
+ * decides against it settles rather than cycling (termination).
+ */
+describe("requeueNoRate", () => {
+  let kolId: string;
+  let walletAddress: string;
+  let testMint: string;
+
+  /** The block minute every row below is stamped with, and the minute the gate reads. */
+  const MINUTE = new Date("2026-08-25T12:00:00.000Z");
+  const AT = Math.floor(MINUTE.getTime() / 1000);
+
+  beforeEach(async () => {
+    await query("TRUNCATE kol, kol_wallet, raw_tx, trade, position, sol_price CASCADE");
+    kolId = await makeKol("requeue-kol");
+    walletAddress = inventAddress();
+    await addWallet(kolId, walletAddress);
+    testMint = inventAddress();
+  });
+
+  /** 2 tokens in for 231.71 USDC out — the shape that needs a rate to be readable at all. */
+  const usdcQuotedBuy = (wallet: string, mint: string) =>
+    buildObservedSwapPayload({
+      wallet,
+      nativeChangeLamports: -5_000, // gas only; the quote side is the USDC leg
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: AT,
+      slot: 1,
+      legs: [
+        { mint, decimals: 6, rawTokenAmount: "2000000" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "-231710000" },
+      ],
+    });
+
+  const rawTxRow = async () =>
+    (await query<{ parsed_at: Date | null; parse_error: string | null }>(
+      "SELECT parsed_at, parse_error FROM raw_tx",
+    ))[0];
+
+  /**
+   * Runs `fn` with migration 009's `CHECK (usd > 0)` lifted off `sol_price`.
+   *
+   * A zero rate is exactly what the constraint exists to make impossible, and
+   * exactly what the gate's `usd > 0` predicate exists to survive — the two
+   * are deliberately independent (see `requeueNoRate` and migration 009), so
+   * testing the predicate means constructing the state the constraint
+   * forbids. The `finally` clears the offending rows before restoring the
+   * constraint, so a failing assertion cannot leave the schema weakened for
+   * the rest of the run.
+   */
+  async function withoutTheRatePositiveConstraint(fn: () => Promise<void>): Promise<void> {
+    await query("ALTER TABLE sol_price DROP CONSTRAINT sol_price_usd_positive");
+    try {
+      await fn();
+    } finally {
+      await query("DELETE FROM sol_price WHERE usd <= 0");
+      await query("ALTER TABLE sol_price ADD CONSTRAINT sol_price_usd_positive CHECK (usd > 0)");
+    }
+  }
+
+  it("does not requeue a row whose minute holds a zero rate, however many cycles run", async () => {
+    // The defect this whole task is shaped around. `evaluateSwap` refuses
+    // `solUsd <= 0n`, so a gate asking only whether the minute *exists*
+    // clears the row, the parse refuses it again for the same reason, and the
+    // gate clears it again — three cycles out of three, zero trades, with the
+    // row sitting at the head of `parsePending`'s `ORDER BY received_at`
+    // queue the entire time.
+    const payload = usdcQuotedBuy(walletAddress, testMint);
+    await storeRawTx({ signature: payload.signature, blockTime: MINUTE, slot: 1, payload, source: "webhook" });
+
+    expect(await parsePending()).toBe(1);
+    expect((await rawTxRow()).parse_error).toBe("unsupported_quote_no_rate");
+
+    await withoutTheRatePositiveConstraint(async () => {
+      await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '0')", [MINUTE]);
+
+      for (const cycle of [1, 2, 3]) {
+        expect(await requeueNoRate(), `cycle ${cycle}: rows requeued`).toBe(0);
+        // And the cycle is run out in full: nothing else may clear the row
+        // either, and no trade may appear from a rate of zero.
+        await parsePending();
+        const raw = await rawTxRow();
+        expect(raw.parse_error, `cycle ${cycle}: parse_error`).toBe("unsupported_quote_no_rate");
+        expect(raw.parsed_at, `cycle ${cycle}: parsed_at`).toBeNull();
+        expect(await query("SELECT id FROM trade"), `cycle ${cycle}: trades`).toHaveLength(0);
+      }
+    });
+  });
+
+  it("leaves the trade the row already wrote byte-identical, and writes the one it owed", async () => {
+    // Two tracked wallets in one transaction: A's SOL-quoted buy was written
+    // on the first pass, B's USDC-quoted buy was refused for the rate. The
+    // requeue walks the row past `insertTrade` a second time, so A's trade is
+    // re-derived and re-offered — and must not move. Values, not counts: an
+    // `ON CONFLICT DO UPDATE` would pass a row count and fail here.
+    //
+    // The 11:55 row is what gives A a USD side on the first pass while
+    // leaving B refused: `solUsdAt`'s `<=` bound reaches it, and
+    // `solUsdForMinute`'s `=` does not. When 12:00 lands at a *different*
+    // rate, A's `usd_amount` must still be the one measured at 100.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '100')", [
+      new Date("2026-08-25T11:55:00.000Z"),
+    ]);
+
+    const kol2 = await makeKol("requeue-kol-2");
+    const wallet2Address = inventAddress();
+    await addWallet(kol2, wallet2Address);
+    const otherMint = inventAddress();
+
+    const payload = buildSwapPayload({
+      wallet: walletAddress,
+      mint: testMint,
+      decimals: 6,
+      nativeChangeLamports: -1_000_005_000,
+      tokenChangeRaw: "2000000",
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: AT,
+      slot: 1,
+    });
+    // Wallet B's legs, added onto the same payload the way a second tracked
+    // wallet touched by the same transaction appears in a real Helius
+    // delivery. No native change of its own: A is the fee payer, and B's
+    // quote side is the USDC leg.
+    payload.accountData.push({
+      account: wallet2Address,
+      nativeBalanceChange: 0,
+      tokenBalanceChanges: [
+        { userAccount: wallet2Address, mint: otherMint, rawTokenAmount: { tokenAmount: "2000000", decimals: 6 } },
+        { userAccount: wallet2Address, mint: USDC_MINT, rawTokenAmount: { tokenAmount: "-231710000", decimals: 6 } },
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: MINUTE, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+    const [before] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(before).toBeDefined();
+    expect(before.usd_amount).toBe("100"); // 1 SOL at the 11:55 rate; the fee is not part of it
+    expect((await rawTxRow()).parse_error).toBe("unsupported_quote_no_rate");
+
+    // The minute lands, at a rate nowhere near the one A was valued at.
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [MINUTE]);
+    expect(await requeueNoRate()).toBe(1);
+    expect(await parsePending()).toBe(1);
+
+    const [after] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
+    expect(after.id).toBe(before.id);
+    expect(after.sol_amount).toBe(before.sol_amount);
+    expect(after.usd_amount).toBe(before.usd_amount);
+    expect(after.sol_usd).toBe("100"); // not re-derived at 231.71
+    expect(after).toEqual(before); // and nothing else moved either
+
+    const [second] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kol2]);
+    expect(second).toBeDefined();
+    expect(second.mint).toBe(otherMint);
+    expect(second.sol_amount).toBe("1"); // 231.71 USDC normalised at 231.71 USD/SOL
+    expect(second.sol_usd).toBe("231.71");
+
+    const raw = await rawTxRow();
+    expect(raw.parse_error).toBeNull();
+    expect(raw.parsed_at).not.toBeNull();
+  });
+
+  it("settles a row whose second parse decides against it, so it leaves the queue for good", async () => {
+    // The 3-in-121 residue case from the replay. Without a rate it is
+    // `unsupported_quote_no_rate`, because the stablecoin leg cannot be read
+    // at all; with one, the whole SOL side turns out to be a rent refund plus
+    // a normalised leg that together stay under the residue bound, which is a
+    // decision about the payload no later data changes. Settled, therefore:
+    // `parsed_at` stamped, out of the queue, and the requeue does not pick it
+    // up again.
+    const payload = buildObservedSwapPayload({
+      wallet: walletAddress,
+      nativeChangeLamports: 2_039_280 - 5_000, // an ATA rent refund, not proceeds
+      feeLamports: 5_000,
+      isFeePayer: true,
+      timestamp: AT,
+      slot: 1,
+      legs: [
+        { mint: testMint, decimals: 6, rawTokenAmount: "-500000000" }, // 500 tokens sold
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "100000" }, // 0.1 USDC in: ~431,573 lamports
+      ],
+    });
+    await storeRawTx({ signature: payload.signature, blockTime: MINUTE, slot: 1, payload, source: "webhook" });
+
+    await parsePending();
+    expect((await rawTxRow()).parse_error).toBe("unsupported_quote_no_rate");
+
+    await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [MINUTE]);
+    expect(await requeueNoRate()).toBe(1);
+    await parsePending();
+
+    const raw = await rawTxRow();
+    expect(raw.parse_error).toBe("sol_leg_is_residue");
+    expect(raw.parsed_at).not.toBeNull(); // settled: the parser is finished with it
+    expect(await query("SELECT id FROM trade")).toHaveLength(0);
+
+    // And it is out of the queue for good — the requeue's own predicate
+    // excludes it now, whatever else arrives in `sol_price`.
+    expect(await requeueNoRate()).toBe(0);
   });
 });
 

@@ -1748,16 +1748,32 @@ const ERROR_PRIORITY: Record<RowParseError, number> = {
  * The errors that leave `parsed_at` NULL, so a later fix can reprocess the
  * row without spending another Helius credit (spec §5.2). Clearing
  * `parse_error` is what actually requeues a row — the pending query filters
- * on `parse_error IS NULL` — so this set is about honesty in the column
- * rather than about the loop: a row marked `parsed_at` says the parser is
- * finished with it, and for these two that is not true.
+ * on `parse_error IS NULL` — so membership here is a statement about the
+ * *row*: a row marked `parsed_at` says the parser is finished with it, and
+ * for these two that is not true.
  *
- * - `malformed_payload`: a parser fix may be able to read it.
+ * **Only one of the two has an automated path back into the queue, and that
+ * asymmetry is deliberate.**
+ *
+ * - `malformed_payload`: a parser fix may be able to read it. Nothing
+ *   scheduled clears it, and nothing should: there is no condition anything
+ *   here could test that says a parser fix has landed, so an automatic
+ *   requeue would be an unbounded loop by construction — and since a
+ *   requeued row keeps its original `received_at` while the pending query is
+ *   `ORDER BY received_at LIMIT 100`, that loop would run at the head of the
+ *   queue and starve live ingestion behind it. What reprocesses one is a
+ *   parser fix plus a manual `UPDATE raw_tx SET parse_error = NULL`, which
+ *   is what spec §5.2's *"a parser fix can reprocess it without spending
+ *   another credit"* describes. (Zero occurrences in the 2,397-payload
+ *   corpus, so this is a door, not a queue.)
  * - `unsupported_quote_no_rate`: nothing about the payload is wrong. The
  *   `sol_price` row for its minute simply did not exist when it was read,
  *   and one can still arrive — from a per-minute series (spec §5.7) or a
  *   historical import. Settling it would throw a readable, valuable swap
- *   away over a table's contents at one moment.
+ *   away over a table's contents at one moment. This one *does* have a
+ *   condition worth testing, so it has a mechanism: see `requeueNoRate`,
+ *   which clears it exactly when the minute holds a rate the parse can
+ *   actually use.
  *
  * Everything else is a decision about the payload itself, which no later
  * data changes.
@@ -1945,5 +1961,63 @@ export async function parsePending(limit = 100): Promise<number> {
     ]);
   }
 
+  return rows.length;
+}
+
+/**
+ * Clears `parse_error` on the `unsupported_quote_no_rate` rows whose missing
+ * minute has since acquired a usable rate, so the next `parsePending` picks
+ * them up. Returns how many rows were requeued.
+ *
+ * This is the other half of `REQUEUEABLE_ERRORS`. "Requeueable" has always
+ * been a property of the *row* — `parsed_at` left NULL, nothing about the
+ * payload judged wrong — and until this existed nothing in this repository
+ * ever cleared the column, so the property described a door no one opened.
+ *
+ * **It is one statement, and it is gated on the rate being usable, not on the
+ * minute existing.** `evaluateSwap` refuses `solUsd <= 0n`, so a minute
+ * holding a zero is a minute the parse will decline again: an `EXISTS` that
+ * asked only whether the row was there would clear the row, watch it be
+ * refused, and clear it again — measured at three cycles out of three, zero
+ * trades. And it would not merely spin. A requeued row keeps its original
+ * `received_at`, and the pending query is `ORDER BY received_at LIMIT 100`,
+ * so a poisoned minute sits at the *head* of the queue and starves live
+ * ingestion for as long as it stays there. Migration 009 makes a
+ * non-positive rate unrepresentable; the `usd > 0` predicate here stays
+ * anyway, because the constraint governs what new rows may be and the
+ * predicate governs which rows this statement acts on, and the two fail
+ * independently.
+ *
+ * **`raw_tx.block_time` is the minute, and it needs no key to read.** The
+ * webhook route writes it from `payload.timestamp` — the same field
+ * `readTradeHeader` reads to ask `solUsdForMinute` its question — so the gate
+ * matches the parse's own lookup while touching neither the ciphertext nor
+ * `WALLET_ENC_KEY`. (Verified 2026-08-26: `src/app/api/webhooks/helius/route.ts`
+ * builds `blockTime` as `new Date(event.timestamp * 1000)`, against
+ * `readTradeHeader`'s `requireInt(payload, "timestamp")`.)
+ *
+ * **`malformed_payload` is deliberately not requeued here.** Nothing gates
+ * it: there is no condition this function could test that says a parser fix
+ * has landed, so requeueing it would be an unbounded loop by construction,
+ * with the same head-of-queue starvation attached. It stays in
+ * `REQUEUEABLE_ERRORS` — the row really is reprocessable — and reprocessing
+ * it is a parser fix plus a manual `UPDATE raw_tx SET parse_error = NULL`,
+ * which is exactly what spec §5.2 describes.
+ *
+ * No lock of its own, and none needed. It is a single idempotent `UPDATE`
+ * whose predicate stops matching the moment it has run; concurrent runs
+ * either race to the same result or see no rows. It does not go through
+ * `parsePending`'s advisory lock either, because clearing a column on a row
+ * that lock's holder is not looking at (the pending query excludes every row
+ * this one touches) cannot interfere with it.
+ */
+export async function requeueNoRate(): Promise<number> {
+  const rows = await query<{ signature_hmac: Buffer }>(
+    `UPDATE raw_tx SET parse_error = NULL
+      WHERE parse_error = 'unsupported_quote_no_rate' AND parsed_at IS NULL
+        AND EXISTS (SELECT 1 FROM sol_price
+                     WHERE minute = date_trunc('minute', raw_tx.block_time) AND usd > 0)
+      RETURNING signature_hmac`,
+  );
   return rows.length;
 }

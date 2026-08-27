@@ -6,9 +6,10 @@ name: Parse pending trades
 #
 # It is preceded by scripts/backfill-sol-price.ts, which gives sol_price a row
 # for every minute of the last three hours from Binance's public 1-minute
-# klines, and followed by scripts/backfill-prices.ts, which prices the trades
-# the parse just wrote. Two writers of sol_price and two different questions,
-# which is why the fill is in front and the pricing behind:
+# klines, and by the requeue below it; and followed by
+# scripts/backfill-prices.ts, which prices the trades the parse just wrote.
+# Two writers of sol_price and two different questions, which is why the fill
+# is in front and the pricing behind:
 #
 #   - IN FRONT, because parse-swap.ts's solUsdForMinute asks for the block's
 #     OWN minute (`minute = ...`, not `<=`) when it normalises a
@@ -34,6 +35,14 @@ name: Parse pending trades
 # earliest sol_price row stay NULL permanently and the backfill counts them
 # out loud.
 #
+# Between the fill and the parse sits the requeue, the one step here that is
+# not a script: a single UPDATE (parse-swap.ts's requeueNoRate) that clears
+# parse_error on the rows the parse refused for a rate their minute now has.
+# The fill takes roughly nine in ten future refusals before they happen; this
+# is what reaches the residue the fill structurally cannot, the swaps whose
+# block minute was still the CURRENT minute when the parse read it. Its own
+# reasoning is on the step.
+#
 # Then a third step, scripts/refresh-token-metadata.ts, gives the mints those
 # trades name a symbol. It is here, and last, for two separate reasons. Here,
 # because a mint becomes worth resolving the moment a trade names it, which is
@@ -44,8 +53,11 @@ name: Parse pending trades
 # what it is showing.
 #
 # The four scripts take different advisory locks, so a later one cannot be
-# blocked by an earlier one, and each exits non-zero on its own failure. Only
-# the first is marked continue-on-error, for the reason stated on it.
+# blocked by an earlier one, and each exits non-zero on its own failure. The
+# requeue takes no lock and needs none -- it is one idempotent statement, and
+# the rows it touches are exactly the ones the parse's pending query excludes.
+# Only the first step is marked continue-on-error, for the reason stated on
+# it.
 #
 # This runs the work directly on a GitHub-hosted runner instead of calling an
 # HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
@@ -140,6 +152,66 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx scripts/backfill-sol-price.ts
+
+      # Between the fill and the parse, which is the only position that does
+      # any good. `requeueNoRate` (src/lib/parse-swap.ts) clears parse_error
+      # on the `unsupported_quote_no_rate` rows whose block minute the step
+      # above has just given a usable rate, and the parse below is what turns
+      # them into trades. Behind the parse it would open rows nothing looks at
+      # until the next cycle; in front of the fill it would find the same
+      # minutes still empty and clear nothing.
+      #
+      # It is gated on `usd > 0`, not on the minute merely existing, and that
+      # is the whole shape of it: `evaluateSwap` refuses a non-positive rate,
+      # so a gate that only asked whether the row was there would clear a row
+      # whose minute holds a zero, watch the parse refuse it again, and clear
+      # it again -- at the HEAD of `parsePending`'s `ORDER BY received_at`
+      # queue, since a requeued row keeps its original received_at. Migration
+      # 009 makes the zero unrepresentable; the predicate survives it anyway.
+      #
+      # No script and no lock of its own. It is one idempotent UPDATE whose
+      # predicate stops matching the moment it has run, so overlapping runs
+      # either race to the same result or find nothing, and it touches only
+      # rows the parse's own pending query already excludes (`parse_error IS
+      # NULL`) -- so it cannot disturb a parsePending that holds the advisory
+      # lock. A cron script around one statement would be ceremony, not
+      # safety; `npx tsx --eval` is the whole entry point it needs. (CJS eval,
+      # hence `.then(...)` rather than top-level await, and an explicit
+      # process.exit so the pg pool's idle client cannot hold the runner
+      # open.)
+      #
+      # No continue-on-error either, unlike the step above, and the difference
+      # is what each one talks to. The fill is a third-party HTTP call that
+      # must not be able to stop ingestion. This is one statement against the
+      # same database the parse is about to use: a failure here is a failure
+      # the parse would meet anyway, one step later, and it must stop.
+      #
+      # DATABASE_URL only, and that is the accurate list rather than a
+      # shortened one. Verified 2026-08-26 by running this exact command with
+      # both of the repo's wallet key variables set to garbage values:
+      # crypto.ts loads its keys per call rather than at import, and nothing
+      # on this path decrypts anything, so neither key is readable by what it
+      # runs.
+      # The block minute the gate reads is `raw_tx.block_time`, a plaintext
+      # column the webhook writes from the same payload.timestamp the parser
+      # reads -- so the gate needs no ciphertext and no key.
+      - name: Requeue rows whose missing rate has since arrived
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # The single quotes are deliberate: every ${...} below is a JS
+          # template placeholder node fills in, not a shell expansion.
+          # shellcheck disable=SC2016
+          npx tsx --eval 'import("./src/lib/parse-swap.ts")
+            .then(async ({ requeueNoRate }) => {
+              console.log(`requeue-no-rate: cleared parse_error on ${await requeueNoRate()} raw_tx row(s)`);
+              process.exit(0);
+            })
+            .catch((error) => {
+              console.error(`requeue-no-rate: failed -- ${error instanceof Error ? error.message : String(error)}`);
+              process.exit(1);
+            })'
 
       - name: Run parsePending
         env:
