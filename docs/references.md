@@ -268,3 +268,76 @@ Ranking dos Melhores Traders Brasileiros de Crypto em Solana, BSC, Base e Ethere
 - **Inactive KOLs stay in the ranking at zero** on the Brazilian site. With a curated list that is
   fine and even desirable; it shows the roster.
 - **The affiliate link is the only revenue surface on either site**, and both put it in the nav.
+
+---
+
+## 5. Genre extraction for the aesthetic pass
+
+Re-captured **2026-08-27** with Firecrawl: `https://kolscan.io/leaderboard`,
+`https://kolscan.io/trades`, `https://kolscanbrasil.io`.
+
+**Provenance rule, same as TENEDOR's.** Neither site declares a licence. Nothing is copied:
+no asset, no logo, no illustration, no licensed face, no copy string. What is recorded here is
+**structure and hierarchy** — which is not ownable and is what makes a tracker legible as a
+tracker. Every observation below is a note about someone else's page, not material for ours.
+
+**Capture caveat, again.** kolscan.io's leaderboard was still degraded on 2026-08-27: all fifty
+rows read `+0.00 Sol / ($0.0)` and `0 / 0`. Its SOL ticker moved between captures ($97.73 →
+$97.95), so the frontend is alive and the indexer is not — the same condition recorded on
+2026-08-25. Structure is therefore reliable; magnitudes are not.
+
+### What the genre is, in three seconds
+
+Both sites open on a **leaderboard**, not a marketing page. Dark ground —
+kolscanbrasil.io declares `theme-color #111315`. Figures are the largest thing on the row and
+carry the sign. Rank is a numeral, with a trophy or medal on the podium. Nothing decorative
+competes with a number.
+
+### The leaderboard row, as both sites build it
+
+| Slot | kolscan.io | kolscanbrasil.io |
+|---|---|---|
+| Rank | `1..50`, trophy on first | `001..`, 🏆🥈🥉 on the podium |
+| Avatar | own CDN, keyed **by wallet address** | hotlinked from `pbs.twimg.com` |
+| Name | display name, links to account page | display name, sometimes with a group tag |
+| Social | X and Telegram glyphs | `@handle` linking to `x.com` |
+| Identity chip | **truncated address** (`HFx9E1`) | **truncated address** (`0x3719`) + chain, or **`Wallets Ocultas`** |
+| Record | `0 / 0` wins/losses | not on the row |
+| PnL | `+0.00 Sol`, largest type on the row | `+2.87 ETH +1.99 BNB +1.78 SOL`, per chain |
+| Fiat | `($0.0)` beneath, muted | `(R$44.564,1)`, comma decimal |
+
+Timeframe is a three-way tab in both — `Daily / Weekly / Monthly`. kolscanbrasil.io adds a
+`USD / BRL` unit toggle; kolscan.io puts a live SOL price in the header instead.
+
+### The feed
+
+kolscan.io keeps it on its own page — *"Realtime Trades"*, with a *"Filter Wallets"* control.
+kolscanbrasil.io's landing page carries **no feed at all**: it is leaderboard-only.
+
+So a live feed on the home page is not a genre requirement. Putting one there is our choice,
+and it is the choice that makes the site read as alive on the first three seconds.
+
+### Two places the genre collides with our spec — the spec wins, both times
+
+1. **Addresses.** Both sites print a truncated wallet address on every public row, and
+   kolscan.io keys both its avatar URL and its account URL by the full address. `SECURITY.md`
+   and spec §8 forbid publishing an address in any form, truncated included, and `serialize.ts`
+   is the single place that enforces it. **The identity chip is the X handle here, never an
+   address.** kolscanbrasil.io's `Wallets Ocultas` label — which it applies per-KOL — is what
+   our whole site does unconditionally, and confirms the phrasing is idiomatic in the genre
+   rather than an apology.
+2. **Avatars.** kolscanbrasil.io hotlinks `pbs.twimg.com` directly, so X sees every visitor's
+   request and a broken upstream is a broken row. Spec §6 requires deriving from the handle via
+   unavatar, **proxied and cached by `kol_id`**, never a hotlink. Same visual result, no third
+   party in the page's request path, and no address anywhere in the URL.
+
+### What we take, and what stays ours
+
+Taken: leaderboard-first, dense rows, sign-carrying figures as the largest element, podium
+marking, the three-way timeframe tab, a fiat figure subordinate to the native one, and the
+dark ground the whole category shares.
+
+Not taken: the accent (`DESIGN.md` sets cyan `#22d3ee`, which neither reference uses), the
+typefaces, every asset, every string, the multichain columns (v1 is Solana only), the wallet
+connect in the header (spec: `/registro` is the only page that ever connects a wallet), and
+the sounds and theme-switcher chrome kolscan.io carries.
