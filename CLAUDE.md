@@ -82,6 +82,18 @@ It dies with the branch; it is not a second permanent environment.
 half-applied state the last branch left, which is the thing this rule exists to
 avoid.
 
+**There are three databases, and a migration lands in all three.** `production`,
+`tests`, and `preview` — the last is what Vercel's Preview deployments read, and
+it is the one that gets forgotten. Measured 2026-08-27: `preview` was five
+migrations behind and every preview deployment would have met a schema it did not
+have, because `scripts/migrate.mts` knew two targets and preview was neither. It
+now takes `--preview`, guarded by the same distinct-from-production assertion the
+`--test` path uses before it stamps its marker.
+
+    npm run db:migrate           # production
+    npm run db:migrate:test      # tests
+    npm run db:migrate:preview   # preview
+
 ## The suite lock goes on a direct connection
 
 `vitest.globalSetup.ts` takes its advisory lock over the **direct** Neon endpoint,
@@ -153,9 +165,30 @@ main session's shell at the same moment, in the same working tree:
 So the repository config is not the variable; the committing **process** is. A
 subagent resolves a different identity than its parent in the same directory —
 the local `.git/config` that wins here does not win there. Until that is
-understood, treat any commit a subagent makes as suspect and run the gate before
-every push. The fix is one `git filter-branch --env-filter` while the branch is
-still unpushed; it is unavailable the moment it is public.
+understood, treat any commit a subagent makes as suspect. The fix is one
+`git filter-branch --env-filter` while the branch is still unpushed; it is
+unavailable the moment it is public.
+
+### Check at the source, not only at the close
+
+The close-time gate stays, but it is the *last* line, and by then a branch may
+carry dozens of commits from a dozen agents. Since the vector is known — the
+subagent — the check belongs where the vector is.
+
+**Record `git rev-parse HEAD` before dispatching an implementer. When it reports,
+before anything else:**
+
+    git log --format='%h %an <%ae>' <base>..HEAD
+
+Every line must be `CryptoSandler <294572464+CryptoSandler@users.noreply.github.com>`.
+Fix it there, on the two or three commits that agent just made, while you still
+know which task they belong to and the range is small enough to read. A rewrite of
+six commits across four agents is the same command but a worse moment to discover
+you need it.
+
+Two independent checks at two different times, because they fail differently: this
+one catches the leak while it is one agent's work, and the close-time gate catches
+anything that reached the branch by another route.
 
 ## Adding a step to a cron workflow
 

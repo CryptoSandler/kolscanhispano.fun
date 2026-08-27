@@ -98,6 +98,19 @@ height.
 
 Spanish `es-ES` numerals throughout: `+18,42 SOL`, `1.802,4`, `68,4 %`.
 
+**One documented exception: the avatar monogram is set in `system-ui`.** The
+fallback avatar is an SVG served from `/api/avatar/<kol_id>` and consumed inside an
+`<img>`, and an image loaded that way is an isolated document — it cannot reach the
+`@font-face` rules `next/font` installs on the page, so Inter Tight is unavailable
+to it no matter how it is declared. Embedding the face in the SVG would mean
+shipping a font subset on every fallback avatar, for one or two letters.
+
+This is a platform boundary, not an oversight, and it is written here so that no
+future audit files it as a typography regression. It applies **only** to the
+monogram glyph inside that SVG. Every other letter and every figure on this site
+uses the faces above, and the rule that all figures are tabular is unaffected — a
+monogram is a letter, never a number.
+
 ## Layout
 
 12 columns, 1280px maximum, 16px gutters. The 36px row is the point of this direction: the
