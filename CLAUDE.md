@@ -121,6 +121,39 @@ Four things are never simplified away, at any level: input validation at trust b
 security, error handling that prevents data loss, and accessibility basics. Laziness governs
 how much code gets written. It never governs what that code is allowed to skip.
 
+## The author check is a gate, not a step
+
+`/cierre`'s author check is **mandatory**. A batch does not close, and nothing is
+pushed, until every commit reads:
+
+    git log main..HEAD --format='%h  %an  <%ae>'
+    # every line: CryptoSandler <294572464+CryptoSandler@users.noreply.github.com>
+
+    git log main..HEAD --format='%(trailers)' | grep . && echo 'TRAILERS — fix first' || echo ok
+
+This is not belt-and-braces for a config that is already correct. The config **is**
+correct — `~/.gitconfig` carries an `includeIf "gitdir:~/proyectos/"` pointing at
+`~/.gitconfig-cryptosandler`, verified to fire inside `~/proyectos` and not outside,
+and every repo there also sets the identity locally. Four commits picked up the
+personal address anyway, and the mechanism was never found.
+
+So the rule is about the defence, not the diagnosis. A personal email in a public
+repo's history is permanent and is a no-doxx leak; the check costs one command and
+catches it while it is still rewritable. If it ever bites again, capture that
+commit's context **that day** — the environment, the working directory, what
+invoked git — because that is the only moment the evidence exists.
+
+## Adding a step to a cron workflow
+
+`.github/workflows/parse-pending.yml` is at five steps, one of them optional. That
+is the limit of what reads obviously in one file.
+
+The next addition to it justifies **in writing** — in the pull request or the batch
+report — either why it belongs in that file or how the file should be split. Not a
+preference: a workflow nobody can read in one pass is one where a step's ordering
+dependency stops being visible, and this file already has two that matter (the
+`sol_price` fill must precede the parse, and the requeue must sit between them).
+
 ## An adversarial round before building a model change
 
 Any change to the model — what a number means, what a rule decides — and any
