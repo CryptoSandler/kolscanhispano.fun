@@ -110,6 +110,11 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
     return () => clearInterval(timer);
   }, []);
 
+  // Set after mount, never during render, so the server and the first client
+  // render agree and React does not report a hydration mismatch.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   return (
     /*
       A section of a panel, not a panel. The home page wraps this and the
@@ -117,7 +122,18 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
       border and padding cost a padding pair, a border pair and a gap that the
       900px budget does not have.
     */
-    <section className="panel-section">
+    <section
+      className="panel-section"
+      /*
+        The e2e harness's canary. Server-rendered HTML and hydrated HTML are
+        byte-identical for every layout assertion in `e2e/viewport.spec.ts`, so
+        that suite passed for its whole life against a page whose bundle was
+        answering 403 — found only when the modal spec needed a click. This
+        attribute exists on the client render and not on the server one, which
+        is the cheapest true statement that React actually ran here.
+      */
+      {...(mounted ? { "data-hydrated": "" } : {})}
+    >
       <div className="panel-head">
         <span className="live">
           <span className="live-dot" aria-hidden="true" />

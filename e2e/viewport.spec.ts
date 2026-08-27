@@ -29,6 +29,32 @@ import { expect, test } from "@playwright/test";
 test.use({ viewport: { width: 1280, height: 900 } });
 
 test.describe("the home page at 1280×900", () => {
+  /**
+   * The canary, and the reason it exists.
+   *
+   * Every case in this file passed for its whole life against a page whose
+   * JavaScript never loaded. `baseURL` was `127.0.0.1` while `next dev`
+   * initialises on `localhost`, so Next 16 treated every `/_next/static/chunks/*`
+   * request as cross-origin and answered `403` — nothing hydrated, in any spec,
+   * ever. It was invisible precisely because the cases here measure
+   * server-rendered layout, which is byte-identical with the bundle blocked.
+   *
+   * Discovered only when the modal suite was written and twelve cases failed on
+   * a dialog that never opened. So the bundle now has to prove it arrived, in
+   * one assertion, before any behavioural case is trusted: a green suite that
+   * never ran the client is a worse result than a red one.
+   */
+  test("actually loads the client bundle", async ({ page }) => {
+    const blocked: string[] = [];
+    page.on("response", (r) => {
+      if (r.url().includes("/_next/static/") && !r.ok()) blocked.push(`${r.status()} ${r.url()}`);
+    });
+
+    await page.goto("/");
+    await expect(page.locator("[data-hydrated]")).toHaveCount(1);
+    expect(blocked, "static chunks the browser could not fetch").toEqual([]);
+  });
+
   test("never scrolls horizontally, whatever the figures say", async ({ page }) => {
     await page.goto("/");
 
