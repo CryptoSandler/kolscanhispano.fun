@@ -341,3 +341,78 @@ Not taken: the accent (`DESIGN.md` sets cyan `#22d3ee`, which neither reference 
 typefaces, every asset, every string, the multichain columns (v1 is Solana only), the wallet
 connect in the header (spec: `/registro` is the only page that ever connects a wallet), and
 the sounds and theme-switcher chrome kolscan.io carries.
+
+---
+
+## 6. Second genre pass — the owner's chosen direction
+
+**Re-captured 2026-08-27** (second capture of the day, after the direction change):
+`https://kolscanbrasil.io` — HTTP 200, `theme-color #111315`, 69,027 markdown chars.
+`https://kolscan.io/leaderboard` and `/trades` as recorded in §5.
+
+Same provenance rule as always: neither site declares a licence, **nothing is copied** —
+no asset, no logo, no face, no string. Structure and hierarchy only.
+
+The **KOL detail modal** below is not from a scrape: it is a client-side view no crawler
+reaches. It is recorded from **screenshots the owner supplied on 2026-08-27**, and is
+marked as such because it is the one part of this file not independently verifiable from
+a URL.
+
+### The reference is double, and they split cleanly
+
+kolscan.io is **SOL-only, like us**, so its row and its feed map directly.
+kolscanbrasil.io is multichain, but it owns the parts the owner picked: the medals, the
+highlighted podium, the cabal badges, and the detail modal.
+
+| Element | kolscan.io | kolscanbrasil.io | **Ours, and why** |
+|---|---|---|---|
+| Rank | `1..50`, trophy on first | `001.` zero-padded + 🏆🥈🥉 | **Brazil.** The owner asked for medals and a highlighted podium. |
+| Podium emphasis | none | gradient-tinted row | **Brazil**, as green / amber / blue tints. |
+| PnL columns | one SOL figure | one per chain, signed | **kolscan.io.** We are SOL-only; a per-chain row would be one column wide and imply chains we do not index. |
+| Fiat | `($0.0)` under the figure | `(R$74.999,2)` at row end | **Brazil**: at row end, in parentheses, subordinate. |
+| Record | `0 / 0` wins/losses | absent | **kolscan.io.** We compute win rate, and `sin cierres` covers its absence. |
+| Identity chip | truncated address | truncated address **or** `Wallets Ocultas` | **Neither.** See the invariant below. |
+| Avatar | own CDN, keyed by address | hotlinked `pbs.twimg.com` | **Neither.** Our own `/api/avatar/<kol_id>`. |
+| Feed | its own page | none | **kolscan.io**, kept on the home page. |
+| Unit toggle | SOL price in header | `USD` / `BRL` | **See the currency note.** |
+| Window tabs | Daily/Weekly/Monthly | Daily/Weekly/Monthly | **Both.** We already aggregate all three, so all three are real. |
+
+### The row, as the reference builds it (verbatim from the capture)
+
+    001. 🏆  [avatar]  YodaELC  @yodacalls   0x3719 EVM      +3.84 ETH +6.80 BNB  (R$74.999,2)
+    002. 🥈  [avatar]  kurtzCR  @kurtzxx     Wallets Ocultas +0.43 ETH -2.72 SOL  (R$39.928,6)
+
+`Wallets Ocultas` sits exactly where the truncated address sits — it is the *same slot*,
+which is what makes our unconditional version read as native to the genre rather than as
+something withheld.
+
+### The detail modal (owner screenshots, 2026-08-27)
+
+Photo, name, cabal badge, X handle, total PnL in green, and — in the reference — a
+truncated address. Then: a **PNL EVOLUTION** card, a green line chart with point markers
+and `1D / 7D / 30D` tabs over an hour-range axis; a **STATS** block of PnL Total, Trades,
+Volume; a **CHAIN PNL** block, one line per chain; and a **DEFI TRADES** list where a
+hidden wallet's rows read `PRIVATE` with a padlock, showing the amount in native currency
+and its fiat equivalent.
+
+### The invariants the clone does not get to break
+
+1. **No address, anywhere, ever — truncated included.** Both references print one; we
+   print the X handle, and `Wallets ocultas` where there is no public handle to print.
+   `SECURITY.md` and spec §8 are the authority, `serialize.ts` is the enforcement, and
+   `src/app/*-invariant*` asserts it over rendered HTML. In the modal, where the
+   reference puts the address next to the handle, we put nothing.
+2. **No hotlink.** Every photo is fetched server-side and served from `/api/avatar/<kol_id>`.
+   The reference's `pbs.twimg.com` URLs put X in every visitor's request path.
+3. **The seed stays obviously fake**, with generated placeholder images — never a real
+   person's photo standing in for an invented KOL.
+4. **`noindex` stays** until launch.
+
+### Currency: a product question, not a technical one
+
+The reference toggles `USD / BRL` because it serves one country. We serve Spain and
+Latin America, and CLAUDE.md fixes the copy as neutral Spanish for exactly that reason —
+so a single national currency is the wrong shape here, and `ARS` would be as arbitrary
+for a reader in Madrid or Bogotá as `BRL` would. **Built: `SOL / USD`**, the unit every
+reader can price against. Adding a national currency is a product decision, recorded in
+the batch report rather than taken here.
