@@ -47,6 +47,23 @@ export type ObservedLeg = {
   decimals: number;
   /** Signed raw base units. */
   rawTokenAmount: string;
+  /**
+   * The lamports this leg's **own token account** reports moving, on its own
+   * `accountData` entry. Defaults to 0.
+   *
+   * It is a parameter because it was hardcoded to 0 here, and that made a
+   * whole term of `settleTrade`'s residue bound —
+   * `parse-swap.ts`'s `identifiableRentFor` — invisible to every fixture in
+   * this file. The term was then exercised only by hand-patching the entry
+   * after the fact, always with a rent-shaped value, and the case that was
+   * neither zero nor rent (a WSOL account, whose lamports are the trade) went
+   * unwritten until the corpus produced it. A fixture builder that cannot
+   * express a real field is a blind spot, not a simplification.
+   *
+   * Rent when the account was opened or closed by the transaction, the
+   * transferred lamports when the mint is wrapped SOL, 0 when it was neither.
+   */
+  nativeChangeLamports?: number;
 };
 
 export type ObservedSwapInput = {
@@ -97,7 +114,7 @@ export function buildObservedSwapPayload(input: ObservedSwapInput): EnhancedTx {
     // One entry per token account, keyed to the wallet only by `userAccount`.
     ...input.legs.map((leg) => ({
       account: inventAddress(), // the associated token account, not the wallet
-      nativeBalanceChange: 0,
+      nativeBalanceChange: leg.nativeChangeLamports ?? 0,
       tokenBalanceChanges: [
         {
           userAccount: input.wallet,

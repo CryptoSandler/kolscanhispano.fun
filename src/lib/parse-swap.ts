@@ -1093,8 +1093,9 @@ function stableLamportsFor(leg: TokenLeg, solUsd: bigint): bigint {
  * this term reads exactly and the floor underestimates.
  *
  * **The magnitude, not the sign, and the sign carries no information here.** A
- * token account's own lamports move for exactly one reason: it was opened and
- * funded to rent-exemption, or it was closed and gave that rent back. Same
+ * token account's own lamports move for one reason — it was opened and funded
+ * to rent-exemption, or it was closed and gave that rent back — with the one
+ * exception the next paragraph is about, the native mint. Same
  * quantity, opposite signs, and the wallet's SOL side has it with the sign
  * flipped again either way — so `abs` is the reading and a directional one is
  * half a rule. It was written directionally first, as
@@ -1104,6 +1105,41 @@ function stableLamportsFor(leg: TokenLeg, solUsd: bigint): bigint {
  * written as `trade{buy, 500, solAmount 0.0021576}` — 100% rent,
  * `parse_error` NULL. That is the same fabrication as the sell-side one this
  * rule was built for, arriving through the other door.
+ *
+ * **The native mint is the exception, and it was found by measurement rather
+ * than reasoned out.** Under SPL Token a transfer of wrapped SOL moves
+ * lamports alongside the token amount, so a WSOL token account's own entry
+ * reports *the trade's own lamports* as its `nativeBalanceChange`. Read as
+ * rent that is not a small overstatement, it is the whole SOL side: the bound
+ * is then derived from the very quantity it is meant to bound, meets or
+ * exceeds it by construction, and a WSOL-routed swap becomes
+ * `sol_leg_is_residue` — settled, `parse_error` recorded, the trade gone.
+ * Replaying the shipped `evaluateSwap` at `8666c6a` over 2,397 real mainnet
+ * SWAP payloads: 86 residue refusals, **12 of them invented by this term**,
+ * 22.0374 SOL of real trades among them and one single buy of 12.0273 SOL.
+ * The shape, from a PUMP_AMM sale of 1,104,291.37 tokens for 1.41132101 SOL:
+ *
+ *     entry (WALLET)     native=-805000      changes=
+ *     entry (token acct) native=1411821010   changes=WSOL:1411821010
+ *     entry (token acct) native=0            changes=TOKEN:-1104291368568
+ *     bound 1411821010 >= magnitude 1411321010  ->  sol_leg_is_residue
+ *
+ * So an entry carrying a WSOL balance change for this wallet contributes
+ * nothing here. That does not leave such an account unbounded: `settleTrade`
+ * counts every non-zero change toward the floor, the WSOL one included, so it
+ * is still worth `LARGEST_ATA_RENT_LAMPORTS` of bound — which is the honest
+ * statement about it, since a WSOL account that really was opened or closed
+ * reports its rent and its wrapped lamports summed into the one figure, with
+ * no way to separate them.
+ *
+ * **Do not re-widen this back to every mint.** The claim it narrows — "a token
+ * account's own lamports move for exactly one reason" — was stated as prose,
+ * flagged by its own implementer as resting on what a token account *is*
+ * rather than on anything measured, and accepted as a ruling anyway. Every
+ * fixture exercising this term was then written from that same belief, so 551
+ * tests agreed with it and the corpus did not. The `abs` above stays — the
+ * buy-side fabrication it closes is real and measured. It is false for exactly
+ * one mint, the one this file treats as the SOL side.
  *
  * There is no double-counting to fear from reading both directions. This term
  * and the wallet's own `nativeBalanceChange` are two different accounts'
@@ -1136,7 +1172,12 @@ function identifiableRentFor(payload: EnhancedTx, address: string): bigint {
   let total = 0n;
   for (const account of accountEntries(payload)) {
     if (account.record === null || account.account === address) continue;
-    if (!account.changes?.some((change) => change.userAccount === address)) continue;
+    const ours = account.changes?.filter((change) => change.userAccount === address) ?? [];
+    if (ours.length === 0) continue;
+    // The native mint is the exception: these lamports are the transfer, not
+    // rent. An unreadable `mint` is not WSOL and so still counts, which errs
+    // toward a refusal rather than toward a fabricated price.
+    if (ours.some((change) => readAddress(change.record?.mint) === WSOL_MINT)) continue;
     let native: bigint;
     try {
       native = requireLamports(account.record.nativeBalanceChange, "nativeBalanceChange");

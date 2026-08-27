@@ -1956,10 +1956,18 @@ describe("a SOL side that is only account rent", () => {
    * Sets the native movement a token account reports on **its own**
    * `accountData` entry, which in the observed layout is
    * `accountData[1 + legIndex]` (see `buildObservedSwapPayload`). A token
-   * account moves lamports for exactly one reason: it was opened, and reports
-   * the rent it received, or it was closed, and reports the rent it gave back.
-   * The wallet's own entry carries the matching movement with the opposite
-   * sign.
+   * account of an ordinary mint moves lamports for one reason: it was opened,
+   * and reports the rent it received, or it was closed, and reports the rent
+   * it gave back. The wallet's own entry carries the matching movement with
+   * the opposite sign.
+   *
+   * **Except for wrapped SOL, where those lamports are the trade itself.**
+   * That exception was invisible here for two rounds: this helper only ever
+   * set rent-shaped values, the builder hardcoded every other token account to
+   * 0, and the parser agreed with both. It was the corpus that produced the
+   * other shape — see the WSOL tests at the end of this block, which use the
+   * builder's own `nativeChangeLamports` rather than patching an entry after
+   * the fact.
    */
   const setAtaNative = (payload: EnhancedTx, legIndex: number, lamports: unknown): EnhancedTx => {
     (payload.accountData[1 + legIndex] as unknown as Record<string, unknown>).nativeBalanceChange = lamports;
@@ -2188,6 +2196,85 @@ describe("a SOL side that is only account rent", () => {
       extraTokenChanges: [{ mint: WSOL_MINT, decimals: 9, rawTokenAmount: "-1000000000" }],
     });
     expect(parseSwap(payload, wallet)!.solAmount).toBe(1.00203928);
+  });
+
+  it("prices a WSOL-routed sale, whose token account's lamports are the trade and not rent", () => {
+    // The corpus's finding, and the shape every fixture in this file was blind
+    // to. Under SPL Token a transfer of the **native mint** moves lamports
+    // alongside the token amount, so the WSOL token account's own entry
+    // reports the *trade's* lamports as its `nativeBalanceChange`.
+    // `identifiableRentFor` called that rent, which makes the bound a
+    // restatement of the SOL side and therefore always met.
+    //
+    // Reproduced lamport for lamport from a real PUMP_AMM payload, a sale of
+    // 1,104,291.37 tokens for 1.41132101 SOL:
+    //
+    //     entry (WALLET)     native=-805000      changes=
+    //     entry (token acct) native=1411821010   changes=WSOL:1411821010
+    //     entry (token acct) native=0            changes=TOKEN:-1104291368568
+    //
+    // Measured at 8666c6a, where this test is red:
+    //   bound 1411821010 >= magnitude 1411321010 -> `sol_leg_is_residue`,
+    // settled, `parsed_at` SET, `parse_error` "sol_leg_is_residue", never
+    // requeued — and `parseSwap` returns null, so `trade.side` throws on a
+    // null before any number is even compared.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -805_000,
+      feeLamports: 305_000,
+      isFeePayer: true,
+      legs: [
+        // The WSOL account: its lamports and its balance change are the same
+        // 1.41182101 SOL, because they are the same movement seen twice.
+        { mint: WSOL_MINT, decimals: 9, rawTokenAmount: "1411821010", nativeChangeLamports: 1_411_821_010 },
+        // The token account: pre-existing, so it moves no lamports of its own.
+        { mint, decimals: 6, rawTokenAmount: "-1104291368568" },
+      ],
+    });
+    const trade = parseSwap(payload, wallet)!;
+    expect(trade.side).toBe("sell");
+    expect(trade.tokenAmount).toBe(1_104_291.368568);
+    // 1411821010 of WSOL, less the 805,000 the wallet's own entry is down,
+    // plus the 305,000 fee spec §4.4 adds back for the fee payer.
+    expect(trade.solAmount).toBe(1.41132101);
+  });
+
+  it("still counts a token account's stated rent when a WSOL entry sits beside it", () => {
+    // The exception is about one mint, not about the term: an ordinary token
+    // account's lamports are still rent when the SOL side arrives as WSOL.
+    //
+    // A large Token-2022 account — around 500 bytes with the
+    // confidential-transfer extension, `(128 + 500) * 3480 * 2` — states a
+    // 4,370,880 refund when it closes, which is above the two-account floor of
+    // 4,148,160. So the bound rests on the exact term here, and a fix that
+    // dropped every entry's lamports instead of the WSOL one's would book this
+    // as a trade.
+    //
+    // The wallet's own entry is short of the refund because the venue took
+    // 0.0005 SOL of its own in SOL; the sale's proceeds are the WSOL leg. Net
+    // SOL side at `proceeds = 500_000`: exactly the rent the wallet got back,
+    // and nothing else.
+    const BIG_RENT = 4_370_880;
+    const sale = (proceeds: number) =>
+      evaluateSwap(
+        buildObservedSwapPayload({
+          wallet: wallet.address,
+          nativeChangeLamports: BIG_RENT - 500_000 - 5_000,
+          feeLamports: 5_000,
+          isFeePayer: true,
+          legs: [
+            { mint: WSOL_MINT, decimals: 9, rawTokenAmount: String(proceeds), nativeChangeLamports: proceeds },
+            { mint, decimals: 6, rawTokenAmount: "-500000000", nativeChangeLamports: -BIG_RENT },
+          ],
+        }),
+        wallet,
+      );
+    expect(BIG_RENT).toBeGreaterThan(2 * ATA_FLOOR); // the floor alone would let both through
+    expect(sale(500_000).outcome).toBe("sol_leg_is_residue");
+    // One lamport of real proceeds past the rent, and it is a trade — where at
+    // 8666c6a the WSOL entry's own 500,001 lamports were added to the bound
+    // and refused it.
+    expect(sale(500_001).outcome).toBe("trade");
   });
 });
 
