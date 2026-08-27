@@ -391,10 +391,12 @@ export type ParsedTrade = {
  *   transaction simply does not touch it. Not a trade, no error.
  * - `dust_only`: every token leg this wallet moved is below the dust floor
  *   (see `DUST_MAX_TOKENS_NUMERATOR`). Not a trade, no error.
- * - `stable_rotation`: the sole leg is a stablecoin — any of them, priceable
- *   or not (`STABLE_MINTS`) — i.e. a SOL ↔ stablecoin rotation, which spec
- *   §4.3 says is *not a trade and is not indexed*. Not an error: it is
- *   correct behaviour, not a gap.
+ * - `stable_rotation`: the wallet swapped currency for currency and took no
+ *   position — a sole stablecoin leg against SOL, which is spec §4.3's SOL ↔
+ *   stablecoin rotation, *not a trade and not indexed*; or two legs that are
+ *   both stablecoins, which §4.3 does not name and which is the same fact
+ *   about the same wallet. Any stablecoin `STABLE_MINTS` holds, priceable or
+ *   not. Not an error: it is correct behaviour, not a gap.
  * - `no_sol_leg`: a real token leg moved, but the wallet's net SOL/WSOL
  *   delta is exactly zero, so spec §4.3's "SOL/WSOL balance moves against a
  *   SPL token balance" is not satisfied — a transfer or an airdrop, not a
@@ -1475,6 +1477,28 @@ export function evaluateSwap(
   if (legs.length > 2) return { outcome: "unsupported_quote" };
 
   if (legs.length === 2) {
+    // **Both legs stablecoins: a dollar swapped for a dollar, which is a
+    // rotation and not a quote.** The quote branch below asks only whether
+    // *one* leg is USDC and then treats the other as the token — so a
+    // USDC↔USDT swap was priced as if the wallet had bought USDT with
+    // dollars, and written as a trade whose SOL side is the USDC leg
+    // normalised at `sol_usd`. Measured over the corpus at `74c233a`:
+    // `sell 178.034051 for 0.89020365 SOL` and `buy 143.573972 for
+    // 0.71789742 SOL`, `parse_error` NULL — against wallets whose entire real
+    // native movement was the 17,117 and 13,541 lamports of fee. The SOL side
+    // of both rows is a currency conversion of the counter-leg and nothing
+    // else, which is the most confident shape a fabricated number can take.
+    //
+    // **This extends spec §4.3 by one step, deliberately and narrowly.** §4.3
+    // names the SOL ↔ stablecoin rotation; this is the stablecoin ↔
+    // stablecoin one, which the spec does not mention and which holds for the
+    // identical reason — the wallet took no position in anything, so there is
+    // nothing to index. Reaching `stable_rotation` rather than a new name
+    // says exactly that. Only the USDC/USDT pair can arrive here: those are
+    // the two mints `STABLE_MINTS` holds, and `tokenLegsIn` has already
+    // summed each mint into a single leg.
+    if (legs.every((leg) => STABLE_MINTS.has(leg.mint))) return { outcome: "stable_rotation" };
+
     // Spec §4.3's two remaining quote shapes, told apart by one question:
     // is one of the legs the stablecoin `sol_usd` is quoted in?
     const stableIndex = legs.findIndex((leg) => leg.mint === USDC_MINT);

@@ -2302,6 +2302,41 @@ describe("swaps quoted in a stablecoin this project cannot price", () => {
     expect(evaluateSwap(payload, wallet).outcome).toBe("unsupported_quote_unpriced_stable");
   });
 
+  it("calls a USDC<->USDT swap a rotation, not a trade in USDT priced off the other dollar", () => {
+    // The other half of the same defect, and the more confident one. The
+    // quote branch asks only whether *one* leg is USDC; with USDC on one side
+    // and USDT on the other it took USDC as the quote, USDT as the token, and
+    // wrote a trade whose SOL side is the USDC leg normalised at `sol_usd` —
+    // a number the wallet never moved.
+    //
+    // Rebuilt from a real JUPITER payload. The wallet's own entry moves the
+    // 17,117 lamports of fee and nothing else; both token accounts are
+    // pre-existing:
+    //
+    //     entry (WALLET)     native=-17117  changes=          fee=17117
+    //     entry (token acct) native=0       changes=USDT:-178034051
+    //     entry (token acct) native=0       changes=USDC:178040730
+    //
+    // Red at 74c233a: `expected 'trade' to be 'stable_rotation'` — written as
+    // `sell 178.034051 for 0.89020365 SOL` at 200 USD/SOL, `parse_error`
+    // NULL. Six thousandths of a dollar changed hands and a leaderboard got a
+    // 0.89 SOL trade out of it.
+    const payload = buildObservedSwapPayload({
+      wallet: wallet.address,
+      nativeChangeLamports: -17_117,
+      feeLamports: 17_117,
+      isFeePayer: true,
+      legs: [
+        { mint: USDT_MINT, decimals: 6, rawTokenAmount: "-178034051" },
+        { mint: USDC_MINT, decimals: 6, rawTokenAmount: "178040730" },
+      ],
+    });
+    expect(evaluateSwap(payload, wallet, parseDecimal("200")).outcome).toBe("stable_rotation");
+    // The rate is what the fabrication was built out of, so the verdict must
+    // not depend on having one.
+    expect(evaluateSwap(payload, wallet).outcome).toBe("stable_rotation");
+  });
+
   it("keeps a genuine token<->token swap distinguishable from it", () => {
     const payload = buildObservedSwapPayload({
       wallet: wallet.address,
