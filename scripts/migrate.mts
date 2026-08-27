@@ -7,12 +7,34 @@ import { loadEnvLocal } from "../src/lib/env";
 loadEnvLocal();
 
 const isTest = process.argv.includes("--test");
-const variable = isTest ? "TEST_DATABASE_URL" : "DATABASE_URL";
+const isPreview = process.argv.includes("--preview");
+
+if (isTest && isPreview) {
+  throw new Error("--test and --preview name different databases; pass one.");
+}
+
+// Three targets, one per Neon branch. `preview` exists because Vercel's
+// Preview deployments read it, and a branch that adds a migration leaves it
+// behind until someone applies it there too -- measured 2026-08-27, when the
+// preview branch was five migrations behind production and every preview
+// deployment would have failed at runtime against a schema it did not have.
+const variable = isTest ? "TEST_DATABASE_URL" : isPreview ? "PREVIEW_DATABASE_URL" : "DATABASE_URL";
 const connectionString = process.env[variable]?.trim();
 
 if (!connectionString) {
   // Never interpolate the value into the message: this string reaches logs.
   throw new Error(`${variable} is not set. See .env.example.`);
+}
+
+// Preview holds seeded, throwaway data and is never production. The guard is
+// the same one the --test path uses before it stamps its marker: if the two
+// variables name the same database, applying here would be applying there.
+if (isPreview) {
+  assertDistinctFromProduction(
+    connectionString,
+    "Refusing to migrate: PREVIEW_DATABASE_URL and DATABASE_URL name the same database. " +
+      "Point PREVIEW_DATABASE_URL at the Neon preview branch, then re-run `npm run db:migrate:preview`."
+  );
 }
 
 // Log only the ep-... host fragment: enough to confirm the target branch

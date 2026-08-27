@@ -21,7 +21,8 @@
     "db:migrate:test": "tsx scripts/migrate.mts --test",
     "db:seed": "tsx scripts/seed-dev.ts",
     "db:seed:preview": "tsx scripts/seed-preview.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "db:migrate:preview": "tsx scripts/migrate.mts --preview"
   },
   "repository": {
     "type": "git",
