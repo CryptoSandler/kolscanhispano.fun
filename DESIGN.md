@@ -96,6 +96,8 @@ WCAG 2.1, against `surface-1 #16191c`. Measured 2026-08-27:
 | `semantic-loss #f2555a` | 5.23 | PASS |
 | `semantic-stale #c9a227` | 7.30 | PASS |
 | `primary #22d3ee` | 9.77 | PASS |
+| `primary-hover #67e8f9` | 12.17 | PASS |
+| `semantic-neutral #7e878f` | 4.83 | PASS |
 | `podium-1 #4ade80` | 10.13 | PASS |
 | `podium-2 #fbbf24` | 10.57 | PASS |
 | `podium-3 #7dd3fc` | 10.58 | PASS |
@@ -131,7 +133,11 @@ oversight; it applies only to that glyph, and never to a figure.
 
 ## Layout
 
-1280px maximum, 16px gutters. **Rows are 56px** — enough for a 36px circular avatar, the
+1280px maximum, 16px gutters. **Rows are 56px** — except `list-defi-trades` inside the
+modal, which is 36px: the 56px height exists to carry a circular avatar above a two-line
+identity, and a one-line trade row inside a modal has neither.
+
+**Rows are 56px** — enough for a 36px circular avatar, the
 bold name, and the handle or `Wallets ocultas` beneath it. Fixed column widths so a live
 update never reflows a table.
 
@@ -173,12 +179,16 @@ disabled stub.
 
 **`modal-kol`** — opened from a row, dismissible by `Esc`, backdrop click and a close button;
 focus trapped; the trigger row regains focus on close. Header: 64px avatar, `name`, cabal
-chip, `@handle` or `Wallets ocultas`, and the period's total PnL in `numeric-lg` by sign.
+chip, the `@handle` (always, with `Wallets ocultas` beside it where wallets are hidden —
+same rule as the row), and the period's total PnL in `numeric-lg` by sign.
 **Where the reference prints a truncated address, we print nothing.**
 
 Then, in order: **`card-pnl-evolution`** — a line chart in `semantic-gain` (or
-`semantic-loss` when the period is negative) with point markers, `1D · 7D · 30D` segments,
-and a time axis; **`card-stats`** — PnL total, trades, volume; **`card-chain-pnl`** — one
+`semantic-loss` when the period is negative) with point markers, `Diario · Semanal ·
+Mensual` segments, and a time axis. **Not `1D / 7D / 30D`**, which the reference uses and
+which would be false here: spec §4.9 makes every window calendar-aligned UTC and never
+rolling, so `Semanal` is the current ISO week — one day long on a Monday — and is not
+`7D`. The genre's label loses to the spec's arithmetic; **`card-stats`** — PnL total, trades, volume; **`card-chain-pnl`** — one
 line, SOL, because that is every chain we index; **`list-defi-trades`** — the KOL's trades,
 each with verb, SOL amount by sign and its USD equivalent, and where the wallet is hidden
 the row reads `PRIVADO` with a padlock instead of a signature link.
@@ -199,6 +209,9 @@ from a stalled indexer, which reads as fifty traders who all broke exactly even.
 | `modal-kol` chart | line with points | `Sin operaciones cerradas en este período.` |
 | row, no closed episodes | win rate | `sin cierres` — never `0 %` |
 | any figure with no price | the number | `sin precio` |
+| `list-defi-trades` | the KOL's trades | `Sin operaciones en este período.` |
+| `modal-kol` on a failed load | the cards | `No se pudo cargar este KOL.` with a retry |
+| `modal-kol` while loading | the cards | **no copy at all** — the cards reserve their height and stay blank. `Cargando…` is a spinner in words, and this system does not ship spinners |
 
 Absence is rendered as absence, never as a zero.
 

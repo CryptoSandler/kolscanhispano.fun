@@ -146,6 +146,26 @@ describe("the contrast table in DESIGN.md is true", () => {
   // document's own hex values is what makes that table a claim rather than a
   // decoration -- and it is how a colour lifted in the palette but not in the
   // table gets caught.
+  // Backgrounds are what other colours are measured *against*, so they carry no
+  // foreground ratio of their own. Everything else is text or a glyph somewhere
+  // and owes the table a row. This case was written during the modal build,
+  // went red on `primary-hover` and `semantic-neutral`, and was deleted rather
+  // than acted on -- it is restored here with those two rows added, because a
+  // rule the document states and nothing enforces is a rule that drifts.
+  it("gives every foreground colour a row in the table", () => {
+    const BACKGROUNDS = new Set([
+      "canvas", "surface-1", "surface-2", "surface-3",
+      "hairline", "hairline-strong", "on-primary",
+      "podium-1-wash", "podium-2-wash", "podium-3-wash",
+    ]);
+    const documented = new Set(
+      [...DESIGN.matchAll(/^\| `([a-z0-9-]+) #[0-9a-f]{6}` \| \d+\.\d+ \| \w+ \|$/gim)].map((m) => m[1]),
+    );
+    const missing = Object.keys(designColors())
+      .filter((t) => !BACKGROUNDS.has(t) && !documented.has(t));
+    expect(missing, "palette colours with no measured ratio in DESIGN.md").toEqual([]);
+  });
+
   it("matches the published ratio for every row, to two decimals", () => {
     const colors = designColors();
     const surfaceFor = measuredAgainst(colors);
