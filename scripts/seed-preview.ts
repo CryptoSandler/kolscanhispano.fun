@@ -44,6 +44,36 @@
  * tall, so it scrolls. See the `ROSTER` comments for which episode produces
  * which state.
  *
+ * ## `sin precio` is transient here, and that is correct
+ *
+ * This script writes **no `sol_price` rows**, and must not: inventing a SOL/USD
+ * rate is inventing a number, which is the one thing the fixture may not do. The
+ * consequence is that `sin precio` holds only while nothing has filled those
+ * minutes. Run `backfill-prices` against preview and it will fill them from any
+ * `sol_price` row at or before the block — `solUsdAt` uses a `<=` bound — and the
+ * chip disappears.
+ *
+ * **That is the real lifecycle, not a defect in the fixture.** In production an
+ * unpriced trade is unpriced *until a rate arrives*; a fixture that made the state
+ * permanent would be teaching the impossible state this file exists to avoid.
+ *
+ * Two ways to pin it permanently were considered and both rejected, for the
+ * record, so neither is reintroduced as an improvement:
+ *
+ * 1. **Date the block before Binance listed SOLUSDC**, so no candle can cover it.
+ *    `solUsdAt`'s `<=` means this needs the trade to predate *every* row in
+ *    `sol_price`, not merely the listing — and a trade that old falls outside every
+ *    leaderboard window and off the visible end of the feed, so it cannot serve the
+ *    gate it would exist for.
+ * 2. **Write the trade with a NULL `price_sol`**, which keeps `price_usd` NULL
+ *    through any rate (`valueTrade` returns `priceUsd: null` for it). But
+ *    `parse-swap.ts:1667` produces that only when `tokenAmount === 0n`, a defensive
+ *    branch the upstream dust and `no_token_leg` refusals make unreachable — so
+ *    seeding it would be seeding a state the parser cannot emit.
+ *
+ * So the state is left honest and transient. Take the visual gate before running
+ * `backfill-prices` against preview, or re-run this seed after one.
+ *
  * ## It cannot reach production
  *
  * A seed that can reach production is a worse bug than an empty preview, and
