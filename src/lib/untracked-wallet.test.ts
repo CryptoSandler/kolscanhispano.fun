@@ -57,6 +57,7 @@ async function storeUntrackedSwap(): Promise<void> {
       nativeChangeLamports: -1_000_005_000,
       tokenChangeRaw: "2000000",
       isFeePayer: true,
+      feeLamports: 5_000,
     }),
   });
 }
