@@ -585,13 +585,24 @@ test.describe("modal-kol when the KOL is gone", () => {
     await expect(dialog).not.toHaveAttribute("open", "");
 
     // Not hidden, not disabled, not `tabindex="-1"`: gone from the document.
-    expect(
-      await page.evaluate(() =>
-        [...document.querySelectorAll(".row-leaderboard")].some((row) =>
-          row.textContent?.includes("Ana Cripto"),
-        ),
-      ),
-    ).toBe(false);
+    //
+    // Polled rather than read once. The removal lands a commit after the
+    // dialog's `open` attribute drops, so a single `page.evaluate` here is a
+    // race that loses roughly two runs in three inside the full suite while
+    // passing every time in isolation -- measured, after it failed 2 of 3 and
+    // then passed alone. The sibling case above only survived it by asserting
+    // through `toHaveCount`, which retries.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            [...document.querySelectorAll(".row-leaderboard")].some((row) =>
+              row.textContent?.includes("Ana Cripto"),
+            ),
+          ),
+        { message: "the withdrawn KOL's row is still in the document" },
+      )
+      .toBe(false);
 
     // The rows that remain are still live, so the removal did not cost the page
     // its modal.
