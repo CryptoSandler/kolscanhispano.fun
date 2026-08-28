@@ -28,6 +28,24 @@ export const ALLOWED_BASE58 = new Set([
  */
 export const HYGIENE_SKIP = ["src/lib/hygiene.ts", "package-lock.json"];
 
+/**
+ * A GitHub Actions pin: `uses: owner/repo@<40 lowercase hex> # tag`.
+ *
+ * These are removed before the scan rather than allowlisted, because the
+ * allowlist holds *values* and a pin changes every time an action is re-pinned.
+ * A 40-character commit SHA is not an address, but its leading run up to the
+ * first `0` is base58-shaped — `49933ea5288caeca8642d1e84afbd3f7d6820020`
+ * yields a 36-character run, which is exactly what tripped this scan when the
+ * workflows were pinned.
+ *
+ * Deliberately narrow: only a full `uses:@<40 hex>` on one line, and the caller
+ * applies it only to workflow files. Exempting *all* lowercase-hex runs
+ * everywhere would have been shorter and would have opened a real hole — a
+ * wallet's `address_hmac` is 64 lowercase hex characters, and this scan is one
+ * of the things standing between that and a committed file.
+ */
+const ACTION_PIN = /(uses:\s*[\w.-]+\/[\w.-]+)@[0-9a-f]{40}\b/g;
+
 /** Distinct maximal base58 runs of 32+ characters that are not allowlisted. */
 export function findDisallowedBase58(text: string): string[] {
   const found = new Set<string>();
@@ -36,4 +54,9 @@ export function findDisallowedBase58(text: string): string[] {
     found.add(match);
   }
   return [...found];
+}
+
+/** `findDisallowedBase58`, with GitHub Actions SHA pins removed first. */
+export function findDisallowedBase58InWorkflow(text: string): string[] {
+  return findDisallowedBase58(text.replace(ACTION_PIN, "$1@PINNED"));
 }

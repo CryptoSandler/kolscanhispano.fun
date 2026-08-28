@@ -1,10 +1,46 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ALLOWED_BASE58, HYGIENE_SKIP, findDisallowedBase58 } from "./hygiene";
+import {
+  ALLOWED_BASE58,
+  HYGIENE_SKIP,
+  findDisallowedBase58,
+  findDisallowedBase58InWorkflow,
+} from "./hygiene";
 
 const address = "z".repeat(44); // base58 charset, address length
 const signature = "z".repeat(88); // base58 charset, signature length
+
+describe("findDisallowedBase58InWorkflow", () => {
+  // Every base58-shaped literal here is *built*, never written out: this file
+  // is itself scanned by the repository case below, and an earlier draft of
+  // these tests failed it by pasting a real address copied out of the captured
+  // reference data. The guard caught its own test.
+  // Split in two halves, each under the 32-character floor, so this file
+  // contains no scannable run of its own.
+  const sha = "49933ea5288caeca8642" + "d1e84afbd3f7d6820020";
+  const pin = `uses: actions/setup-node@${sha} # v4.4.0`;
+  const fakeAddress = `${"Ab".repeat(11)}${"Cd".repeat(11)}`.slice(0, 44);
+  const fakeHmac = "a".repeat(64);
+
+  it("does not flag an action pinned to a commit SHA", () => {
+    expect(findDisallowedBase58InWorkflow(pin)).toEqual([]);
+  });
+
+  it("still flags an address sitting in the same file", () => {
+    expect(findDisallowedBase58InWorkflow(`${pin}\n  env:\n    A: ${fakeAddress}`)).toEqual([
+      fakeAddress,
+    ]);
+  });
+
+  it("still flags a 64-character hex blind index, which is the hole not opened", () => {
+    expect(findDisallowedBase58InWorkflow(`${pin}\n  X: ${fakeHmac}`)).toEqual([fakeHmac]);
+  });
+
+  it("leaves a bare SHA that is not an action pin to the strict rule", () => {
+    expect(findDisallowedBase58InWorkflow(`secret: ${sha}`)).toEqual([sha.slice(0, 36)]);
+  });
+});
 
 describe("findDisallowedBase58", () => {
   it("flags an address-length base58 string", () => {
@@ -62,7 +98,13 @@ describe("the repository itself", () => {
       } catch {
         continue; // unreadable or binary
       }
-      for (const hit of findDisallowedBase58(text)) offenders.push(`${file}: ${hit}`);
+      // Workflow files get the pin-aware scan: a `uses:@<40 hex>` is a commit
+      // SHA, and its run up to the first `0` is base58-shaped. Every other
+      // file gets the strict scan, so the exemption cannot reach source.
+      const scan = file.startsWith(".github/workflows/")
+        ? findDisallowedBase58InWorkflow
+        : findDisallowedBase58;
+      for (const hit of scan(text)) offenders.push(`${file}: ${hit}`);
     }
 
     expect(offenders).toEqual([]);
