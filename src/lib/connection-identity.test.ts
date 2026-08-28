@@ -90,12 +90,35 @@ describe("assertVerifyFull", () => {
     ).not.toThrow();
   });
 
-  it.each(["", "?sslmode=require", "?sslmode=prefer", "?sslmode=verify-ca", "?sslmode=no-verify", "?sslmode=disable", "?sslmode=nonsense"])(
-    "refuses %s",
+  it.each(["?sslmode=require", "?sslmode=prefer", "?sslmode=verify-ca", "?sslmode=no-verify", "?sslmode=disable", "?sslmode=nonsense"])(
+    "refuses %s, because somebody chose it",
     (query) => {
       expect(() => assertVerifyFull(url(query), "DATABASE_URL")).toThrow(/verify-full/);
     },
   );
+
+  // Absent is an omission, not a choice, and it is corrected rather than
+  // refused. Throwing here would make a missing parameter a boot failure --
+  // `resolveConnectionString` runs at module load — and `vercel env pull`
+  // returns this project's sensitive values empty, so the spelling in
+  // production cannot be read from a developer machine to rule that out in
+  // advance. The connection ends up verified either way.
+  it("adds sslmode=verify-full when the string carries none", () => {
+    const corrected = assertVerifyFull(url(""), "DATABASE_URL");
+    expect(new URL(corrected).searchParams.get("sslmode")).toBe("verify-full");
+  });
+
+  it("keeps every other parameter while adding it", () => {
+    const corrected = assertVerifyFull(url("?channel_binding=require"), "DATABASE_URL");
+    const params = new URL(corrected).searchParams;
+    expect(params.get("sslmode")).toBe("verify-full");
+    expect(params.get("channel_binding")).toBe("require");
+  });
+
+  it("returns an already-correct string unchanged, byte for byte", () => {
+    const already = url("?sslmode=verify-full&channel_binding=require");
+    expect(assertVerifyFull(already, "DATABASE_URL")).toBe(already);
+  });
 
   it("refuses a string that is not a URL at all", () => {
     expect(() => assertVerifyFull("not a url", "DATABASE_URL")).toThrow(/DATABASE_URL/);

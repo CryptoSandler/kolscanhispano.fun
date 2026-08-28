@@ -111,16 +111,37 @@ const KNOWN_SSLMODES = new Set(["disable", "no-verify", "prefer", "require", "ve
  *
  * The message names the `ep-…` host and the mode, never the string.
  */
-export function assertVerifyFull(raw: string, variableName: string): void {
-  let sslmode: string | null;
+export function assertVerifyFull(raw: string, variableName: string): string {
+  let url: URL;
   try {
-    sslmode = new URL(raw).searchParams.get("sslmode");
+    url = new URL(raw);
   } catch {
     throw new Error(`${variableName} is not a valid connection URL. See .env.example.`);
   }
-  if (sslmode === "verify-full") return;
+  const sslmode = url.searchParams.get("sslmode");
+  if (sslmode === "verify-full") return raw;
 
-  const found = sslmode === null ? "no sslmode" : KNOWN_SSLMODES.has(sslmode) ? `sslmode=${sslmode}` : "an unrecognised sslmode";
+  // **Absent is corrected, not refused.** An earlier version threw here, and
+  // that made a missing `sslmode` a boot failure: `resolveConnectionString`
+  // runs at module load, so the first request after a deploy would have thrown
+  // rather than served. Verified 2026-08-28 that this was not a hypothetical —
+  // `vercel env pull` returns sensitive values **empty** for this project, so
+  // production's spelling could not be read from a developer machine at all,
+  // and shipping a throw would have been shipping an outage nobody could rule
+  // out beforehand.
+  //
+  // Appending the mode reaches the same end state the throw was protecting:
+  // the connection is verified either way. What it does not do is make the
+  // deploy depend on a value nobody can inspect.
+  if (sslmode === null) {
+    url.searchParams.set("sslmode", "verify-full");
+    return url.toString();
+  }
+
+  // A *wrong* mode is different in kind: somebody wrote `require` or `disable`
+  // on purpose, and silently overriding a deliberate choice would hide a
+  // decision rather than correct an omission. That still throws.
+  const found = KNOWN_SSLMODES.has(sslmode) ? `sslmode=${sslmode}` : "an unrecognised sslmode";
   throw new Error(
     `${variableName} must carry sslmode=verify-full; it has ${found} (target ${hostFragment(raw)}). ` +
       "Nothing in this repo passes an ssl option, so the connection string is the only thing that " +

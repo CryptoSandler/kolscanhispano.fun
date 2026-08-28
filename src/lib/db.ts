@@ -24,19 +24,21 @@ export function resolveConnectionString(): string {
 
   // Nothing in this repo passes an `ssl` option, so this substring is the only
   // thing standing between the app and an unencrypted connection to Neon.
-  assertVerifyFull(value, variable);
+  // Takes the returned string, not the input: a missing `sslmode` is corrected
+  // here rather than refused, so a deploy never turns on a value nobody can read.
+  const verified = assertVerifyFull(value, variable);
 
   if (isTest) {
     // connectionIdentity() is a cheap first line of defense, not a proof; the
     // real backstop is assertTestDatabaseMarker() below, which does not
     // depend on parsing anything.
     assertDistinctFromProduction(
-      value,
+      verified,
       "TEST_DATABASE_URL must not be the production database: the suite truncates it."
     );
   }
 
-  return value;
+  return verified;
 }
 
 /**

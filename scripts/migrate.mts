@@ -57,13 +57,13 @@ if (isPreview) {
 // Same rule as every other connection in this repo: TLS is whatever the text
 // of the secret asks for, so ask for it explicitly. This path applies DDL, so
 // it is the last one that should be allowed to run over an unverified session.
-assertVerifyFull(connectionString, variable);
+const verified = assertVerifyFull(connectionString, variable);
 
 // Log only the ep-... host fragment: enough to confirm the target branch
 // without ever printing a connection string.
 console.log(`Applying migrations to ${hostFragment(connectionString)}`);
 
-const client = new Client({ connectionString });
+const client = new Client({ connectionString: verified });
 await client.connect();
 
 try {

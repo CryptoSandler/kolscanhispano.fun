@@ -79,3 +79,32 @@ desencriptar y sin pérdida de información — porque el dato nunca estuvo en l
 
 `docs/spec-v1.md` §8.1 dice "`key_version` is stored per row"; queda anotado ahí que esta
 decisión lo reemplaza.
+
+---
+
+## 2026-08-28 — `sslmode` ausente se corrige; `sslmode` equivocado se rechaza
+
+F1 de la auditoría pedía un guard que exigiera `sslmode=verify-full`. Se implementó
+primero como un `throw` para cualquier valor que no fuera ése, incluido **ausente**.
+
+`resolveConnectionString` corre en *module load*, así que ese `throw` convierte un
+parámetro faltante en una caída de arranque: el primer request después del deploy no
+sirve, tira. Y **no se puede saber de antemano si eso iba a pasar**: `vercel env pull`
+devuelve los valores sensibles de este proyecto **vacíos** —medido el 2026-08-28 sobre
+`production` y `preview`—, así que la grafía real de `DATABASE_URL` en producción no es
+legible desde una máquina de desarrollo.
+
+Mergear un `throw` sobre un valor que nadie puede inspeccionar es mergear una caída que
+nadie puede descartar.
+
+**Decisión:** el guard *aplica* en vez de *rechazar*.
+
+- `sslmode` **ausente** → se agrega `verify-full` y se devuelve la cadena corregida. Es
+  una omisión, no una elección, y el fin es el mismo: la conexión queda verificada.
+- `sslmode` **presente y distinto** (`require`, `disable`, …) → sigue tirando. Alguien lo
+  escribió a propósito, y pisar una decisión deliberada en silencio esconde la decisión en
+  lugar de corregir un olvido.
+
+**Costo si estuvo mal:** una cadena sin `sslmode` que apuntara a un host que no soporta
+TLS ahora falla al conectar en vez de fallar al arrancar — más tarde y con un mensaje de
+`pg`, no nuestro. A cambio, ningún deploy depende de un valor que nadie puede leer.
