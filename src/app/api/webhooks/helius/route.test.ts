@@ -136,4 +136,145 @@ describe("POST /api/webhooks/helius", () => {
     const res = await POST(request(payload(inventSignature()), "wrong"));
     expect(res.status).toBe(429);
   });
+
+  // A malformed timestamp used to escape `storeRawTxBatch` as a driver error,
+  // out of POST as a 500, and into Helius's retry-three-times-then-drop path,
+  // taking the good events of the same delivery with it. See raw-tx.ts.
+  it("keeps the good events of a delivery whose timestamp is malformed", async () => {
+    const good1 = payload(inventSignature())[0];
+    const good2 = payload(inventSignature())[0];
+    const malformed = { signature: inventSignature(), slot: 1, timestamp: "nonsense", type: "SWAP" };
+    const res = await POST(request([good1, malformed, good2], secret));
+    expect(res.status).toBe(200);
+    const [row] = await query<{ count: string }>("SELECT count(*) FROM raw_tx");
+    expect(Number(row.count)).toBe(2);
+  });
+
+  it("keeps the good events of a delivery whose slot is malformed", async () => {
+    const good1 = payload(inventSignature())[0];
+    const good2 = payload(inventSignature())[0];
+    const malformed = { signature: inventSignature(), slot: "abc", timestamp: 1787664000, type: "SWAP" };
+    const res = await POST(request([good1, malformed, good2], secret));
+    expect(res.status).toBe(200);
+    const [row] = await query<{ count: string }>("SELECT count(*) FROM raw_tx");
+    expect(Number(row.count)).toBe(2);
+  });
+});
+
+/**
+ * L-1. Probed on 20040c7: `null`, `7`, `"hello"`, `[]`, `[{}]` and `[null]`
+ * all answered 200, and only `{{{` got a 400 — so every body shape short of
+ * unparseable JSON was accepted silently and a change in Helius's envelope
+ * would have looked exactly like an hour with no trades.
+ */
+describe("POST /api/webhooks/helius: body shape", () => {
+  it.each([
+    ["null", null],
+    ["a number", 7],
+    ["a string", "hello"],
+    ["a boolean", true],
+  ])("refuses %s with 400", async (_name, body) => {
+    const res = await POST(request(body, secret));
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses unparseable JSON with 400", async () => {
+    const res = new Request("http://localhost/api/webhooks/helius", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": CLIENT_IP, authorization: secret },
+      body: "{{{",
+    });
+    expect((await POST(res)).status).toBe(400);
+  });
+
+  // The shapes that stay 200, so the 400 above is not widened into a refusal
+  // of deliveries Helius really sends. An array is the delivery shape and an
+  // empty one is a real delivery; a bare object is one event.
+  it.each([
+    ["an empty array", [] as unknown],
+    ["an array of empty objects", [{}]],
+    ["an array holding null", [null]],
+    ["a bare object with no signature", {}],
+  ])("still accepts %s with 200", async (_name, body) => {
+    const res = await POST(request(body, secret));
+    expect(res.status).toBe(200);
+    const [row] = await query<{ count: string }>("SELECT count(*) FROM raw_tx");
+    expect(Number(row.count)).toBe(0);
+  });
+
+  it("still stores a single event delivered as a bare object", async () => {
+    const res = await POST(request(payload(inventSignature())[0], secret));
+    expect(res.status).toBe(200);
+    const [row] = await query<{ count: string }>("SELECT count(*) FROM raw_tx");
+    expect(Number(row.count)).toBe(1);
+  });
+});
+
+/**
+ * M-4. `await request.json()` had no ceiling. Authentication is checked first,
+ * so the read is only ever reached by a secret-holder — but a body is not
+ * something a handler should agree to buffer without a bound just because the
+ * caller knew a password.
+ *
+ * Both halves are exercised: the `content-length` claim, which is the cheap
+ * refusal, and the counted read, which is the one that holds when the claim is
+ * a lie.
+ */
+describe("POST /api/webhooks/helius: body size", () => {
+  const OVER = 8 * 1024 * 1024 + 1;
+
+  function oversized(headers: Record<string, string>) {
+    // A stream, not a string: the point of the read is that it stops counting
+    // before the whole thing has been buffered, and a string body would have
+    // been materialised by the test itself.
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= OVER) return controller.close();
+        const chunk = new Uint8Array(64 * 1024).fill(0x20);
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    return new Request("http://localhost/api/webhooks/helius", {
+      method: "POST",
+      headers: { "x-forwarded-for": CLIENT_IP, authorization: secret, ...headers },
+      body: stream,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+  }
+
+  it("refuses a body whose content-length is over the ceiling, with 413", async () => {
+    const res = await POST(oversized({ "content-length": String(OVER) }));
+    expect(res.status).toBe(413);
+  });
+
+  it("refuses a body that is over the ceiling without declaring it, with 413", async () => {
+    const res = await POST(oversized({}));
+    expect(res.status).toBe(413);
+    const [row] = await query<{ count: string }>("SELECT count(*) FROM raw_tx");
+    expect(Number(row.count)).toBe(0);
+  });
+
+  it("does not refuse an ordinary delivery", async () => {
+    const res = await POST(request(payload(inventSignature()), secret));
+    expect(res.status).toBe(200);
+  });
+
+  // The ceiling sits *behind* the authentication check, and the status is how
+  // that order is observable: an unauthenticated caller gets 401, not the 413
+  // it would get if the handler had looked at the body first. That is the
+  // right way round — 413 would tell an anonymous caller how large a body this
+  // endpoint accepts, and the body of an unauthenticated request is never read
+  // at all.
+  it("answers 401, not 413, to an oversized unauthenticated body", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/webhooks/helius", {
+        method: "POST",
+        headers: { "x-forwarded-for": CLIENT_IP, "content-length": String(OVER) },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
 });
