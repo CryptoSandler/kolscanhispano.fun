@@ -38,6 +38,37 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     expect(text).toContain(`npx tsx ${script}`);
   });
 
+  it("pins every action to a commit, with the tag beside it", () => {
+    // F3. A tag is a movable ref: `v4` is whatever the action's owner -- or
+    // whoever takes that account -- last pointed it at, and this job holds
+    // DATABASE_URL and both WALLET_* keys. The trailing comment is what keeps
+    // the pin readable; the assertion requires both halves, so a pin without a
+    // version comment (unreviewable) and a version without a pin (unpinned)
+    // both fail.
+    const uses = text.match(/^[ \t]*uses:[ \t]*.+$/gm) ?? [];
+    expect(uses.length).toBeGreaterThan(0);
+    for (const line of uses) {
+      expect(line, `unpinned action: ${line.trim()}`).toMatch(/@[0-9a-f]{40}\s*#\s*v\d/);
+    }
+  });
+
+  it("does not leave GITHUB_TOKEN in .git/config for the steps that follow", () => {
+    // F5. actions/checkout writes the token into the local git config by
+    // default, where every later step in the job can read it. Nothing here
+    // pushes.
+    expect(text).toMatch(/persist-credentials:\s*false/);
+  });
+
+  it("installs without running dependency lifecycle scripts", () => {
+    // F4. An install script runs in this job, with this job's environment,
+    // ahead of every step that was reasoned about -- and the steps below hand
+    // the job DATABASE_URL and both WALLET_* keys. Asserted on the `run:` line
+    // rather than by a substring search, so `npm ci` reappearing anywhere else
+    // in the file cannot satisfy it.
+    expect(text).toMatch(/^\s*run:\s*npm ci --ignore-scripts\s*$/m);
+    expect(text).not.toMatch(/^\s*run:\s*npm ci\s*$/m);
+  });
+
   it("hands the job a read-only GITHUB_TOKEN", () => {
     // Declared at workflow level, so it applies to every job and every step
     // rather than to whichever one someone remembered. Without it the token

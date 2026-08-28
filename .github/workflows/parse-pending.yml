@@ -101,16 +101,37 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # Pinned to a commit, with the tag it was in the comment beside it. A
+      # moving tag is a promise from whoever can move it: `v4` is a branch-like
+      # ref the action's owner (or anyone who takes that account) can repoint at
+      # any commit, and this job holds DATABASE_URL and, in the steps below,
+      # both WALLET_* keys. Resolved 2026-08-28: refs/tags/v4 and refs/tags/
+      # v4.4.0 pointed at the same commit in both repositories.
+      #
+      # `persist-credentials: false` because the default writes the job's
+      # GITHUB_TOKEN into .git/config, where it stays readable by every step
+      # that follows -- `npm ci` and every `npx tsx` below it. Nothing in this
+      # workflow pushes, so nothing needs the token after the fetch.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
 
+      # --ignore-scripts because a dependency's install script runs in this job,
+      # with this job's environment, before any of the steps that were reasoned
+      # about -- and the steps below hand it DATABASE_URL, WALLET_ENC_KEY and
+      # WALLET_HMAC_KEY. Four packages in this lockfile declare one (esbuild,
+      # fsevents twice, unrs-resolver) and none of them is needed to run
+      # anything here: verified 2026-08-28 by installing this exact lockfile
+      # with the flag into a clean directory, where `npx tsx` and `require("pg")`
+      # both work.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # First, and before the parse, which is the property this step has --
       # see scripts/backfill-sol-price.ts for the full reasoning.
