@@ -19,12 +19,42 @@ type PreparedRow = {
   source: "webhook" | "backfill" | "reconcile";
 };
 
-/** Encrypts one input into row-ready ciphertext. Throws on a malformed input
- * (e.g. a signature that is not actually a string despite the type, which
- * `encrypt()`'s underlying cipher rejects). Callers decide whether that
- * should abort the whole operation (`storeRawTx`) or just skip this one item
- * (`storeRawTxBatch`). */
+/** Encrypts one input into row-ready ciphertext. Throws on any input a row
+ * cannot be built from: a signature that is not actually a string despite the
+ * type (which `encrypt()`'s underlying cipher rejects), a `blockTime` that is
+ * not a storable instant, or a `slot` that is not a safe integer.
+ *
+ * The last two are checked *here* rather than left to Postgres because they
+ * are the only two fields that reach the INSERT unencrypted, so `encrypt()`
+ * never sees them and the caller's try/catch never fired for them. Unchecked,
+ * they fail inside `insertRows` instead -- on the single multi-row INSERT
+ * that carries the whole batch, after every event has already been prepared,
+ * which takes every good event down with the bad one. Measured 2026-08-28
+ * against TEST_DATABASE_URL: a non-numeric timestamp, a `1e18` timestamp, a
+ * non-numeric slot and a fractional slot each aborted a three-event batch and
+ * lost the two good events with it.
+ *
+ * Callers decide whether a throw here should abort the whole operation
+ * (`storeRawTx`) or just skip this one item (`storeRawTxBatch`). */
 function prepareRow(input: RawTxInput): PreparedRow {
+  // `>= 0` is false for NaN, which is what both an unparseable Date and a
+  // timestamp too large for `Date` produce, and it is also the lower bound
+  // Postgres needs: a negative epoch is a pre-1970 block time, and far enough
+  // below zero Postgres refuses it outright ("timestamp out of range", probed
+  // at 4714 BC). The upper end needs no bound of its own -- the largest
+  // instant `Date` can represent at all is 275760 AD, which Postgres stores
+  // (probed, same run).
+  if (!(input.blockTime instanceof Date) || !(input.blockTime.getTime() >= 0)) {
+    throw new Error("blockTime is not a storable instant");
+  }
+  // `slot` is BIGINT, so magnitude is not what breaks: `pg` stringifies the
+  // number, and `1e30` and `1.5` both arrive as text Postgres rejects for a
+  // bigint. Safe-integer is the bound that makes the notation right, and a
+  // Solana slot is nine digits.
+  if (input.slot !== null && !Number.isSafeInteger(input.slot)) {
+    throw new Error("slot is not a safe integer");
+  }
+
   const hmac = blindIndex(input.signature, "signature");
   const hmacHex = hmac.toString("hex");
   return {
@@ -107,9 +137,16 @@ export async function storeRawTx(input: RawTxInput): Promise<boolean> {
  *
  * Each event is prepared independently, and a preparation failure is caught,
  * skipped, and logged without the offending signature or payload: a
- * deterministically malformed event (e.g. a non-string signature) would fail
- * identically on every Helius retry, so letting it abort the batch would
+ * deterministically malformed event -- a non-string signature, a block time
+ * that is not a storable instant, a slot that is not a safe integer -- would
+ * fail identically on every Helius retry, so letting it abort the batch would
  * permanently lose every good event alongside it for nothing.
+ *
+ * All three of those are rejected by `prepareRow`, which is what makes that
+ * true of what ships rather than only of the signature. Until 2026-08-28 the
+ * block time and the slot went unchecked into the INSERT, so this paragraph
+ * described a guarantee the code did not provide: one malformed timestamp
+ * returned a 500, and Helius retried three times and dropped the delivery.
  */
 export async function storeRawTxBatch(inputs: RawTxInput[]): Promise<string[]> {
   const rows: PreparedRow[] = [];
