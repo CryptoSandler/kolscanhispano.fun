@@ -210,10 +210,17 @@ from a stalled indexer, which reads as fifty traders who all broke exactly even.
 | row, no closed episodes | win rate | `sin cierres` — never `0 %` |
 | any figure with no price | the number | `sin precio` |
 | `list-defi-trades` | the KOL's trades | `Sin operaciones en este período.` |
-| `modal-kol` on a failed load | the cards | `No se pudo cargar este KOL.` with a retry |
+| `modal-kol` on a **transient** failure (network, 5xx) | the cards | `No se pudo cargar este KOL.` with a retry |
+| `modal-kol` when the KOL is **gone** (404) | the cards | `Este KOL ya no está en el padrón.` — **no retry**, and the row leaves the list when the modal closes |
 | `modal-kol` while loading | the cards | **no copy at all** — the cards reserve their height and stay blank. `Cargando…` is a spinner in words, and this system does not ship spinners |
 
 Absence is rendered as absence, never as a zero.
+
+**A failure state must not offer an action that cannot work.** A KOL withdrawn or suspended
+between the list's render and the click is gone, not unreachable: a retry button there is a
+control that is guaranteed to fail, which `Do's and Don'ts` already forbids. The two cases
+are distinguished by the response, not guessed at — `404` is gone, everything else is
+transient — and the stale row is removed on close rather than left to invite a second click.
 
 ## Do's and Don'ts
 
