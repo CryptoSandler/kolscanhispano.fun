@@ -41,8 +41,8 @@ async function insertKol(status = "approved"): Promise<string> {
   return id;
 }
 
-function get(kolId: string): Promise<Response> {
-  return GET(new Request(`http://localhost/api/avatar/${kolId}`), {
+function get(kolId: string, search = ""): Promise<Response> {
+  return GET(new Request(`http://localhost/api/avatar/${kolId}${search}`), {
     params: Promise.resolve({ kolId }),
   });
 }
@@ -117,6 +117,46 @@ describe("GET /api/avatar/[kolId]", () => {
     expect(sMaxAge(picture)).toBe(86_400);
     expect(sMaxAge(monogram)).toBe(300);
     expect(sMaxAge(monogram)).toBeLessThan(sMaxAge(picture));
+  });
+
+  /**
+   * The audit of `20040c7` found this route ignoring its query string — the
+   * parameter was literally named `_request` — while the CDN keyed on it.
+   * `?cachebust=1` and `?cb=<random>` each returned `200` with identical
+   * headers, so every distinct string was a fresh cache key costing a database
+   * read and a fetch to `unavatar.io` on a 2.5 s budget. Every `kol_id` is
+   * published in every `avatarUrl`, so the trigger is public: an unmetered
+   * outbound-fetch amplifier with a public input space.
+   */
+  describe("the query string is not part of any URL this route serves", () => {
+    it("refuses one, for an id that really exists", async () => {
+      const kolId = await insertKol();
+      for (const search of ["?cachebust=1", "?cb=" + crypto.randomUUID(), "?", "?window=diario"]) {
+        expect((await get(kolId, search)).status, search).toBe(404);
+      }
+      // Not merely refused: never read. The point of the refusal is the work
+      // it does not do, and a 404 produced *after* the database read and the
+      // upstream fetch would fix nothing.
+      expect(vi.mocked(avatar.readAvatar)).not.toHaveBeenCalled();
+    });
+
+    it("answers exactly as it answers an id that does not exist", async () => {
+      // 404 and not 400: a URL that is not one we serve is not a malformed
+      // request, and a distinguishable answer would tell a prober that the id
+      // half was real.
+      const withQuery = await get(await insertKol(), "?cb=1");
+      const unknown = await get(crypto.randomUUID());
+      expect(withQuery.status).toBe(unknown.status);
+      expect(await withQuery.text()).toBe(await unknown.text());
+    });
+  });
+
+  it("lets no cache hold an answer that is not an image", async () => {
+    // The route owns its `Cache-Control` now -- `next.config.ts` sets none for
+    // this path -- so a 404 with no header at all would be left to a shared
+    // cache's heuristics, and a KOL who is reinstated would stay missing.
+    const response = await get(crypto.randomUUID());
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
   it("never puts anything but the kol_id in what it was asked for", async () => {

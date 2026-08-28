@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { query } from "./db";
-import { hitLimit, ipHash, pruneRateLimit } from "./rate-limit";
+import {
+  PUBLIC_LIMITS,
+  PUBLIC_WINDOW_SECONDS,
+  clientIp,
+  hitLimit,
+  ipHash,
+  pruneRateLimit,
+  rateLimited,
+} from "./rate-limit";
 
 beforeEach(async () => {
   await query("TRUNCATE rate_limit");
@@ -177,5 +185,112 @@ describe("pruneRateLimit", () => {
 
     expect(await pruneRateLimit()).toBe(0);
     expect(await remainingBuckets()).toEqual(["two-days", "yesterday"]);
+  });
+});
+
+
+describe("clientIp", () => {
+  const request = (headers: Record<string, string>) =>
+    new Request("http://localhost/api/feed", { headers });
+
+  it("takes the first hop of x-forwarded-for, which is the client", () => {
+    // Everything after the first entry is a proxy the caller named, and a
+    // caller can name anything. Reading the last hop -- or the whole header --
+    // would let one attacker occupy an unbounded number of buckets.
+    expect(clientIp(request({ "x-forwarded-for": "203.0.113.7, 70.41.3.18, 150.172.238.178" })))
+      .toBe("203.0.113.7");
+  });
+
+  it("falls back to x-real-ip, and then to one shared bucket", () => {
+    expect(clientIp(request({ "x-real-ip": "203.0.113.8" }))).toBe("203.0.113.8");
+    expect(clientIp(request({}))).toBe("unknown");
+    // An empty header is absent, not a caller named "".
+    expect(clientIp(request({ "x-forwarded-for": "  " }))).toBe("unknown");
+  });
+});
+
+/**
+ * `rateLimited` is the whole of what the five public surfaces do, so what is
+ * pinned here is not "the counting works" -- `hitLimit` above covers that --
+ * but the two properties the routes depend on and cannot state themselves:
+ * the refusal is uncacheable, and the second refusal is free.
+ *
+ * Every case uses an address of its own. The memo is module state that no
+ * `TRUNCATE` reaches, so sharing an address between cases would leak a
+ * refusal from one into the next; a distinct address per case is the
+ * isolation, and it costs nothing.
+ */
+describe("rateLimited", () => {
+  const request = (ip: string) =>
+    new Request("http://localhost/api/feed", { headers: { "x-forwarded-for": ip } });
+
+  /** Puts `ip` at exactly its limit for `bucket` in the window it is in now. */
+  async function seedToLimit(ip: string, bucket: keyof typeof PUBLIC_LIMITS): Promise<void> {
+    await query(
+      `INSERT INTO rate_limit (ip_hash, bucket, window_start, hits)
+       VALUES ($1, $2, to_timestamp(floor(extract(epoch FROM now()) / $4::int) * $4::int), $3)
+       ON CONFLICT (ip_hash, bucket, window_start) DO UPDATE SET hits = $3`,
+      [ipHash(ip), bucket, PUBLIC_LIMITS[bucket], PUBLIC_WINDOW_SECONDS],
+    );
+  }
+
+  async function hitsFor(ip: string, bucket: string): Promise<number> {
+    const rows = await query<{ hits: number }>(
+      "SELECT hits FROM rate_limit WHERE ip_hash = $1 AND bucket = $2",
+      [ipHash(ip), bucket],
+    );
+    return rows[0]?.hits ?? 0;
+  }
+
+  it("lets a caller under the limit through, and counts the request", async () => {
+    expect(await rateLimited(request("198.51.100.1"), "feed")).toBeNull();
+    expect(await hitsFor("198.51.100.1", "feed")).toBe(1);
+  });
+
+  it("counts each bucket separately, so one surface cannot exhaust another", async () => {
+    await seedToLimit("198.51.100.2", "kol-detail");
+    expect(await rateLimited(request("198.51.100.2"), "kol-detail")).not.toBeNull();
+    expect(await rateLimited(request("198.51.100.2"), "feed")).toBeNull();
+  });
+
+  it("refuses with a 429 that no cache may hold and a Retry-After inside the window", async () => {
+    await seedToLimit("198.51.100.3", "leaderboard");
+
+    const response = await rateLimited(request("198.51.100.3"), "leaderboard");
+    expect(response?.status).toBe(429);
+    // `next.config.ts` sets no Cache-Control for /api/avatar at all, so this
+    // one has to carry its own: a shared cache holding a 429 would serve one
+    // caller's refusal to everybody behind that cache.
+    expect(response?.headers.get("cache-control")).toBe("no-store");
+
+    const retryAfter = Number(response?.headers.get("retry-after"));
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(PUBLIC_WINDOW_SECONDS);
+  });
+
+  /**
+   * The property the whole memo exists for. `hitLimit` costs an upsert on
+   * every call it is given, so a limiter that consulted it once per refused
+   * request would turn a flood of 429s into a flood of writes against a
+   * `max: 1` pool -- the limiter as amplifier. Asserted on the row, because
+   * the response is identical either way and only the write tells them apart.
+   */
+  it("does not touch the database again for a caller it has already refused", async () => {
+    await seedToLimit("198.51.100.4", "avatar");
+
+    expect((await rateLimited(request("198.51.100.4"), "avatar"))?.status).toBe(429);
+    const afterFirst = await hitsFor("198.51.100.4", "avatar");
+    expect(afterFirst).toBe(PUBLIC_LIMITS.avatar + 1);
+
+    for (let i = 0; i < 5; i++) {
+      expect((await rateLimited(request("198.51.100.4"), "avatar"))?.status).toBe(429);
+    }
+    expect(await hitsFor("198.51.100.4", "avatar")).toBe(afterFirst);
+  });
+
+  it("never refuses one caller for another's traffic", async () => {
+    await seedToLimit("198.51.100.5", "page");
+    expect(await rateLimited(request("198.51.100.5"), "page")).not.toBeNull();
+    expect(await rateLimited(request("198.51.100.6"), "page")).toBeNull();
   });
 });

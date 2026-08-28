@@ -1,4 +1,5 @@
 import { readKolDetail } from "@/lib/kol";
+import { rateLimited } from "@/lib/rate-limit";
 import { parseWindow } from "@/lib/windows";
 
 export const runtime = "nodejs";
@@ -29,11 +30,20 @@ export const dynamic = "force-dynamic";
  *
  * No `ETag`: this route is not polled. The modal fetches once per segment, and
  * a validator would buy nothing while having to be kept honest for free.
+ *
+ * **The tightest limit of the four**, and the reason the four are not one
+ * number: the audit measured this route at ~760 ms and four Neon queries per
+ * request against a `max: 1` pool, an order of magnitude past the leaderboard.
+ * The check comes before the params are awaited, so a refused caller costs a
+ * header read and nothing else.
  */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
+  const limited = await rateLimited(request, "kol-detail");
+  if (limited) return limited;
+
   const { slug } = await params;
   const window = parseWindow(new URL(request.url).searchParams.get("window"));
   if (window === null) return new Response("bad request", { status: 400 });

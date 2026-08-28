@@ -1,4 +1,5 @@
 import { parseUnit, readLeaderboard } from "@/lib/leaderboard";
+import { rateLimited } from "@/lib/rate-limit";
 import { parseWindow } from "@/lib/windows";
 
 export const runtime = "nodejs";
@@ -21,8 +22,15 @@ export const dynamic = "force-dynamic";
  * There is no `ETag` here, unlike the feed. This route is not polled: the page
  * renders it once and a toggle is a fresh navigation, so a validator would buy
  * nothing and would have to be kept honest for free.
+ *
+ * Rate limited before anything is parsed, for the reason `/api/feed` gives:
+ * nothing caches these responses, so every repeat is a real read of the
+ * derived tables.
  */
 export async function GET(request: Request): Promise<Response> {
+  const limited = await rateLimited(request, "leaderboard");
+  if (limited) return limited;
+
   const params = new URL(request.url).searchParams;
   const window = parseWindow(params.get("window"));
   const unit = parseUnit(params.get("unit"));

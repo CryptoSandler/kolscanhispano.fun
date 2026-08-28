@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { storeRawTxBatch, type RawTxInput } from "@/lib/raw-tx";
-import { hitLimit } from "@/lib/rate-limit";
+import { clientIp, hitLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -27,8 +27,7 @@ function authorized(header: string | null): boolean {
  */
 export async function POST(request: Request): Promise<Response> {
   if (!authorized(request.headers.get("authorization"))) {
-    const ip = request.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
-    if (await hitLimit(ip, "helius-webhook", 600, 60)) {
+    if (await hitLimit(clientIp(request), "helius-webhook", 600, 60)) {
       return new Response("rate limited", { status: 429 });
     }
     return new Response("unauthorized", { status: 401 });

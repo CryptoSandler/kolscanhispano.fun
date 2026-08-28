@@ -1,4 +1,5 @@
 import { readFeedPage, readFeedValidator, type FeedCursor } from "@/lib/feed";
+import { rateLimited } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 // Every response depends on the cursor and on rows written seconds ago; there
@@ -42,8 +43,18 @@ function parseCursor(raw: string): FeedCursor | null {
  * probe is one row from two tables. On a miss the page is read and answers
  * with its **own** validator, not the probe's — a trade that lands between
  * the two queries must not be described by a header that predates it.
+ *
+ * The limiter runs first, before the cursor is even parsed: `no-store` on
+ * `/api/*` means nothing between the caller and this handler absorbs a
+ * repeat, so anything done ahead of the check is work an unauthenticated
+ * caller can ask for without limit. See `PUBLIC_LIMITS` for why the feed's
+ * number is the loosest of the read routes — it is the one a real client
+ * polls.
  */
 export async function GET(request: Request): Promise<Response> {
+  const limited = await rateLimited(request, "feed");
+  if (limited) return limited;
+
   const params = new URL(request.url).searchParams;
   const raw = params.get("since");
 
