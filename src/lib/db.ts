@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { assertDistinctFromProduction } from "./connection-identity";
+import { assertDistinctFromProduction, assertVerifyFull } from "./connection-identity";
 import { loadEnvLocal } from "./env";
 
 loadEnvLocal();
@@ -22,6 +22,10 @@ export function resolveConnectionString(): string {
     throw new Error(`${variable} is not set. See .env.example.`);
   }
 
+  // Nothing in this repo passes an `ssl` option, so this substring is the only
+  // thing standing between the app and an unencrypted connection to Neon.
+  assertVerifyFull(value, variable);
+
   if (isTest) {
     // connectionIdentity() is a cheap first line of defense, not a proof; the
     // real backstop is assertTestDatabaseMarker() below, which does not
@@ -35,13 +39,51 @@ export function resolveConnectionString(): string {
   return value;
 }
 
-export const pool = new Pool({ connectionString: resolveConnectionString(), max: 1 });
+/**
+ * `max: 1` on purpose (see `withTransaction`), which is also why the two
+ * timeouts below are not optional: with one client, one call that never
+ * returns is the whole process, the webhook included.
+ *
+ * **`query_timeout`, not `statement_timeout`, and that is measured rather than
+ * preferred.** `pg` does send `statement_timeout` as a startup parameter, and
+ * Neon drops it: probed 2026-08-28 against TEST_DATABASE_URL with
+ * `statement_timeout: 1000`, `current_setting('statement_timeout')` came back
+ * `0` and `SELECT pg_sleep(3)` ran to completion — on the pooled endpoint *and*
+ * on the direct one. Passing it through the connection string instead is worse
+ * than useless: the pooler answers `unsupported startup parameter in options:
+ * statement_timeout` and refuses to connect at all. `query_timeout` is a
+ * client-side timer in `pg` and needs nothing from the server, so it is the one
+ * that actually fires here (probed: 1 s timeout aborted a 3 s sleep, and the
+ * pool was immediately usable again).
+ *
+ * What that buys and what it does not: the *caller* is freed after 30 s, and
+ * the server keeps executing the statement it was sent. So this bounds how long
+ * a request waits, not how long Neon works. Bounding the server needs a
+ * `statement_timeout` set on the Neon role or database itself, which is console
+ * configuration and not in this repository.
+ *
+ * 30 s because the slowest thing measured on any of these surfaces is the
+ * KOL-detail read at 760 ms over four queries; 10 s to connect because Neon
+ * scales to zero and a cold start is seconds, not milliseconds.
+ */
+export const pool = new Pool({
+  connectionString: resolveConnectionString(),
+  max: 1,
+  query_timeout: 30_000,
+  connectionTimeoutMillis: 10_000,
+});
 
 // Neon scales to zero and can drop idle connections; without a handler that
 // surfaces as an uncaught exception instead of a recoverable, logged event.
-// Never interpolate the connection string here.
-pool.on("error", (err) => {
-  console.error("Unexpected error on idle database client:", err.message);
+//
+// The message is a constant. This was the one place in the repo that logged a
+// caught error's `.message`, and a driver error's message can carry the host,
+// the database and — for some failure shapes — the connection string that
+// produced it. Everything else here logs a static string or a SQLSTATE code
+// (see `assertTestDatabaseMarker`, which tells two failures apart on `.code`
+// alone for exactly this reason).
+pool.on("error", () => {
+  console.error("Unexpected error on idle database client");
 });
 
 export async function query<T>(sql: string, params: unknown[] = []): Promise<T[]> {

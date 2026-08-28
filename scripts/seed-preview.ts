@@ -138,7 +138,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "pg";
-import { assertDistinctFromProduction, connectionIdentity } from "../src/lib/connection-identity";
+import { assertDistinctFromProduction, assertVerifyFull, connectionIdentity, hostFragment } from "../src/lib/connection-identity";
 import { aadFor, blindIndex, encrypt } from "../src/lib/crypto";
 import { ONE, formatDecimal, mulDiv, parseDecimal } from "../src/lib/decimal";
 // Type-only, and erased at compile time: importing `db.ts` for real would
@@ -513,10 +513,14 @@ async function openPreview(): Promise<{ client: Client; connectionString: string
       "PREVIEW_DATABASE_URL at the Neon preview branch before running this.",
   );
 
-  // Log only the ep-... host fragment, the way migrate.mts does: enough to
+  // Same rule as every other connection here: TLS is only what the text of the
+  // secret asks for. This one writes rows into the branch the owner's visual
+  // gate reads.
+  assertVerifyFull(connectionString, "PREVIEW_DATABASE_URL");
+
+  // Log only the ep-... host fragment, through the shared helper: enough to
   // confirm the target branch without printing a connection string.
-  const host = connectionString.match(/ep-[a-z0-9-]+/);
-  console.log(`Seeding preview data into ${host ? host[0] : "(unknown host)"}`);
+  console.log(`Seeding preview data into ${hostFragment(connectionString)}`);
 
   const client = new Client({ connectionString });
   await client.connect();
