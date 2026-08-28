@@ -525,6 +525,14 @@ index.
 the HMAC key additionally rebuilds the index, which is possible precisely because we can still
 decrypt.
 
+> **Superseded 2026-08-28 (migration `010_drop_key_version.sql`, see DECISIONES.md).** The
+> `key_version` *column* is gone. Nothing ever wrote it, so it said `1` on every row because the
+> default said `1`, and a rotation to v2 would have left it saying `1` on the v2 rows. The version
+> is still stored per row — as byte 0 of the blob, inside the AEAD's authenticated data — and
+> "which rows are still v1" is still a plain SQL question: `get_byte(payload_enc, 0)`. The rest of
+> this paragraph stands: rotation re-encrypts in place, and rebuilding the index remains possible
+> because the rows can still be decrypted.
+
 ### 8.2 Signatures and raw payloads are encrypted too
 
 **A transaction signature identifies the wallet to anyone with an explorer.** Encrypting the address

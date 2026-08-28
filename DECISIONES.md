@@ -40,3 +40,42 @@ pierda. El propio `next.config.ts` ya documenta el trade-off en el lugar donde v
 resto de la CSP —`object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`,
 `form-action 'self'`— sigue en pie, y la auditoría no encontró ninguna primitiva de
 inyección en la UI (cero `dangerouslySetInnerHTML`, cero `innerHTML`, cero `eval`).
+
+
+---
+
+## 2026-08-28 — `key_version` se elimina; la versión vive en el primer byte del blob
+
+Migración `010_drop_key_version.sql`: `kol_wallet.key_version` y `raw_tx.key_version`
+dejan de existir.
+
+**Qué eran.** `SMALLINT NOT NULL DEFAULT 1` en las dos tablas, y ninguna sentencia del
+repositorio nombraba la columna: ni `wallets.ts`, ni `raw-tx.ts`, ni el parser, ni los
+serializadores. Cada fila decía 1 porque el default decía 1. La primera rotación a una
+clave v2 habría dejado `key_version = 1` en todas las filas v2 — es decir, la columna se
+volvía incorrecta justo en el momento en que debía servir para algo.
+
+**Por qué borrar y no escribir.** La versión ya está guardada, una vez, en el lugar que
+tiene que ser correcto: `crypto.ts` la escribe como byte 0 de cada blob y la mete en los
+datos autenticados del AEAD, así que un byte de versión alterado falla la autenticación en
+lugar de fallar sólo una búsqueda. La columna era una segunda copia, no autenticada, de un
+hecho autenticado — y la copia no autenticada era la consultable. Escribirla habría dejado
+dos fuentes de verdad para el mismo dato, con la peor de las dos como la fácil de leer.
+
+**Lo que la columna prometía sigue disponible, en SQL y sin desencriptar nada.** La
+pregunta de una rotación es "cuántas filas siguen en v1", y `get_byte()` la contesta contra
+el ciphertext. Verificado en la rama de tests, 2026-08-28:
+
+    SELECT get_byte(payload_enc, 0) AS version, count(*) FROM raw_tx GROUP BY 1;
+    SELECT get_byte(address_enc, 0) AS version, count(*) FROM kol_wallet GROUP BY 1;
+
+**Costo si estuvo mal.** Dos cosas, y ninguna es cara. Si alguna vez hace falta esa cuenta
+*indexada* —una rotación sobre millones de filas donde el seq scan de `get_byte` sea
+demasiado lento— hay que crear un índice sobre la expresión, no volver a agregar la
+columna: `CREATE INDEX ... ON raw_tx ((get_byte(payload_enc, 0)))`. Y si aun así se decide
+volver atrás, recuperar la columna es un `ALTER TABLE ADD COLUMN` más un `UPDATE ... SET
+key_version = get_byte(payload_enc, 0)`: un solo `UPDATE`, derivado del blob, sin
+desencriptar y sin pérdida de información — porque el dato nunca estuvo en la columna.
+
+`docs/spec-v1.md` §8.1 dice "`key_version` is stored per row"; queda anotado ahí que esta
+decisión lo reemplaza.

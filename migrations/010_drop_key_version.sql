@@ -1,0 +1,34 @@
+-- `key_version` was written by nothing and read by nothing.
+--
+-- Both columns carried `SMALLINT NOT NULL DEFAULT 1` and no statement in this
+-- repository ever named either of them: not `wallets.ts`, not `raw-tx.ts`, not
+-- the parser, not the serializers. So every row said 1 because the default said
+-- 1, and the first rotation to a v2 key would have left `key_version = 1` on
+-- every v2 row -- the column would have become actively wrong at exactly the
+-- moment it was supposed to be useful.
+--
+-- **The version is already stored, once, in the place that has to be right.**
+-- `crypto.ts` writes it as byte 0 of every blob and folds it into the AEAD's
+-- additional authenticated data, so a flipped version byte fails authentication
+-- rather than merely failing a lookup. The column was a second, unauthenticated
+-- copy of an authenticated fact, and the unauthenticated copy was the one that
+-- was queryable.
+--
+-- **What the column was for is still available, in SQL, without decrypting
+-- anything.** The question a rotation asks is "how many rows are still v1", and
+-- `get_byte()` answers it straight off the ciphertext -- verified on the test
+-- branch, 2026-08-28:
+--
+--     SELECT get_byte(payload_enc, 0) AS version, count(*) FROM raw_tx GROUP BY 1;
+--     SELECT get_byte(address_enc, 0) AS version, count(*) FROM kol_wallet GROUP BY 1;
+--
+-- Answered from the authenticated byte, so it cannot disagree with what
+-- `decrypt()` will do with the row. See DECISIONES.md for the decision and what
+-- it costs if it was wrong; spec §8.1's "`key_version` is stored per row" is
+-- annotated there.
+--
+-- `DROP COLUMN` in Postgres rewrites no rows: it marks the attribute dropped in
+-- the catalogue and the space is reclaimed by later vacuums. `IF EXISTS` so a
+-- branch that somehow never had the column applies this cleanly too.
+ALTER TABLE kol_wallet DROP COLUMN IF EXISTS key_version;
+ALTER TABLE raw_tx DROP COLUMN IF EXISTS key_version;

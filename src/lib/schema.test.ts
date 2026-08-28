@@ -1,5 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { KEY_VERSION } from "./crypto";
 import { query } from "./db";
+import { inventAddress } from "./ids";
+import { addWallet } from "./wallets";
 
 const uuid = () => crypto.randomUUID();
 
@@ -79,5 +82,44 @@ describe("core schema", () => {
 
     await trade(uuid());
     await expect(trade(uuid())).rejects.toThrow();
+  });
+});
+
+
+/**
+ * L-2, migration 010. `key_version` was a `SMALLINT NOT NULL DEFAULT 1` on
+ * `kol_wallet` and `raw_tx` that no statement in this repository ever named, so
+ * every row said 1 because the default said 1 -- and a rotation to a v2 key
+ * would have left `key_version = 1` on every v2 row.
+ *
+ * The version it duplicated is byte 0 of the blob, and that copy is folded into
+ * the AEAD's additional authenticated data, so it cannot disagree with what
+ * `decrypt()` will do. These two cases are the pair: the redundant column is
+ * gone, and the question it existed to answer is still answerable in SQL
+ * without decrypting anything.
+ */
+describe("key_version: dropped, and still answerable from the ciphertext", () => {
+  it.each([
+    ["kol_wallet", "address_enc"],
+    ["raw_tx", "payload_enc"],
+  ])("%s no longer carries a key_version column", async (table) => {
+    const rows = await query<{ column_name: string }>(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = 'key_version'",
+      [table],
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("answers 'how many rows are still v1' off the authenticated version byte", async () => {
+    await truncate();
+    const kolId = uuid();
+    await query("INSERT INTO kol (id, slug, display_name, x_handle) VALUES ($1,$2,$3,$4)",
+      [kolId, "kv", "KV", "kv"]);
+    await addWallet(kolId, inventAddress());
+
+    const rows = await query<{ version: number; count: string }>(
+      "SELECT get_byte(address_enc, 0) AS version, count(*)::text AS count FROM kol_wallet GROUP BY 1",
+    );
+    expect(rows).toEqual([{ version: KEY_VERSION, count: "1" }]);
   });
 });
