@@ -59,6 +59,7 @@
  * code paths: the public one publishes a signature and must, the hidden one
  * must not and reads `PRIVADO` instead.
  */
+import bs58 from "bs58";
 import { createElement } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { aadFor, blindIndex, encrypt } from "@/lib/crypto";
@@ -161,6 +162,67 @@ async function insertTrades(specs: TradeSpec[]): Promise<string[]> {
   );
 
   return rows.map((r) => r.signature);
+}
+
+/**
+ * Every encoding the wallet **blind index** could reach a payload in.
+ *
+ * `findDisallowedBase58` is base58-only, and that is the wrong shape for this
+ * value. `kol_wallet.address_hmac` (spec §8.1) is 32 raw bytes, and the way a
+ * query hands it to JavaScript is `encode(...,'hex')` — 64 characters over
+ * `0-9a-f`, of which `0` is not base58. A leaked hex blind index therefore
+ * splits into runs the base58 scan drops: the audit of `20040c7` measured it
+ * caught in **378 of 1000** synthetic payloads. A guard that is a coin flip on
+ * the value it exists to catch is not a guard, and this repo has twice been
+ * green over a real defect for exactly that reason.
+ *
+ * So the needles are derived from the fixture's own address rather than
+ * pattern-matched, and enumerated in every encoding a row could plausibly
+ * carry the digest in: `hex` is what the query would produce, `\x`-prefixed
+ * hex is what `pg` hands back for a raw `bytea` column, base64 and base64url
+ * are what a `Buffer` becomes the moment anyone JSON-serialises it, and base58
+ * is this codebase's own alphabet for 32-byte values (`ids.ts`).
+ *
+ * The address itself is in the set too. It is already covered by the
+ * `not.toContain` case above; keeping it here means the scan below is a
+ * superset of that one rather than a second, drifting opinion about what a
+ * leak looks like.
+ *
+ * **Why the blind index and not only the address.** Spec §8.1 makes
+ * `address_hmac` the equality-lookup key over addresses and the unique index
+ * behind "one address belongs to one KOL". It is stable and globally unique,
+ * so publishing it is enough to join two personas on a shared wallet without
+ * ever recovering an address — the linkage SECURITY.md names as the asset,
+ * disclosed without breaking any crypto.
+ */
+function needlesFor(address: string): Record<string, string> {
+  const index = blindIndex(address, "address");
+  const hex = index.toString("hex");
+  return {
+    "the address in base58": address,
+    "the blind index in hex": hex,
+    "the blind index in upper-case hex": hex.toUpperCase(),
+    "the blind index in base64": index.toString("base64"),
+    "the blind index in base64url": index.toString("base64url"),
+    "the blind index as a Postgres bytea literal": `\\x${hex}`,
+    "the blind index in base58": bs58.encode(index),
+  };
+}
+
+/**
+ * Which of {@link needlesFor}'s encodings appear in `text`, named rather than
+ * quoted: a failure message must not print the leaked value into a terminal,
+ * a CI log or a screenshot, which is the same rule `db.ts` follows about
+ * connection strings.
+ */
+function findBlindIndex(text: string, forAddresses: string[]): string[] {
+  const found: string[] = [];
+  for (const address of forAddresses) {
+    for (const [encoding, needle] of Object.entries(needlesFor(address))) {
+      if (text.includes(needle)) found.push(encoding);
+    }
+  }
+  return found;
 }
 
 /** Every address the fixture put in the database. None may reach a page. */
@@ -358,6 +420,40 @@ describe("no wallet address reaches the rendered page", () => {
     expect(findDisallowedBase58(props).sort()).toEqual(
       [...publicSignatures, ...mints].sort(),
     );
+  });
+
+  /**
+   * The half the base58 scan above cannot do. See {@link needlesFor}.
+   *
+   * `readKolDetail` spreads its identity row into `serializeKolDetail`, so the
+   * only thing standing between a column that column-exists and a published
+   * field is that the serializer names its fields one at a time. That is a
+   * property of one function body, and one `return { ...row }` ends it — which
+   * is why the assertion is on the payload rather than on the query.
+   */
+  it("publishes the wallet blind index in no encoding, on any surface", () => {
+    expect(findBlindIndex(surfaces, addresses), "the emitted HTML").toEqual([]);
+    expect(findBlindIndex(props, addresses), "the hydration props").toEqual([]);
+  });
+
+  /**
+   * The spiked-body self-test. A scan that cannot be made to fail proves
+   * nothing, and every encoding added above has to be shown to be *reachable*
+   * by the scan rather than merely listed in it — the failure mode that let
+   * the base58-only guard stand: the needle was real, the haystack was real,
+   * and the shape in between was wrong.
+   *
+   * The plant goes in an attribute because that is the shape a real leak takes
+   * (`serialize.ts`'s docstring: an `href`, an `img src`, a `data-`
+   * attribute), and the scan does not know what an attribute is.
+   */
+  it("would flag a planted blind index in every encoding it scans for", () => {
+    for (const address of addresses) {
+      for (const [encoding, needle] of Object.entries(needlesFor(address))) {
+        const spiked = `${surfaces}<span data-leak="${needle}"></span>`;
+        expect(findBlindIndex(spiked, addresses), encoding).toContain(encoding);
+      }
+    }
   });
 });
 

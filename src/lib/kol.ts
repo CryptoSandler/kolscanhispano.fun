@@ -69,6 +69,18 @@ const MAX_SLUG_LENGTH = 128;
  * rather than after it: a suspended KOL must not be reachable by guessing its
  * slug, and the caller cannot tell "suspended" from "never existed".
  *
+ * **No wallet column is selected, and none may be added.** This query used to
+ * carry `encode(w.address_hmac,'hex') AS address`, which nothing read: the row
+ * is spread into {@link serializeKolDetail}, so the only thing between that
+ * column and a public response was a serializer that happens to name its
+ * fields one at a time. `address_hmac` is spec §8.1's blind index — stable and
+ * globally unique over addresses — so publishing it would let two personas be
+ * joined on a shared wallet without any address being recovered, which is the
+ * linkage SECURITY.md names as *the* asset. A read that does not select it
+ * cannot leak it, and that is a cheaper guarantee than one function body's
+ * good manners. `address-invariant.test.ts` scans for the digest in every
+ * encoding it could arrive in.
+ *
  * The window join is the leaderboard's, half-open on `date` literals built by
  * {@link utcDayString} — passing a `Date` would have `pg` send a timestamp for
  * Postgres to cast in the *session* time zone, which is the local-time leak
@@ -76,7 +88,7 @@ const MAX_SLUG_LENGTH = 128;
  */
 const DETAIL_SQL = `
   SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets,
-         c.tag AS cabal_tag, (SELECT encode(w.address_hmac,'hex') FROM kol_wallet w WHERE w.kol_id = k.id LIMIT 1) AS address,
+         c.tag AS cabal_tag,
          COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(d.realized_usd), 0) AS realized_usd
     FROM kol k
