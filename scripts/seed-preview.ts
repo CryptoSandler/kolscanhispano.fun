@@ -44,6 +44,11 @@
  * tall, so it scrolls. See the `ROSTER` comments for which episode produces
  * which state.
  *
+ * Every episode names a **window** rather than a number of days — see
+ * {@link Placement} — so eleven of the twelve KOLs have closed positions in all
+ * three of `Diario`, `Semanal` and `Mensual`, with both signs in each, on
+ * whatever day the seed runs.
+ *
  * ## `sin precio` is transient here, and that is correct
  *
  * This script writes **no `sol_price` rows**, and must not: inventing a SOL/USD
@@ -106,16 +111,28 @@
  * preview string, and this process's own environment is left untouched. See
  * {@link replaySeeded}.
  *
- * ## Idempotent
+ * ## Idempotent, but not immortal
  *
  * The rows are written in one transaction, so the roster is either entirely
  * present or entirely absent — never half-written. That is what makes the check
- * at the top sound: if any `preview-` KOL exists, the roster is already there
- * and this run does nothing. Running it twice leaves the same rows, not double.
+ * at the top sound: if a `preview-` roster exists **and is current**, this run
+ * does nothing. Running it twice leaves the same rows, not double.
  *
- * It only ever inserts, and only rows it owns: the `preview-` slug prefix, the
- * freshly invented mints, and the derived rows the replay computes from its own
- * trades. Nothing here updates or deletes a row it did not write.
+ * "And is current" is the condition {@link isStale} added, and it is the fix
+ * for the way this fixture actually failed. Every trade was dated relative to
+ * the day the seed ran, spec §4.9 makes every window calendar-aligned UTC and
+ * never rolling, and the old check refused to run again — so at the first
+ * midnight `Diario` emptied, the ranking panel became its own empty state, and
+ * nothing could heal it. A stale roster is now **replaced**: its own rows are
+ * deleted and the seed runs again. See {@link dropPreviewRoster} for exactly
+ * which rows that is.
+ *
+ * Outside that replacement it only ever inserts, and only rows it owns: the
+ * `preview-` slug prefix, the freshly invented mints, and the derived rows the
+ * replay computes from its own trades. Nothing here updates or deletes a row it
+ * did not write — the deletions are filtered on `slug LIKE 'preview-%'` and on
+ * the mints that filter orphaned, and cabals, which may predate this script,
+ * are never touched.
  */
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -130,9 +147,35 @@ import { ONE, formatDecimal, mulDiv, parseDecimal } from "../src/lib/decimal";
 import type { TxQuery } from "../src/lib/db";
 import { loadEnvLocal } from "../src/lib/env";
 import { inventAddress, inventSignature } from "../src/lib/ids";
+// The same bounds the leaderboard, the API and the modal filter on (spec §4.9).
+// `windows.ts` imports nothing, so this costs no pool and no driver.
+import { windowBounds } from "../src/lib/windows";
 
 /** Every slug this script writes starts with it. Nothing else is ever touched. */
 const SLUG_PREFIX = "preview-";
+
+/**
+ * Which of the leaderboard's three windows an episode has to land in.
+ *
+ * **This replaced a fixed `daysAgo`, and the reason is the whole first half of
+ * this file's second rewrite.** The roster used to be dated `0`, `4` and `19`
+ * days before the run, which is a fixture that is correct on the day it is
+ * written and wrong every day after: spec §4.9 makes every window
+ * calendar-aligned UTC and *never rolling*, so one midnight later the day-zero
+ * trades are yesterday's and `Diario` is empty. Measured on 2026-08-28 against
+ * the preview branch, one day after a seed: `Diario` held nothing, and because
+ * `LeaderboardTable`'s empty state is keyed on **every** entry having
+ * `winRate === null` the whole ranking panel was the empty state — no podium,
+ * no tinted rows, no modal to open. Nothing in the product was broken. The
+ * fixture had expired.
+ *
+ * So an episode now names a *window* and {@link placementDays} resolves it
+ * against the run instant. The windows nest — `diario ⊂ semanal ⊂ mensual` —
+ * so an episode placed on `"today"` is in all three, which is what makes
+ * "most KOLs have closed positions in every window" a consequence of the
+ * roster rather than a coincidence of the date.
+ */
+type Placement = "today" | "week" | "month";
 
 /**
  * One round trip on one `(kol, mint)`: the buy that opens it and the sell that
@@ -147,8 +190,8 @@ const SLUG_PREFIX = "preview-";
  * Strings, always: a float here would defeat the point of `numeric` (spec §3).
  */
 type Episode = {
-  /** The UTC calendar day both legs land on, counted back from the run instant (spec §4.9). */
-  daysAgo: number;
+  /** Which of the three windows both legs have to land in. See {@link Placement}. */
+  when: Placement;
   /** Index into {@link TOKENS}. */
   mint: number;
   /** Bought and sold whole, so the exit assigns the entire remaining basis. */
@@ -233,8 +276,8 @@ const ROSTER: PreviewKol[] = [
     // The day's best round trip, and the figure `seed-preview.test.ts` pins
     // exactly: 20.5 - 8.15 - 2 x 0.000005 = 12.34999.
     episodes: [
-      { daysAgo: 0, mint: 0, tokens: "18250.5", buy: "8.15", sell: "20.5" },
-      { daysAgo: 4, mint: 1, tokens: "640", buy: "2.4", sell: "1.9" },
+      { when: "today", mint: 0, tokens: "18250.5", buy: "8.15", sell: "20.5" },
+      { when: "week", mint: 1, tokens: "640", buy: "2.4", sell: "1.9" },
     ],
   },
   {
@@ -243,9 +286,9 @@ const ROSTER: PreviewKol[] = [
     cabal: null,
     hideWallets: true,
     episodes: [
-      { daysAgo: 0, mint: 1, tokens: "9310", buy: "3.3", sell: "9.1" },
-      { daysAgo: 0, mint: 2, tokens: "77.5", buy: "4.4", sell: "6.0" },
-      { daysAgo: 19, mint: 3, tokens: "1250.5", buy: "3.15", sell: "7.85" },
+      { when: "today", mint: 1, tokens: "9310", buy: "3.3", sell: "9.1" },
+      { when: "today", mint: 2, tokens: "77.5", buy: "4.4", sell: "6.0" },
+      { when: "month", mint: 3, tokens: "1250.5", buy: "3.15", sell: "7.85" },
     ],
   },
   {
@@ -255,8 +298,8 @@ const ROSTER: PreviewKol[] = [
     cabal: "ORB",
     hideWallets: true,
     episodes: [
-      { daysAgo: 0, mint: 2, tokens: "12.25", buy: "6.25", sell: "10.4" },
-      { daysAgo: 0, mint: 3, tokens: "88000", buy: "1.9", sell: "1.55" },
+      { when: "today", mint: 2, tokens: "12.25", buy: "6.25", sell: "10.4" },
+      { when: "today", mint: 3, tokens: "88000", buy: "1.9", sell: "1.55" },
     ],
   },
   {
@@ -264,7 +307,7 @@ const ROSTER: PreviewKol[] = [
     handle: "ejemplo_cometamenor",
     cabal: "VEL",
     hideWallets: false,
-    episodes: [{ daysAgo: 0, mint: 3, tokens: "190240", buy: "2.05", sell: "4.3" }],
+    episodes: [{ when: "today", mint: 3, tokens: "190240", buy: "2.05", sell: "4.3" }],
   },
   {
     name: "Sierra Alta",
@@ -272,8 +315,8 @@ const ROSTER: PreviewKol[] = [
     cabal: null,
     hideWallets: true,
     episodes: [
-      { daysAgo: 0, mint: 4, tokens: "3.75", buy: "0.75", sell: "2.18" },
-      { daysAgo: 19, mint: 0, tokens: "45120", buy: "6.7", sell: "1.95" },
+      { when: "today", mint: 4, tokens: "3.75", buy: "0.75", sell: "2.18" },
+      { when: "month", mint: 0, tokens: "45120", buy: "6.7", sell: "1.95" },
     ],
   },
   {
@@ -281,7 +324,7 @@ const ROSTER: PreviewKol[] = [
     handle: "ejemplo_nubebaja",
     cabal: "VEL",
     hideWallets: true,
-    episodes: [{ daysAgo: 0, mint: 0, tokens: "2410.25", buy: "1.35", sell: "1.82" }],
+    episodes: [{ when: "today", mint: 0, tokens: "2410.25", buy: "1.35", sell: "1.82" }],
   },
   {
     // The `sin cierres` row: approved, on the padrón, ranked, and holding two
@@ -299,8 +342,8 @@ const ROSTER: PreviewKol[] = [
     cabal: null,
     hideWallets: true,
     episodes: [
-      { daysAgo: 0, mint: 5, tokens: "31500", buy: "2.6", sell: null },
-      { daysAgo: 0, mint: 4, tokens: "1.85", buy: "1.15", sell: null },
+      { when: "today", mint: 5, tokens: "31500", buy: "2.6", sell: null },
+      { when: "today", mint: 4, tokens: "1.85", buy: "1.15", sell: null },
     ],
   },
   {
@@ -309,8 +352,8 @@ const ROSTER: PreviewKol[] = [
     cabal: null,
     hideWallets: false,
     episodes: [
-      { daysAgo: 0, mint: 5, tokens: "77400", buy: "3.6", sell: "2.68" },
-      { daysAgo: 0, mint: 1, tokens: "530.75", buy: "1.2", sell: "1.35" },
+      { when: "today", mint: 5, tokens: "77400", buy: "3.6", sell: "2.68" },
+      { when: "today", mint: 1, tokens: "530.75", buy: "1.2", sell: "1.35" },
     ],
   },
   {
@@ -319,9 +362,9 @@ const ROSTER: PreviewKol[] = [
     cabal: "LUNA",
     hideWallets: true,
     episodes: [
-      { daysAgo: 0, mint: 4, tokens: "9.6", buy: "5.4", sell: "2.35" },
-      { daysAgo: 0, mint: 0, tokens: "6120.5", buy: "1.1", sell: "1.42" },
-      { daysAgo: 4, mint: 2, tokens: "24.75", buy: "1.65", sell: "3.4" },
+      { when: "today", mint: 4, tokens: "9.6", buy: "5.4", sell: "2.35" },
+      { when: "today", mint: 0, tokens: "6120.5", buy: "1.1", sell: "1.42" },
+      { when: "week", mint: 2, tokens: "24.75", buy: "1.65", sell: "3.4" },
     ],
   },
   {
@@ -329,7 +372,7 @@ const ROSTER: PreviewKol[] = [
     handle: "ejemplo_piedralunar",
     cabal: null,
     hideWallets: true,
-    episodes: [{ daysAgo: 0, mint: 2, tokens: "18.4", buy: "9.35", sell: "4.6" }],
+    episodes: [{ when: "today", mint: 2, tokens: "18.4", buy: "9.35", sell: "4.6" }],
   },
   {
     // Three round trips on one mint, all of them losing. The position closes,
@@ -342,9 +385,9 @@ const ROSTER: PreviewKol[] = [
     cabal: "LUNA",
     hideWallets: false,
     episodes: [
-      { daysAgo: 0, mint: 3, tokens: "4820", buy: "2.3", sell: "1.45" },
-      { daysAgo: 0, mint: 3, tokens: "4820", buy: "1.75", sell: "1.2" },
-      { daysAgo: 0, mint: 3, tokens: "4820", buy: "0.9", sell: "0.62" },
+      { when: "today", mint: 3, tokens: "4820", buy: "2.3", sell: "1.45" },
+      { when: "today", mint: 3, tokens: "4820", buy: "1.75", sell: "1.2" },
+      { when: "today", mint: 3, tokens: "4820", buy: "0.9", sell: "0.62" },
     ],
   },
   {
@@ -360,14 +403,27 @@ const ROSTER: PreviewKol[] = [
     cabal: null,
     hideWallets: true,
     episodes: [
-      { daysAgo: 0, mint: 5, tokens: "610.5", buy: "0.85", sell: "0.7" },
-      { daysAgo: 0, mint: 1, tokens: "142300", buy: "14.2", sell: "5.75", unpriced: true },
-      { daysAgo: 19, mint: 4, tokens: "2.05", buy: "1.05", sell: "4.28" },
+      { when: "today", mint: 5, tokens: "610.5", buy: "0.85", sell: "0.7" },
+      { when: "today", mint: 1, tokens: "142300", buy: "14.2", sell: "5.75", unpriced: true },
+      { when: "month", mint: 4, tokens: "2.05", buy: "1.05", sell: "4.28" },
     ],
   },
 ];
 
 type Counts = { kols: number; wallets: number; tokens: number; trades: number; positions: number };
+
+/**
+ * What one run of {@link writeRoster} did.
+ *
+ * `replaced` is the third outcome the staleness rule introduced, and it is
+ * distinct from the other two on purpose: `seeded: false` is "the roster is
+ * there and current", `seeded: true, replaced: false` is a first seed, and
+ * `seeded: true, replaced: true` is "the roster had expired and its rows were
+ * removed before these were written". The CLI prints which of the three
+ * happened, and `seed-preview.test.ts` asserts all three, so the branch is not
+ * a flag nothing reads.
+ */
+type RosterResult = { seeded: boolean; replaced: boolean; counts: Counts };
 
 /** A UTC day in milliseconds. Constant, unlike a local one — see `windows.ts`. */
 const DAY_MS = 86_400_000;
@@ -376,6 +432,50 @@ const DAY_MS = 86_400_000;
 function utcDayStart(instant: number, daysAgo: number): number {
   const at = new Date(instant);
   return Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()) - daysAgo * DAY_MS;
+}
+
+/**
+ * How many days back each {@link Placement} lands, for a run at `instant`.
+ *
+ * **The bounds come from `windows.ts`, not from a second copy of §4.9 here.**
+ * `windowBounds` is the function the leaderboard, the API and the modal all
+ * filter on, and it imports nothing, so the fixture is placed by the same
+ * arithmetic that later decides whether it is visible. A local re-derivation
+ * would be a second definition of the week, and the first time the two
+ * disagreed the seed would look like a product bug.
+ *
+ * **Both degenerate edges are real and are left to degenerate.**
+ *
+ * - On a **Monday** the current ISO week starts today, so `week` resolves to
+ *   `0` and its episodes join today's. `Semanal` then shows exactly what
+ *   `Diario` shows — which is not a fixture defect, it is what the window
+ *   *is* on a Monday, and a fixture that faked a fuller week would be teaching
+ *   a state the product cannot reach.
+ * - On the **1st of a month** the same happens to `month`, and on a Monday the
+ *   1st all three windows collapse onto today.
+ *
+ * In every one of those cases the daily set is still populated and mixed, and
+ * because the windows nest, so are the two above it. That is the property that
+ * has to survive the calendar, and it is the one asserted in
+ * `seed-preview.test.ts` for a mid-month Wednesday, a Monday, a 1st, and a
+ * Monday that is the 1st.
+ *
+ * Exported for that test alone: placing a fixture correctly on four different
+ * calendar days cannot be proved by running the seed on the day the suite
+ * happens to run.
+ */
+export function placementDays(instant: number): Record<Placement, number> {
+  const now = new Date(instant);
+  const today = utcDayStart(instant, 0);
+  // Whole UTC days, so this is exact rather than rounded: `windowBounds`
+  // returns midnights and a UTC day is always 86,400,000 ms.
+  const daysBack = (from: Date) => (today - from.getTime()) / DAY_MS;
+
+  return {
+    today: 0,
+    week: daysBack(windowBounds("semanal", now).from),
+    month: daysBack(windowBounds("mensual", now).from),
+  };
 }
 
 /**
@@ -463,16 +563,30 @@ async function openPreview(): Promise<{ client: Client; connectionString: string
  * path — the tests branch carries `test_database_marker`, so {@link seedPreview}
  * itself refuses it, deliberately.
  *
- * Returns `seeded: false` and writes nothing if the roster is already there.
+ * Returns `seeded: false` and writes nothing if the roster that is already
+ * there is **current**; replaces it and re-seeds if it is stale. See
+ * {@link isStale}.
  */
-export async function writeRoster(tx: TxQuery): Promise<{ seeded: boolean; counts: Counts }> {
+export async function writeRoster(tx: TxQuery): Promise<RosterResult> {
   const counts: Counts = { kols: 0, wallets: 0, tokens: 0, trades: 0, positions: 0 };
+
+  // One instant for the whole run, so every trade's UTC day is computed against
+  // the same clock instead of drifting across the roster -- and, at a run that
+  // straddles UTC midnight, so `"today"` cannot mean two different days for
+  // two different KOLs. It also decides the staleness question below, so the
+  // roster is judged against the same clock it is written with.
+  const startedAt = Date.now();
 
   const existing = await tx<{ one: number }>(
     "SELECT 1 AS one FROM kol WHERE slug LIKE $1 LIMIT 1",
     [`${SLUG_PREFIX}%`],
   );
-  if (existing.length > 0) return { seeded: false, counts };
+  let replaced = false;
+  if (existing.length > 0) {
+    if (!(await isStale(tx, startedAt))) return { seeded: false, replaced: false, counts };
+    await dropPreviewRoster(tx);
+    replaced = true;
+  }
 
   // Cabals first: the KOL rows reference them. A preview branch is a copy of
   // production, so a tag may already be there -- take whichever row wins. This
@@ -505,12 +619,6 @@ export async function writeRoster(tx: TxQuery): Promise<{ seeded: boolean; count
     ],
   );
   counts.tokens = mints.length;
-
-  // One instant for the whole run, so every trade's UTC day is computed against
-  // the same clock instead of drifting across the roster -- and, at a run that
-  // straddles UTC midnight, so `daysAgo: 0` cannot mean two different days for
-  // two different KOLs.
-  const startedAt = Date.now();
 
   // Every row is built in memory and written in one statement per table.
   // Row-at-a-time inserts cost a Neon round trip each, which put this seed --
@@ -573,7 +681,104 @@ export async function writeRoster(tx: TxQuery): Promise<{ seeded: boolean; count
   );
   counts.positions = positions.length;
 
-  return { seeded: true, counts };
+  return { seeded: true, replaced, counts };
+}
+
+/**
+ * Whether the roster already on the branch has **expired**, which is the one
+ * thing the old "any `preview-` KOL exists, so do nothing" check could not see.
+ *
+ * Stale means *its newest trade is not on the current UTC day*. That is the
+ * exact condition under which `Diario` — the first window the visual gate looks
+ * at, and the one whose emptiness turns the entire ranking panel into
+ * `LeaderboardTable`'s empty state — has nothing in it, so it is the condition
+ * that must trigger a re-seed rather than a proxy for it.
+ *
+ * A roster with **no trades at all** is stale too (`max` is `NULL`): it is a
+ * half-state no complete run of this script can leave behind, and re-seeding is
+ * the only way out of it that does not need a human.
+ *
+ * Note that this reads the `trade` rows, which are the only thing this fixture
+ * invents — not `pnl_daily`, which is derived and could be absent for a reason
+ * that has nothing to do with the calendar.
+ */
+async function isStale(tx: TxQuery, instant: number): Promise<boolean> {
+  const [row] = await tx<{ newest: Date | null }>(
+    `SELECT max(t.block_time) AS newest
+       FROM trade t JOIN kol k ON k.id = t.kol_id
+      WHERE k.slug LIKE $1`,
+    [`${SLUG_PREFIX}%`],
+  );
+  const newest = row?.newest ?? null;
+  return newest === null || newest.getTime() < utcDayStart(instant, 0);
+}
+
+/**
+ * Every table the roster occupies, in the order a row can be deleted without
+ * orphaning the one below it. `kol` is last because five tables reference it
+ * and none of those foreign keys cascades (migrations 001 and 003).
+ *
+ * A literal list in this file, never a caller's string: it is interpolated into
+ * the SQL below, which a parameter cannot do for an identifier.
+ */
+const KOL_OWNED_TABLES = [
+  "pnl_position_daily",
+  "pnl_daily",
+  "trade",
+  "position",
+  "kol_wallet",
+] as const;
+
+/**
+ * Removes the roster this script wrote, and **only** it, so a stale fixture can
+ * be replaced instead of expiring in place.
+ *
+ * The blast radius is stated as a rule rather than trusted to care: every
+ * statement is filtered on `slug LIKE 'preview-%'`, which is the prefix this
+ * file owns and the one {@link SLUG_PREFIX} guarantees it writes under. A
+ * preview branch is a copy of production and may carry real rows beside these;
+ * none of them is reachable from here.
+ *
+ * **Tokens are deleted only where this roster orphaned them.** The mints are
+ * collected *before* the trades go, and each is then dropped only if nothing at
+ * all still points at it — so a mint that the preview roster happened to share
+ * with a row it does not own survives.
+ *
+ * **Cabals are never deleted.** They are inserted with `ON CONFLICT DO NOTHING`
+ * and may predate this script entirely; a tag is three letters shared with
+ * whatever else is on the branch, and removing one would be deleting a row this
+ * file does not own. Twelve KOLs' worth of cabal rows is not a leak worth that.
+ */
+async function dropPreviewRoster(tx: TxQuery): Promise<void> {
+  const like = `${SLUG_PREFIX}%`;
+
+  const mints = await tx<{ mint: string }>(
+    `SELECT DISTINCT mint FROM trade
+      WHERE kol_id IN (SELECT id FROM kol WHERE slug LIKE $1)
+      UNION
+     SELECT DISTINCT mint FROM position
+      WHERE kol_id IN (SELECT id FROM kol WHERE slug LIKE $1)`,
+    [like],
+  );
+
+  for (const table of KOL_OWNED_TABLES) {
+    await tx(
+      `DELETE FROM ${table} WHERE kol_id IN (SELECT id FROM kol WHERE slug LIKE $1)`,
+      [like],
+    );
+  }
+  await tx("DELETE FROM kol WHERE slug LIKE $1", [like]);
+
+  // `NOT EXISTS` over both referencing tables rather than a blanket sweep: this
+  // deletes what *this* roster orphaned, and nothing that was already orphaned
+  // by something else.
+  await tx(
+    `DELETE FROM token
+      WHERE mint = ANY($1::text[])
+        AND NOT EXISTS (SELECT 1 FROM trade t WHERE t.mint = token.mint)
+        AND NOT EXISTS (SELECT 1 FROM position p WHERE p.mint = token.mint)`,
+    [mints.map((row) => row.mint)],
+  );
 }
 
 type SeededKol = { spec: PreviewKol; id: string; walletId: string };
@@ -603,15 +808,22 @@ type PlannedTrade = {
  * episode's buy therefore precedes its sell, and `slot` increases with
  * `block_time` so the tiebreak agrees with the timestamps.
  *
- * **A day-zero trade lands on today's UTC day, whatever time it is now.** The
+ * **A `"today"` trade lands on today's UTC day, whatever time it is now.** The
  * trades of each day are spread evenly across the part of that day that has
  * already happened, so nothing is stamped in the future and nothing spills into
  * yesterday. Placing them at a fixed offset backwards from the run instant
  * instead would put "today's" trades on yesterday for a run just after UTC
  * midnight, and `Diario` — the window the visual gate looks at first — would be
  * empty (spec §4.9: the current UTC day, never rolling).
+ *
+ * **`"week"` and `"month"` are resolved here, once, by {@link placementDays},
+ * so the whole roster is placed against one instant and one calendar.** They
+ * can both resolve to `0` — see that function for the Monday and the 1st — and
+ * every line below treats the resolved number, never the name.
  */
 function planTrades(kols: SeededKol[], mints: string[], startedAt: number): PlannedTrade[] {
+  const days = placementDays(startedAt);
+
   const legs = kols.flatMap((kol) =>
     kol.spec.episodes.flatMap((episode) => {
       const shared = {
@@ -619,7 +831,7 @@ function planTrades(kols: SeededKol[], mints: string[], startedAt: number): Plan
         walletId: kol.walletId,
         mint: mints[episode.mint],
         tokens: episode.tokens,
-        daysAgo: episode.daysAgo,
+        daysAgo: days[episode.when],
         unpriced: episode.unpriced ?? false,
       };
       const buy = { ...shared, side: "buy" as const, sol: episode.buy };
@@ -884,14 +1096,14 @@ async function replaySeeded(connectionString: string): Promise<void> {
  * real engine derive everything else from them, and refuse to claim success
  * until the two agree.
  */
-export async function seedPreview(): Promise<{ seeded: boolean; counts: Counts }> {
+export async function seedPreview(): Promise<RosterResult> {
   const { client, connectionString } = await openPreview();
   const tx: TxQuery = async <T>(sql: string, params: unknown[] = []) =>
     (await client.query(sql, params)).rows as T[];
 
   try {
     await client.query("BEGIN");
-    let result: { seeded: boolean; counts: Counts };
+    let result: RosterResult;
     try {
       result = await writeRoster(tx);
       await client.query("COMMIT");
@@ -914,14 +1126,21 @@ export async function seedPreview(): Promise<{ seeded: boolean; counts: Counts }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { seeded, counts } = await seedPreview();
+  const { seeded, replaced, counts } = await seedPreview();
   if (!seeded) {
-    console.log(`Preview roster already present (slug prefix "${SLUG_PREFIX}"); nothing written.`);
+    console.log(
+      `Preview roster already present and current (slug prefix "${SLUG_PREFIX}"); ` +
+        "nothing written.",
+    );
   } else {
     // The addresses, mints and signatures are deliberately not printed: they
     // belong in the database, not in a terminal scrollback or a CI log.
     console.log(
-      `Seeded ${counts.kols} KOLs, ${counts.wallets} wallets, ${counts.tokens} tokens and ` +
+      (replaced
+        ? `Replaced a stale "${SLUG_PREFIX}" roster — its newest trade was not on the current ` +
+          "UTC day, so `Diario` was empty — and seeded "
+        : "Seeded ") +
+        `${counts.kols} KOLs, ${counts.wallets} wallets, ${counts.tokens} tokens and ` +
         `${counts.trades} trades over ${counts.positions} positions; pnl_daily and ` +
         `pnl_position_daily were derived from them by recompute-dirty.`,
     );

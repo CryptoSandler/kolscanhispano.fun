@@ -31,13 +31,22 @@
  * *yields* ten ranked rows with both signs, a `sin cierres` row, a `sin precio`
  * trade and a feed longer than the eight rows the list is tall, rather than
  * asserting that a literal in the file says so.
+ *
+ * **And the fixture must not expire.** Two things were added after a seed taken
+ * on 2026-08-27 was found empty on the 28th: the episodes are placed by window
+ * rather than by a fixed number of days, and a roster whose newest trade is not
+ * on the current UTC day is replaced instead of skipped. The placement is
+ * proved over a year of calendars rather than on the day the suite runs — a
+ * fixture that is only correct on one date is the defect, so a test that can
+ * only see one date cannot catch it.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { query, withTransaction } from "@/lib/db";
 import { readFeedPage } from "@/lib/feed";
 import { readLeaderboard, LEADERBOARD_TOP } from "@/lib/leaderboard";
 import { recomputeDirty } from "@/lib/pnl";
-import { assertReconciled, seedPreview, writeRoster } from "./seed-preview";
+import { LEADERBOARD_WINDOWS, windowBounds } from "@/lib/windows";
+import { assertReconciled, placementDays, seedPreview, writeRoster } from "./seed-preview";
 
 /**
  * A syntactically valid connection URL naming a host that does not exist. Used
@@ -122,6 +131,87 @@ describe("seedPreview refuses anything that is not the preview branch", () => {
   });
 });
 
+/**
+ * Where the roster lands on the calendar, proved without a database and without
+ * depending on the day the suite runs.
+ *
+ * **This is the half that was wrong.** The roster used to be dated `0`, `4` and
+ * `19` days back, which is correct on the day it is written and empty the next
+ * morning: spec §4.9's windows are calendar-aligned UTC and never rolling. The
+ * fix is `placementDays`, and the only honest way to test it is to hand it
+ * dates rather than to run it once on today.
+ *
+ * The two edges the brief names are the ones a mid-month test would never see:
+ * on a **Monday** the ISO week is one day long, and on the **1st** the calendar
+ * month is. Both are asserted directly, and a Monday that is also the 1st —
+ * where all three windows collapse onto today — is asserted as well.
+ */
+describe("the roster is placed by window, so it is correct on every calendar", () => {
+  /** 09:15 UTC, deliberately not midnight: the day must come from the date, not the hour. */
+  const at = (day: string) => Date.parse(`${day}T09:15:00.000Z`);
+
+  it("resolves the three windows against the run instant, on the four days that differ", () => {
+    // Wednesday 26 August 2026: the ISO week began on Monday the 24th, the
+    // month on Saturday the 1st. The ordinary case, and the only one the old
+    // fixed offsets ever got right.
+    expect(placementDays(at("2026-08-26"))).toEqual({ today: 0, week: 2, month: 25 });
+
+    // Monday 24 August: the ISO week starts today, so `Semanal` is one day long
+    // and its episodes join today's. That is what the window *is* on a Monday.
+    expect(placementDays(at("2026-08-24"))).toEqual({ today: 0, week: 0, month: 23 });
+
+    // Saturday 1 August: the month starts today. The ISO week still reaches
+    // back into July, which is a real property of ISO weeks rather than a bug —
+    // `Semanal` and `Mensual` are not nested at a month boundary, and the
+    // fixture is placed by the same `windowBounds` the product filters on.
+    expect(placementDays(at("2026-08-01"))).toEqual({ today: 0, week: 5, month: 0 });
+
+    // Monday 1 June: both edges at once, and all three windows collapse onto
+    // today. Everything the gate needs is still there, because the daily set is
+    // the one that carries it.
+    expect(placementDays(at("2026-06-01"))).toEqual({ today: 0, week: 0, month: 0 });
+  });
+
+  it("never places an episode outside the window it names, on any day of a year", () => {
+    const DAY_MS = 86_400_000;
+    // A full year and a bit from a Thursday, so every weekday, every month
+    // length, both month-boundary shapes and a leap February are covered.
+    for (let step = 0; step < 400; step += 1) {
+      const instant = at("2026-01-01") + step * DAY_MS;
+      const now = new Date(instant);
+      const days = placementDays(instant);
+      const label = now.toISOString().slice(0, 10);
+
+      // The day an episode lands on, as a UTC midnight.
+      const landsOn = (daysAgo: number) =>
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - daysAgo * DAY_MS;
+
+      const inside = (daysAgo: number, window: (typeof LEADERBOARD_WINDOWS)[number]) => {
+        const { from, to } = windowBounds(window, now);
+        const day = landsOn(daysAgo);
+        return day >= from.getTime() && day < to.getTime();
+      };
+
+      // `today` is in all three, which is what makes "closed positions in every
+      // window" a consequence of the roster rather than of the date: the
+      // windows nest downwards even where they do not nest upwards.
+      expect(days.today, label).toBe(0);
+      for (const window of LEADERBOARD_WINDOWS) expect(inside(0, window), `${label} ${window}`).toBe(true);
+
+      // ...and each of the other two is inside the window it is named for.
+      expect(inside(days.week, "semanal"), `${label} semanal`).toBe(true);
+      expect(inside(days.month, "mensual"), `${label} mensual`).toBe(true);
+
+      // Never in the future, and never further back than the widest window can
+      // reach — a placement of 31 would silently fall out of `Mensual`.
+      expect(days.week, label).toBeGreaterThanOrEqual(0);
+      expect(days.week, label).toBeLessThanOrEqual(6);
+      expect(days.month, label).toBeGreaterThanOrEqual(0);
+      expect(days.month, label).toBeLessThanOrEqual(30);
+    }
+  });
+});
+
 describe("the trades are the only thing the seed invents", () => {
   beforeAll(async () => {
     await query(`TRUNCATE ${SEEDED_TABLES}`);
@@ -172,16 +262,17 @@ describe("the replayed roster produces the states the preview exists to show", (
     expect(await recomputeDirty()).toBe(ROSTER_POSITIONS);
   }, REPLAY_BUDGET_MS);
 
-  /** Pinned to noon of the newest derived day, so no run can straddle UTC midnight. */
-  async function leaderboardAtSeededDay() {
+  /**
+   * Pinned to noon of the newest derived day, so no run can straddle UTC
+   * midnight. That day is the day the seed ran, so pinning to it also asks the
+   * weekly and monthly windows the question the *seed* was placed against
+   * rather than the one a slow suite drifts into.
+   */
+  async function leaderboardAtSeededDay(window: (typeof LEADERBOARD_WINDOWS)[number] = "diario") {
     const [{ day }] = await query<{ day: string }>(
       "SELECT to_char(max(day), 'YYYY-MM-DD') AS day FROM pnl_daily",
     );
-    return readLeaderboard({
-      window: "diario",
-      unit: "sol",
-      now: new Date(`${day}T12:00:00.000Z`),
-    });
+    return readLeaderboard({ window, unit: "sol", now: new Date(`${day}T12:00:00.000Z`) });
   }
 
   it("ranks ten rows spanning gains and losses, with `sin cierres` among them", async () => {
@@ -215,6 +306,54 @@ describe("the replayed roster produces the states the preview exists to show", (
       wins: 0,
       losses: 3,
     });
+  });
+
+  /**
+   * The property the placement rewrite exists for, asserted on the leaderboard
+   * the owner actually looks at rather than on the trade table underneath it.
+   *
+   * `LeaderboardTable`'s panel-level empty state is keyed on **every** entry
+   * having `winRate === null`, so a single window with nothing closed in it
+   * costs the gate the podium, the tinted rows, the avatars and the modal at
+   * once — which is exactly what a day-old fixture did on 2026-08-28. One
+   * closed episode per window would clear that bar; the roster is held to more
+   * than that, because a panel that is technically non-empty and carries only
+   * one sign shows the gate half of DESIGN.md's colour rule.
+   */
+  it("fills all three windows, with both signs in each and `sin cierres` still visible", async () => {
+    for (const window of LEADERBOARD_WINDOWS) {
+      const { entries } = await leaderboardAtSeededDay(window);
+
+      // DESIGN.md, "Every surface has two states": this is the condition under
+      // which the ranking panel is *not* its own empty state.
+      const closed = entries.filter((entry) => entry.winRate !== null);
+      expect(closed.length, `${window}: closed episodes`).toBeGreaterThan(0);
+      expect(
+        entries.every((entry) => entry.winRate === null),
+        `${window}: the panel-level empty state is reachable`,
+      ).toBe(false);
+
+      // Both `semantic-gain` and `semantic-loss` on the page, in every window.
+      expect(
+        closed.some((entry) => Number(entry.realizedSol) > 0),
+        `${window}: a gain`,
+      ).toBe(true);
+      expect(
+        closed.some((entry) => entry.realizedSol.startsWith("-")),
+        `${window}: a loss`,
+      ).toBe(true);
+
+      // ...and the row-level empty case survives all three, so `sin cierres` is
+      // never the thing that disappears when the calendar moves.
+      expect(
+        entries.some((entry) => entry.winRate === null),
+        `${window}: sin cierres`,
+      ).toBe(true);
+
+      // Eleven of the twelve closed something today, and the windows nest
+      // downwards, so every window carries almost the whole roster.
+      expect(closed.length, `${window}: most of the roster`).toBeGreaterThanOrEqual(11);
+    }
   });
 
   it("derives the day's figures exactly, on the decimal grid and not through a float", async () => {
@@ -296,7 +435,10 @@ describe("the replayed roster produces the states the preview exists to show", (
     expect(before[0].positions).toBe(String(ROSTER_POSITIONS));
 
     const second = await withTransaction(writeRoster);
-    expect(second.seeded).toBe(false);
+    // Not stale — the roster it finds was written by the `beforeAll` above, so
+    // its newest trade is on the current UTC day and the replacement branch
+    // must not fire.
+    expect(second).toMatchObject({ seeded: false, replaced: false });
     expect(second.counts.trades).toBe(0);
     expect(await countsOf()).toEqual(before);
   });
@@ -364,4 +506,111 @@ describe("the replayed roster produces the states the preview exists to show", (
     },
     REPLAY_BUDGET_MS,
   );
+});
+
+/**
+ * The other half of the expiry fix: a roster that has gone stale replaces
+ * itself instead of blocking every future run.
+ *
+ * **Why the old guard was not enough, stated once.** `writeRoster` refused to
+ * run whenever any `preview-` KOL existed, which is what made it idempotent —
+ * and also what made a fixture that expired at midnight unable to heal. The
+ * roster seeded on 2026-08-27 was still there on the 28th, still the newest
+ * thing the check could see, and `npm run db:seed:preview` kept answering
+ * "already present" over an empty `Diario`.
+ *
+ * So both halves are pinned here, in the order they matter: the run that must
+ * still do nothing, and the run that must now replace. Neither needs a replay —
+ * this is about which rows exist, and `recomputeDirty` is the most expensive
+ * thing in this file.
+ */
+describe("a stale roster replaces itself rather than expiring in place", () => {
+  const countsOf = () =>
+    query<Record<string, string>>(
+      `SELECT (SELECT count(*) FROM kol WHERE slug LIKE 'preview-%') AS kols,
+              (SELECT count(*) FROM kol)                             AS all_kols,
+              (SELECT count(*) FROM kol_wallet)                      AS wallets,
+              (SELECT count(*) FROM token)                           AS tokens,
+              (SELECT count(*) FROM trade)                           AS trades,
+              (SELECT count(*) FROM position)                        AS positions,
+              (SELECT count(*) FROM cabal)                           AS cabals`,
+    );
+
+  beforeAll(async () => {
+    await query(`TRUNCATE ${SEEDED_TABLES}`);
+    const first = await withTransaction(writeRoster);
+    expect(first).toMatchObject({ seeded: true, replaced: false });
+  });
+
+  it("does nothing at all while the roster's newest trade is on the current UTC day", async () => {
+    const before = await countsOf();
+
+    const second = await withTransaction(writeRoster);
+
+    // The property that must not be lost to the new branch: running the seed
+    // twice in a row still leaves one roster, not two.
+    expect(second).toMatchObject({ seeded: false, replaced: false });
+    expect(second.counts.trades).toBe(0);
+    expect(await countsOf()).toEqual(before);
+  });
+
+  it("replaces its own rows and re-seeds once the newest trade is no longer today", async () => {
+    const before = await countsOf();
+    const staleMints = await query<{ mint: string }>("SELECT mint FROM token ORDER BY mint");
+    expect(staleMints).toHaveLength(6);
+
+    // Exactly what one midnight does to this fixture: the rows do not change,
+    // the calendar moves under them. Two days rather than one so the assertion
+    // holds whatever hour the suite runs at.
+    await query("UPDATE trade SET block_time = block_time - INTERVAL '2 days'");
+
+    const again = await withTransaction(writeRoster);
+
+    expect(again).toMatchObject({ seeded: true, replaced: true });
+    expect(again.counts.trades).toBe(ROSTER_TRADES);
+    expect(again.counts.positions).toBe(ROSTER_POSITIONS);
+
+    // One roster, not two: every count is where it started, so the replacement
+    // deleted as much as it wrote.
+    expect(await countsOf()).toEqual(before);
+
+    // The stale roster's tokens went with it -- they were orphaned by the
+    // deletion and nothing else points at them -- and six fresh mints took
+    // their place.
+    const freshMints = await query<{ mint: string }>("SELECT mint FROM token ORDER BY mint");
+    expect(freshMints).toHaveLength(6);
+    expect(freshMints.map((row) => row.mint).sort()).not.toEqual(
+      staleMints.map((row) => row.mint).sort(),
+    );
+
+    // And the replacement is current: `Diario` has trades in it again, which is
+    // the whole point of the branch.
+    const [{ today }] = await query<{ today: string }>(
+      `SELECT count(*)::text AS today FROM trade
+        WHERE block_time >= date_trunc('day', now() AT TIME ZONE 'utc')`,
+    );
+    expect(Number(today)).toBeGreaterThan(0);
+  });
+
+  it("leaves nothing derived behind for a recompute to disagree with", async () => {
+    // The deletion has to take `pnl_daily` and `pnl_position_daily` with it.
+    // Rows left there would belong to KOLs that no longer exist, and
+    // `assertReconciled` would be comparing a new roster against an old day.
+    const [orphans] = await query<Record<string, string>>(
+      `SELECT (SELECT count(*) FROM pnl_daily d
+                LEFT JOIN kol k ON k.id = d.kol_id WHERE k.id IS NULL)          AS days,
+              (SELECT count(*) FROM pnl_position_daily c
+                LEFT JOIN kol k ON k.id = c.kol_id WHERE k.id IS NULL)          AS position_days,
+              (SELECT count(*) FROM trade t
+                LEFT JOIN kol k ON k.id = t.kol_id WHERE k.id IS NULL)          AS trades,
+              (SELECT count(*) FROM kol_wallet w
+                LEFT JOIN kol k ON k.id = w.kol_id WHERE k.id IS NULL)          AS wallets`,
+    );
+    expect(orphans).toEqual({ days: "0", position_days: "0", trades: "0", wallets: "0" });
+
+    // Cabals are shared with whatever else is on the branch and are never
+    // deleted -- the three the roster needs are still there, and still three.
+    const [{ cabals }] = await query<{ cabals: string }>("SELECT count(*)::text AS cabals FROM cabal");
+    expect(cabals).toBe("3");
+  });
 });
