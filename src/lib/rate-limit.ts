@@ -1,15 +1,24 @@
-import { createHmac } from "node:crypto";
+import { blindIndex } from "./crypto";
 import { query } from "./db";
 
 /**
  * Client IPs are personal data we have no use for. We keep a keyed hash, which
- * is enough to count and not enough to identify. The key is the HMAC key
- * already loaded for the blind index.
+ * is enough to count and not enough to identify.
+ *
+ * Through `crypto.ts`, not around it. This function used to read
+ * `WALLET_HMAC_KEY` straight out of `process.env` and build its own HMAC, which
+ * meant it was the one keyed digest in the repo that skipped `crypto.ts`'s
+ * check that the two keys differ -- so an operator who pasted the same value
+ * into both variables got a hard failure everywhere except here, where the
+ * counting quietly carried on under a key the ciphertext key could reproduce.
+ *
+ * The digest is byte-identical to what it was: the old body hashed `ip:${ip}`
+ * under `WALLET_HMAC_KEY`, and that is exactly what `blindIndex(ip, "ip")`
+ * computes. No `rate_limit` row is orphaned by this change, which is why it
+ * needs no migration -- pinned by the test below it.
  */
 export function ipHash(ip: string): Buffer {
-  const key = Buffer.from(process.env.WALLET_HMAC_KEY ?? "", "base64");
-  if (key.length !== 32) throw new Error("WALLET_HMAC_KEY must be 32 bytes, base64-encoded");
-  return createHmac("sha256", key).update(`ip:${ip}`, "utf8").digest();
+  return blindIndex(ip, "ip");
 }
 
 /**
@@ -61,10 +70,19 @@ export async function hitLimit(
  * The client's address, from the one header a request can be trusted to carry
  * it in.
  *
- * On Vercel `x-forwarded-for` is set by the platform on every request and its
- * **first** hop is the client; anything further along is a proxy the client
- * chose to name and is not evidence of anything. `x-real-ip` is the fallback a
- * self-hosted deploy behind nginx would supply.
+ * The **first** hop of `x-forwarded-for`, because everything after it is a
+ * proxy the caller named and a caller can name anything. `x-real-ip` is the
+ * fallback a self-hosted deploy behind nginx would supply.
+ *
+ * Whether the first hop is the *client* depends on the platform overwriting the
+ * header rather than passing the caller's through, and **that has not been
+ * measured here** — measuring it needs a request answered by Vercel's edge, and
+ * the security batch this belongs to touches neither production nor preview.
+ * An earlier version of this comment asserted it. So: this is a counter, and it
+ * is a good one against accidental load and a poor one against a caller who
+ * varies the header on purpose. The control that does not depend on the guess
+ * is a platform rule — Vercel's own firewall rate limiting — which is what
+ * `src/proxy.ts` says it would be replaced by.
  *
  * When neither is present the caller is counted as `"unknown"`, which is one
  * shared bucket. That is deliberately the *conservative* reading and it is

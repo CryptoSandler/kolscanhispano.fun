@@ -1,4 +1,6 @@
+import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
+import { blindIndex } from "./crypto";
 import { query } from "./db";
 import {
   PUBLIC_LIMITS,
@@ -24,6 +26,45 @@ describe("ipHash", () => {
 
   it("differs between addresses", () => {
     expect(ipHash("203.0.113.7").equals(ipHash("203.0.113.8"))).toBe(false);
+  });
+
+  // L-3. This is the same digest it always was, and that is the property that
+  // makes routing it through crypto.ts a refactor rather than a migration:
+  // every rate_limit row already in the database is keyed by this value, and a
+  // change here would silently reset every counter and orphan every row until
+  // the prune caught up. The expectation is written out longhand rather than
+  // as `blindIndex(ip, "ip")` so that changing the domain string in crypto.ts
+  // fails here instead of agreeing with itself.
+  it("is HMAC-SHA-256 over `ip:<address>` under WALLET_HMAC_KEY, unchanged", () => {
+    const key = Buffer.from(process.env.WALLET_HMAC_KEY!, "base64");
+    const expected = createHmac("sha256", key).update("ip:203.0.113.7", "utf8").digest();
+    expect(ipHash("203.0.113.7").equals(expected)).toBe(true);
+    expect(ipHash("203.0.113.7").equals(blindIndex("203.0.113.7", "ip"))).toBe(true);
+  });
+
+  // The reason it goes through crypto.ts at all: `key()` loads both keys and
+  // refuses when they are equal, and the old inline HMAC was the one keyed
+  // digest in the repo that never asked. An operator who pasted one value into
+  // both variables used to get a hard failure everywhere except the rate
+  // limiter.
+  it("refuses when the two keys are the same value", () => {
+    const same = process.env.WALLET_ENC_KEY!;
+    const previous = process.env.WALLET_HMAC_KEY;
+    process.env.WALLET_HMAC_KEY = same;
+    try {
+      expect(() => ipHash("203.0.113.7")).toThrow(/must not be equal/);
+    } finally {
+      process.env.WALLET_HMAC_KEY = previous;
+    }
+  });
+
+  // Domain separation, the reason blindIndex takes a domain at all: the same
+  // string counted as an address and as a caller must not produce the same
+  // digest.
+  it("does not collide with the address or signature index over the same string", () => {
+    const value = "203.0.113.7";
+    expect(ipHash(value).equals(blindIndex(value, "address"))).toBe(false);
+    expect(ipHash(value).equals(blindIndex(value, "signature"))).toBe(false);
   });
 });
 

@@ -90,7 +90,17 @@ export function decrypt(blob: Buffer, aad: string): string {
  * produce the same digest, leaking a cross-column equality an attacker could
  * exploit. The domain is folded into the HMAC input, not appended afterward,
  * so it cannot be stripped or confused with the value itself.
+ *
+ * `"ip"` is the third domain, and it is here rather than in `rate-limit.ts`
+ * because of what `key()` does above: it loads *both* keys and refuses when
+ * they are equal. `ipHash` read `WALLET_HMAC_KEY` out of `process.env`
+ * directly, so it was the one keyed digest in this repo that still worked --
+ * silently, under a key that was a keyed function of the ciphertext key --
+ * in the configuration that guard exists to catch. The digest itself is
+ * unchanged: `ipHash` already hashed `ip:${ip}`, which is exactly what this
+ * produces for the `"ip"` domain, so every `rate_limit` row already written
+ * still matches.
  */
-export function blindIndex(value: string, domain: "address" | "signature"): Buffer {
+export function blindIndex(value: string, domain: "address" | "signature" | "ip"): Buffer {
   return createHmac("sha256", key("WALLET_HMAC_KEY")).update(`${domain}:${value}`, "utf8").digest();
 }
