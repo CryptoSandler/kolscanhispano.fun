@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, type ReactNode } from "react";
-import { KolModalContext, NO_MODAL } from "./kol-modal";
+import { GoneKolsContext, KolModalContext, NO_MODAL } from "./kol-modal";
 
 /**
  * The `<tr>` of DESIGN.md's `row-leaderboard`, and the only client code the
@@ -43,6 +43,25 @@ export function KolRow({
   children?: ReactNode;
 }) {
   const open = useContext(KolModalContext);
+  const gone = useContext(GoneKolsContext);
+
+  /*
+    DESIGN.md, on the gone state: "the row leaves the list when the modal
+    closes", and "the stale row is removed on close rather than left to invite a
+    second click."
+
+    The row is removed rather than disabled or greyed, because a disabled row is
+    the very thing the last Don't rules out — "Don't show a control that does not
+    work" — and because the KOL is not withheld from the reader, it is *not on
+    the padrón any more*, which is the same absence spec §9 keeps off every
+    public surface.
+
+    **The ranks left behind are not renumbered**, and that is deliberate: the
+    ranking was measured with this KOL in it, and shifting `004` up to `003`
+    would restate a measurement rather than remove a row. A gap is honest; the
+    next page load is ranked without it.
+  */
+  if (gone.has(slug)) return null;
 
   // DESIGN.md: "Ranks 1-3 additionally carry their `podium-N-wash` background."
   const className = podium === null ? "row-leaderboard" : `row-leaderboard is-podium-${podium}`;

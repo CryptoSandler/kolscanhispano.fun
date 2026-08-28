@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import type { PublicKolDetail, PublicLeaderboardEntry } from "@/lib/serialize";
 import { FeedLive } from "./feed-live";
 import { KolDetail } from "./kol-detail";
+import { LoadFailureState, loadFailure } from "./kol-modal-host";
 import { LeaderboardTable } from "./leaderboard-table";
 
 /**
@@ -249,16 +250,72 @@ describe("modal-kol's chart says its empty period in words, not as an empty axis
     expect(html).not.toContain("row-trade");
   });
 
-  /**
-   * The third new row — `| `modal-kol` on a failed load | the cards | `No se
-   * pudo cargar este KOL.` with a retry |` — is **not** asserted here, and the
-   * omission is deliberate rather than an oversight.
-   *
-   * That state only exists after a fetch has failed, which needs effects to
-   * run; `renderToStaticMarkup` does not run them, so a node-environment render
-   * of `KolModalHost` can never reach it. Asserting it against the *source* of
-   * that file is the shape of check this repository has already shipped and
-   * been wrong about. It is covered in `e2e/modal-kol.spec.ts`, where the
-   * request is aborted in a real browser and the retry is clicked.
-   */
+});
+
+/**
+ * The two rows `46b9c47` split apart, which are the only two states in this
+ * table where the copy is not the whole requirement — one of them also states
+ * that a **control must not be there**.
+ *
+ * They used to be one row and were not asserted here at all, because the state
+ * only exists after a fetch has failed and `renderToStaticMarkup` does not run
+ * effects. `LoadFailureState` is now a component of its own for exactly that
+ * reason: the *decision* (`loadFailure`) and the *rendering* are both reachable
+ * without a browser, and the composition that joins them to a real 404 over the
+ * wire is `e2e/modal-kol.spec.ts`. Neither test replaces the other — this one
+ * cannot see a network, and that one cannot enumerate statuses.
+ */
+describe("modal-kol tells a KOL that is gone from a KOL that is unreachable", () => {
+  const TRANSIENT = "`modal-kol` on a **transient** failure (network, 5xx)";
+  const GONE = "`modal-kol` when the KOL is **gone** (404)";
+
+  function failureHtml(failure: "transient" | "gone"): string {
+    return renderToStaticMarkup(
+      createElement(LoadFailureState, { failure, onRetry: () => {} }),
+    );
+  }
+
+  it("names both rows in the document, so neither assertion below is vacuous", () => {
+    // If the table is reshaped so these two cells stop being found, every
+    // expectation here would be comparing markup against `undefined`.
+    expect(emptyCell(TRANSIENT)).toBe("No se pudo cargar este KOL.");
+    expect(emptyCell(GONE)).toBe("Este KOL ya no está en el padrón.");
+  });
+
+  it("decides by the response and never by a guess", () => {
+    // DESIGN.md: "`404` is gone, everything else is transient."
+    expect(loadFailure(404)).toBe("gone");
+    for (const status of [500, 502, 503, 504, 429, 400, 408, 410]) {
+      expect(loadFailure(status), String(status)).toBe("transient");
+    }
+  });
+
+  it("offers a retry on a transient failure, in the document's words", () => {
+    const html = failureHtml("transient");
+
+    expect(html).toContain(`<p class="state-empty-lead">${emptyCell(TRANSIENT)}</p>`);
+    expect(html).toContain("Reintentar");
+    expect(html).toContain('class="retry"');
+    // "`Cargando…` is a spinner in words, and this system does not ship
+    // spinners" — not here either, where a retry is pending.
+    expect(html).not.toContain("Cargando");
+  });
+
+  it("offers no retry at all when the KOL is gone, and does not apologise", () => {
+    const html = failureHtml("gone");
+
+    expect(html).toContain(`<p class="state-empty-lead">${emptyCell(GONE)}</p>`);
+
+    // The requirement the copy alone does not carry: DESIGN.md's "**no
+    // retry**", and its last Don't — "Don't show a control that does not work."
+    // Absent, not disabled: a greyed `Reintentar` is still that control.
+    expect(html).not.toContain("Reintentar");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("disabled");
+
+    // ...and it is not the other sentence, which is the mistake this row exists
+    // to prevent.
+    expect(html).not.toContain(emptyCell(TRANSIENT));
+    for (const apology of ["Ups", "Lo sentimos"]) expect(html).not.toContain(apology);
+  });
 });

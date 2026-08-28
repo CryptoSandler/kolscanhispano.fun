@@ -4,7 +4,100 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { PublicKolDetail } from "@/lib/serialize";
 import { LEADERBOARD_WINDOWS, WINDOW_LABELS, type LeaderboardWindow } from "@/lib/windows";
 import { KolDetail } from "./kol-detail";
-import { KolModalContext } from "./kol-modal";
+import { GoneKolsContext, KolModalContext } from "./kol-modal";
+
+/**
+ * Which of DESIGN.md's two failure states a load ended in.
+ *
+ * The document draws the line and this type is that line, so no caller has to
+ * re-decide it:
+ *
+ * | Case | Copy | Retry |
+ * |---|---|---|
+ * | transient — network, 5xx | `No se pudo cargar este KOL.` | yes |
+ * | gone — 404 | `Este KOL ya no está en el padrón.` | no |
+ */
+export type LoadFailure = "transient" | "gone";
+
+/**
+ * Reads a failure out of the **response status**, which DESIGN.md requires:
+ * *"The two cases are distinguished by the response, not guessed at — `404` is
+ * gone, everything else is transient."*
+ *
+ * A guess is the thing being ruled out. A KOL withdrawn or suspended between
+ * the list's render and the click is gone, and offering it a retry is *"a
+ * control that is guaranteed to fail, which `Do's and Don'ts` already forbids"*
+ * — while a 502 from a cold route is a request worth making again, and hiding
+ * the retry there would strand a reader on a page that would have worked.
+ *
+ * `404` is the only status this product can answer with for a KOL that is not
+ * on a public surface: `/api/kol/[slug]` reads through `readKolDetail`, whose
+ * `WHERE k.slug = $1 AND k.status = 'approved'` makes "never existed" and
+ * "suspended" one answer, and whose route returns the same `not found` body for
+ * both (spec §9 — the difference is information about a person).
+ *
+ * ponytail: `410` is not handled, because nothing in this app can send one —
+ * verified by grep over `src/app/api`, whose only statuses are 200, 304, 400,
+ * 401, 404 and 429. RFC 9110 makes `410` a stronger *gone* than `404`, so if a
+ * future route ever answers one this becomes
+ * `status === 404 || status === 410`, one word. A branch written for a response
+ * that cannot arrive is a branch nothing exercises.
+ */
+export function loadFailure(status: number): LoadFailure {
+  return status === 404 ? "gone" : "transient";
+}
+
+/**
+ * DESIGN.md's two-states table, for the two rows `46b9c47` separated:
+ *
+ * ```
+ * | `modal-kol` on a **transient** failure (network, 5xx) | the cards | `No se pudo cargar este KOL.` with a retry |
+ * | `modal-kol` when the KOL is **gone** (404) | the cards | `Este KOL ya no está en el padrón.` — **no retry**, ... |
+ * ```
+ *
+ * Both sentences are verbatim, and `empty-states.test.ts` parses them out of
+ * the document to prove it.
+ *
+ * **The retry is absent for `gone`, not disabled.** DESIGN.md's last Don't is
+ * *"Don't show a control that does not work"*, and a greyed-out `Reintentar` is
+ * still that control — it says the reader is missing a permission or a moment,
+ * where the truth is that there is nothing left to load. On the transient side
+ * the retry is a real control that reruns the same fetch in place, not a reload
+ * and not a link that closes the panel, because the state it recovers from is
+ * one failed request. The document does not word it; `Reintentar` is the one
+ * word neutral Spanish has for it.
+ *
+ * Split out of {@link KolModalHost} so it can be rendered without a browser:
+ * the state only exists after an effect has run, so `renderToStaticMarkup` can
+ * never reach it through the host, and asserting copy against the *source* of a
+ * component is the shape of check this repository has already been wrong about.
+ */
+export function LoadFailureState({
+  failure,
+  onRetry,
+}: {
+  failure: LoadFailure;
+  onRetry: () => void;
+}) {
+  if (failure === "gone") {
+    return (
+      <div className="state-empty">
+        <p className="state-empty-lead">Este KOL ya no está en el padrón.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="state-empty">
+      <p className="state-empty-lead">No se pudo cargar este KOL.</p>
+      <p className="state-empty-note">
+        <button type="button" className="retry" onClick={onRetry}>
+          Reintentar
+        </button>
+      </p>
+    </div>
+  );
+}
 
 /**
  * DESIGN.md's `modal-kol`, and the provider task A left the seam for.
@@ -53,6 +146,25 @@ import { KolModalContext } from "./kol-modal";
  * own `segmented` component names the same three windows in Spanish. Recorded
  * in the batch report as a conflict for the document to settle rather than
  * resolved by printing a label the aggregation does not honour.
+ *
+ * ## When the KOL is gone
+ *
+ * A leaderboard row is a snapshot of the moment the page rendered, and a KOL
+ * can be withdrawn or suspended before the reader clicks it. DESIGN.md
+ * (`46b9c47`) separates that from a failure worth retrying, and this component
+ * is where both halves land:
+ *
+ * - the failure is classified from the **response** by {@link loadFailure} —
+ *   `404` is gone, everything else transient — and rendered by
+ *   {@link LoadFailureState}, so the gone state carries no retry control at
+ *   all;
+ * - on close, a gone slug joins the set handed down through
+ *   {@link GoneKolsContext}, and `kol-row.tsx` renders nothing for it. *"The
+ *   stale row is removed on close rather than left to invite a second click."*
+ *
+ * The set is per-mount and deliberately not persisted: it is a correction to
+ * one rendered page, and the next request is ranked without that KOL anyway
+ * because `readLeaderboard` filters on `status = 'approved'`.
  */
 export function KolModalHost({
   window: pageWindow,
@@ -65,17 +177,41 @@ export function KolModalHost({
   const [slug, setSlug] = useState<string | null>(null);
   const [period, setPeriod] = useState<LeaderboardWindow>(pageWindow);
   const [detail, setDetail] = useState<PublicKolDetail | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<LoadFailure | null>(null);
+  /**
+   * The slugs this modal has been told are `404`, handed down to every row
+   * through {@link GoneKolsContext}.
+   *
+   * A row is added on **close**, not on the failure: DESIGN.md says *"the row
+   * leaves the list when the modal closes"*, and removing it underneath an open
+   * dialog would pull the trigger row out of the document while focus is still
+   * being restored to it.
+   */
+  const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
   /**
    * Bumped by the retry control, and a dependency of the fetch effect — which
-   * is the whole mechanism. DESIGN.md's failed-load state is *"`No se pudo
-   * cargar este KOL.` **with a retry**"*, and a retry that re-ran the effect by
-   * clearing and re-setting `slug` would close and reopen the dialog.
+   * is the whole mechanism. DESIGN.md's transient failure state is *"`No se
+   * pudo cargar este KOL.` **with a retry**"*, and a retry that re-ran the
+   * effect by clearing and re-setting `slug` would close and reopen the dialog.
    */
   const [attempt, setAttempt] = useState(0);
 
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
+
+  /*
+    The e2e harness's canary on this surface, written to the DOM after mount
+    exactly as `feed-live.tsx` writes its own, on the ref this component already
+    holds and for the same reason that one exists: the whole e2e suite once ran
+    against a page whose bundle answered `403`, and a spec that clicks something
+    is worthless without proof that React ran. `/leaderboard` carries no
+    `FeedLive`, so until this line it had no canary at all. Nothing in this
+    component reads the attribute; it is for an outside observer, which is why
+    it is a DOM write and not state.
+  */
+  useEffect(() => {
+    dialog.current?.setAttribute("data-hydrated", "");
+  }, []);
 
   const open = useCallback(
     (next: string) => {
@@ -85,7 +221,7 @@ export function KolModalHost({
       setPeriod(pageWindow);
       setSlug(next);
       setDetail(null);
-      setFailed(false);
+      setFailure(null);
     },
     [pageWindow],
   );
@@ -101,7 +237,7 @@ export function KolModalHost({
   const changePeriod = useCallback((next: LeaderboardWindow) => {
     setPeriod(next);
     setDetail(null);
-    setFailed(false);
+    setFailure(null);
   }, []);
 
   useEffect(() => {
@@ -114,7 +250,12 @@ export function KolModalHost({
           `/api/kol/${encodeURIComponent(slug)}?window=${encodeURIComponent(period)}`,
           { signal: controller.signal, cache: "no-store" },
         );
-        if (!response.ok) throw new Error("kol detail unavailable");
+        // The **response** decides which failure this is, never a guess. See
+        // {@link loadFailure}.
+        if (!response.ok) {
+          if (!controller.signal.aborted) setFailure(loadFailure(response.status));
+          return;
+        }
         const body = (await response.json()) as PublicKolDetail;
         // The abort above covers a request still in flight; this covers one
         // already delivered, whose period is no longer the selected one. The
@@ -122,10 +263,15 @@ export function KolModalHost({
         // compared rather than assumed.
         if (body.window === period) setDetail(body);
       } catch {
-        // A cancelled fetch is not a failure — it is this effect tidying up
-        // after itself, and showing an error for it would flash one on every
+        // Everything that never produced a status line: a network error, a
+        // timeout, a body that would not parse. All transient — there is no
+        // response to read "gone" out of, and inventing one would be the guess
+        // DESIGN.md rules out.
+        //
+        // A cancelled fetch is not a failure at all — it is this effect tidying
+        // up after itself, and showing an error for it would flash one on every
         // segment change.
-        if (!controller.signal.aborted) setFailed(true);
+        if (!controller.signal.aborted) setFailure("transient");
       }
     })();
 
@@ -153,18 +299,28 @@ export function KolModalHost({
   // close button and a backdrop click (both of which call `close()`), so there
   // is one place that clears the state and returns focus rather than three.
   const onClose = useCallback(() => {
+    // DESIGN.md: the gone row "leaves the list when the modal closes". This is
+    // that close, and it is the only place the set grows.
+    if (failure === "gone" && slug !== null) {
+      setGone((previous) => new Set(previous).add(slug));
+    }
     setSlug(null);
     setDetail(null);
-    setFailed(false);
+    setFailure(null);
     // `isConnected` because the row may have been replaced by a re-render while
-    // the modal was open; focusing a detached node silently sends focus to the
-    // document body instead.
+    // the modal was open -- and, for a gone KOL, because the line above is
+    // about to remove it. Focusing a detached node silently sends focus to the
+    // document body instead. A reader whose row has just left the list gets the
+    // document's own focus order back, which is the honest answer: the thing
+    // they were on is not there any more.
     if (trigger.current?.isConnected) trigger.current.focus();
-  }, []);
+  }, [failure, slug]);
 
   return (
     <KolModalContext.Provider value={open}>
-      {children}
+      {/* Two providers, one for each thing a row needs from this component: how
+          to open a modal, and which rows are no longer there. */}
+      <GoneKolsContext.Provider value={gone}>{children}</GoneKolsContext.Provider>
 
       <dialog
         ref={dialog}
@@ -198,31 +354,14 @@ export function KolModalHost({
 
           {detail && <KolDetail detail={detail} segments={<Segments value={period} onChange={changePeriod} />} />}
 
-          {failed && (
-            /* DESIGN.md's two-states table, as corrected in `4a2f2df`:
-               `| modal-kol on a failed load | the cards |
-                `No se pudo cargar este KOL.` with a retry |`.
-
-               The sentence is verbatim. The retry is a real control that reruns
-               the same fetch in place — not a reload, and not a link that
-               closes the panel — because the state it recovers from is one
-               failed request. The document does not word the control; `Reintentar`
-               is the one word neutral Spanish has for it. */
-            <div className="state-empty">
-              <p className="state-empty-lead">No se pudo cargar este KOL.</p>
-              <p className="state-empty-note">
-                <button
-                  type="button"
-                  className="retry"
-                  onClick={() => {
-                    setFailed(false);
-                    setAttempt((n) => n + 1);
-                  }}
-                >
-                  Reintentar
-                </button>
-              </p>
-            </div>
+          {failure !== null && (
+            <LoadFailureState
+              failure={failure}
+              onRetry={() => {
+                setFailure(null);
+                setAttempt((n) => n + 1);
+              }}
+            />
           )}
         </div>
       </dialog>

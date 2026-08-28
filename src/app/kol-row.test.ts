@@ -20,25 +20,27 @@
  * and the class the pointer cursor hangs off. The handler itself is one
  * `useContext` away from those in the same branch.
  */
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { KolModalContext } from "./kol-modal";
+import { GoneKolsContext, KolModalContext } from "./kol-modal";
 import { KolRow } from "./kol-row";
 
 /** A row, wrapped in the table markup React expects a `<tr>` to live in. */
-function render(open?: (slug: string) => void): string {
+function render(open?: (slug: string) => void, gone?: ReadonlySet<string>): string {
   const row = createElement(
     KolRow,
     { name: "KOL Uno", slug: "kol-uno", podium: 1 as const },
     createElement("td", null, "celda"),
   );
-  const table = createElement("table", null, createElement("tbody", null, row));
-  return renderToStaticMarkup(
-    open === undefined
-      ? table
-      : createElement(KolModalContext.Provider, { value: open }, table),
-  );
+  let tree: ReactElement = createElement("table", null, createElement("tbody", null, row));
+  if (open !== undefined) {
+    tree = createElement(KolModalContext.Provider, { value: open }, tree);
+  }
+  if (gone !== undefined) {
+    tree = createElement(GoneKolsContext.Provider, { value: gone }, tree);
+  }
+  return renderToStaticMarkup(tree);
 }
 
 describe("KolRow while `modal-kol` is unbuilt", () => {
@@ -69,5 +71,41 @@ describe("KolRow once a modal is provided", () => {
 
   it("still marks the podium, so the affordance does not displace the rank tint", () => {
     expect(render(() => {})).toContain("is-podium-1");
+  });
+});
+
+/**
+ * The other half of DESIGN.md's gone state, on the surface it actually happens
+ * on.
+ *
+ * *"`Este KOL ya no está en el padrón.` — **no retry**, and the row leaves the
+ * list when the modal closes"*, and the paragraph beneath: *"the stale row is
+ * removed on close rather than left to invite a second click."*
+ *
+ * The modal decides *when* a slug is gone; this file pins what the row does
+ * about it, which is the composition half — `KolModalHost` puts the set on
+ * `GoneKolsContext` and nothing else reads it, so a set that grew and changed
+ * nothing on the page would be exactly the defect this repository keeps
+ * shipping.
+ */
+describe("KolRow when its KOL is gone", () => {
+  it("renders nothing at all, rather than a row that cannot be opened", () => {
+    const html = render(() => {}, new Set(["kol-uno"]));
+
+    expect(html).toBe("<table><tbody></tbody></table>");
+    // Not disabled, not greyed, not `aria-disabled` — DESIGN.md's last Don't is
+    // about the control existing at all.
+    expect(html).not.toContain("row-leaderboard");
+    expect(html).not.toContain("disabled");
+  });
+
+  it("leaves every other row exactly as it was", () => {
+    // The set is a filter, not a mode: a row that is not in it must be
+    // byte-identical to the same row rendered with no set at all.
+    expect(render(() => {}, new Set(["otro-kol"]))).toBe(render(() => {}));
+  });
+
+  it("is a no-op with no provider, so the plain table is unaffected", () => {
+    expect(render()).toContain("row-leaderboard");
   });
 });

@@ -126,6 +126,16 @@ async function expectScrollBack(page: Page): Promise<void> {
 test.beforeEach(async ({ page }) => {
   await page.goto("/leaderboard");
   await expect(page.locator(".row-leaderboard")).toHaveCount(12);
+  /*
+    The canary, and this suite is the reason it exists. Every spec in `e2e/`
+    passed for its whole life against a page whose bundle answered `403`, which
+    was invisible until twelve cases here failed on a dialog that never opened
+    (`0a04d8d`). `viewport.spec.ts` proves it on `/`, where `FeedLive` writes
+    the mark; `/leaderboard` has no feed, so `KolModalHost` writes one too and
+    this is where it is read. Every case below clicks something, and a click on
+    an unhydrated page asserts nothing at all.
+  */
+  await expect(page.locator("[data-hydrated]")).toHaveCount(1);
 });
 
 test.describe("modal-kol opens from a row and shows that KOL's period", () => {
@@ -412,15 +422,21 @@ test.describe("spec §7: no wallet address reaches the open modal", () => {
 });
 
 /**
- * The failed-load state, which `4a2f2df` made normative:
- * `| modal-kol on a failed load | the cards | ` + "`No se pudo cargar este KOL.` with a retry |".
+ * The two failure states, which `4a2f2df` made normative and `46b9c47` split:
  *
- * It is here rather than in the unit suite because it only exists after a fetch
- * has failed, and `renderToStaticMarkup` does not run the effect that fetches.
- * Asserting it against the source text of a component is the shape of check
- * this repository has already been wrong about.
+ * ```
+ * | `modal-kol` on a **transient** failure (network, 5xx) | the cards | `No se pudo cargar este KOL.` with a retry |
+ * | `modal-kol` when the KOL is **gone** (404) | the cards | `Este KOL ya no está en el padrón.` — **no retry**, and the row leaves the list when the modal closes |
+ * ```
+ *
+ * They are here rather than only in the unit suite because they exist after a
+ * fetch has failed, and because the thing worth proving is the *composition*:
+ * the row that is already on the page, the click, the real request over the
+ * wire, the status that comes back, and what the dialog does with it.
+ * `empty-states.test.ts` renders the two states directly and enumerates the
+ * statuses; neither file can do the other's job.
  */
-test.describe("modal-kol on a failed load", () => {
+test.describe("modal-kol on a transient failure", () => {
   test("says the document's sentence and offers a retry that works", async ({ page }) => {
     // The first request fails, the second succeeds — so the retry is proved to
     // recover rather than merely to exist.
@@ -448,5 +464,138 @@ test.describe("modal-kol on a failed load", () => {
     await expect(dialog.locator(".modal-head")).toBeVisible({ timeout: FIRST_LOAD });
     await expect(dialog.getByRole("heading", { name: "Ana Cripto" })).toBeVisible();
     await expect(dialog.locator(".state-empty-lead")).toHaveCount(0);
+  });
+
+  test("keeps the retry for a 5xx, which is a status and not a dead connection", async ({
+    page,
+  }) => {
+    // The other way into this state, and a different code path: the case above
+    // never gets a response at all, so it is classified in the `catch`. A 503
+    // arrives with a status line and goes through `loadFailure`, which is the
+    // branch that must not mistake a struggling route for a KOL that is gone.
+    await page.route("**/api/kol/**", (route) =>
+      route.fulfill({ status: 503, body: "unavailable" }),
+    );
+
+    await rowAt(page, PUBLIC_ROW).locator(".rank-cell").click();
+    const dialog = page.locator("dialog.modal-kol");
+
+    await expect(dialog.locator(".state-empty-lead")).toHaveText("No se pudo cargar este KOL.", {
+      timeout: FIRST_LOAD,
+    });
+    await expect(dialog.getByRole("button", { name: "Reintentar" })).toBeVisible();
+  });
+});
+
+/**
+ * A KOL withdrawn or suspended **between the list's render and the click**,
+ * which is the only way a reader ever meets this state: the row was ranked and
+ * painted while the KOL was on the padrón, and by the time they clicked it it
+ * was not.
+ *
+ * The disappearance is simulated at the network rather than in the database
+ * because the seeded roster is shared by every spec in this file and a
+ * suspension would leak into all of them. What the route *would* answer is
+ * pinned where it belongs: `src/app/api/kol/[slug]/route.test.ts` drives the
+ * real handler against a real suspended, pending and rejected KOL and gets
+ * `404` with the identical `not found` body each time, so the status this test
+ * fabricates is the status the product sends.
+ */
+test.describe("modal-kol when the KOL is gone", () => {
+  /** Everything the API knows about this slug, after the page was rendered. */
+  async function withdraw(page: Page): Promise<void> {
+    await page.route("**/api/kol/**", (route) =>
+      route.fulfill({ status: 404, body: "not found" }),
+    );
+  }
+
+  test("says it is gone, and offers nothing to click", async ({ page }) => {
+    await withdraw(page);
+
+    await rowAt(page, PUBLIC_ROW).locator(".rank-cell").click();
+    const dialog = page.locator("dialog.modal-kol");
+
+    await expect(dialog.locator(".state-empty-lead")).toHaveText(
+      "Este KOL ya no está en el padrón.",
+      { timeout: FIRST_LOAD },
+    );
+
+    // The absence is the requirement, not the sentence: DESIGN.md's "**no
+    // retry**", and its last Don't — "Don't show a control that does not work."
+    // Asserted as absence of the control rather than of its label, and over the
+    // whole card rather than over the failure block, so a retry moved somewhere
+    // else in the dialog would still fail this.
+    await expect(dialog.getByRole("button", { name: "Reintentar" })).toHaveCount(0);
+    await expect(dialog.locator(".retry")).toHaveCount(0);
+    // The close button is the only control left. A dialog with no way out would
+    // be the opposite mistake.
+    await expect(dialog.locator("button")).toHaveCount(1);
+    await expect(dialog.getByRole("button", { name: "Cerrar" })).toBeVisible();
+
+    // And not the other sentence, which is the confusion the split exists to
+    // end.
+    await expect(dialog).not.toContainText("No se pudo cargar este KOL.");
+    await expect(dialog).not.toContainText("Cargando");
+  });
+
+  test("takes the stale row out of the list when it closes", async ({ page }) => {
+    await withdraw(page);
+    const rows = page.locator(".row-leaderboard");
+
+    await rowAt(page, PUBLIC_ROW).locator(".rank-cell").click();
+    const dialog = page.locator("dialog.modal-kol");
+    await expect(dialog.locator(".state-empty-lead")).toHaveText(
+      "Este KOL ya no está en el padrón.",
+      { timeout: FIRST_LOAD },
+    );
+    // Still twelve while the modal is open: the row leaves on *close*, not on
+    // the failure, so the trigger is still in the document under the dialog.
+    await expect(rows).toHaveCount(12);
+
+    await page.keyboard.press("Escape");
+
+    await expect(dialog).not.toHaveAttribute("open", "");
+    await expect(rows).toHaveCount(11);
+    await expect(page.locator(".row-leaderboard .name", { hasText: "Ana Cripto" })).toHaveCount(0);
+    // Every other row survives — this is a filter, not a reload.
+    await expect(page.locator(".row-leaderboard .name", { hasText: "Beto Trader" })).toHaveCount(1);
+
+    // The ranks are **not** renumbered: the ranking was measured with that KOL
+    // in it, and promoting 002 to 001 would restate a measurement rather than
+    // remove a row.
+    await expect(rows.first().locator(".rank-num")).toHaveText("002");
+
+    // And the page gets its scroll back, the same as any other dismissal.
+    await expectScrollBack(page);
+  });
+
+  test("does not invite a second click on a row that has left", async ({ page }) => {
+    // The whole reason DESIGN.md removes it: "the stale row is removed on close
+    // rather than left to invite a second click." A row that merely looked
+    // inert would still be in the tab order.
+    await withdraw(page);
+
+    await rowAt(page, PUBLIC_ROW).locator(".rank-cell").click();
+    const dialog = page.locator("dialog.modal-kol");
+    await expect(dialog.locator(".state-empty-lead")).toHaveText(
+      "Este KOL ya no está en el padrón.",
+      { timeout: FIRST_LOAD },
+    );
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toHaveAttribute("open", "");
+
+    // Not hidden, not disabled, not `tabindex="-1"`: gone from the document.
+    expect(
+      await page.evaluate(() =>
+        [...document.querySelectorAll(".row-leaderboard")].some((row) =>
+          row.textContent?.includes("Ana Cripto"),
+        ),
+      ),
+    ).toBe(false);
+
+    // The rows that remain are still live, so the removal did not cost the page
+    // its modal.
+    await rowAt(page, 1).locator(".rank-cell").click();
+    await expect(dialog).toHaveAttribute("open", "", { timeout: FIRST_LOAD });
   });
 });

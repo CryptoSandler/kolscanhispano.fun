@@ -51,7 +51,12 @@ test.describe("the home page at 1280×900", () => {
     });
 
     await page.goto("/");
-    await expect(page.locator("[data-hydrated]")).toHaveCount(1);
+    // Two marks, one per client component the home page mounts: `FeedLive` and
+    // `KolModalHost`. Counted rather than merely found, so a page that stopped
+    // mounting one of them is a failure here instead of a mystery in
+    // `modal-kol.spec.ts` — the modal host's mark is what that suite checks on
+    // `/leaderboard`, which has no feed on it.
+    await expect(page.locator("[data-hydrated]")).toHaveCount(2);
     expect(blocked, "static chunks the browser could not fetch").toEqual([]);
   });
 

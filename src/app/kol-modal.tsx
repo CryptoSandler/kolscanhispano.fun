@@ -32,3 +32,26 @@ export type OpenKol = (slug: string) => void;
 export const NO_MODAL: OpenKol = () => {};
 
 export const KolModalContext = createContext<OpenKol>(NO_MODAL);
+
+/**
+ * The slugs of KOLs the API answered `404` for while the reader had their modal
+ * open.
+ *
+ * DESIGN.md, on the gone state: *"the row leaves the list when the modal
+ * closes"* — and, in the paragraph beneath the table, *"the stale row is
+ * removed on close rather than left to invite a second click."* A row whose KOL
+ * has been withdrawn or suspended since the page rendered is a control that
+ * cannot work, which the same document's last Don't forbids.
+ *
+ * It is a **context** and not a prop for the same reason `KolModalContext` is:
+ * `LeaderboardTable` is a server component and the rows are rendered on the
+ * server, so the only place a client can reach them is where they already read
+ * one context. {@link KolRow} is the single consumer; nothing else needs to
+ * know.
+ *
+ * The default is a shared frozen empty set rather than a fresh one per render,
+ * so a table with no provider above it never re-renders on identity alone.
+ */
+export const NO_GONE_KOLS: ReadonlySet<string> = new Set();
+
+export const GoneKolsContext = createContext<ReadonlySet<string>>(NO_GONE_KOLS);
