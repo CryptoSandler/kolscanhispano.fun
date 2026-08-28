@@ -257,7 +257,13 @@ export function FeedRow({
       ) : (
         <a
           className="num row-age"
-          href={`https://solscan.io/tx/${trade.signature}`}
+          // encodeURIComponent, like the handle links beside it. A signature is
+          // base58 and every base58 character survives encoding unchanged, so
+          // this is belt and braces on today's data -- the reason it is here is
+          // that it is the only interpolation on this page that did not encode,
+          // and "harmless because of what the value happens to be" is a
+          // property of the pipeline, not of this line.
+          href={`https://solscan.io/tx/${encodeURIComponent(trade.signature)}`}
           target="_blank"
           rel="noreferrer noopener"
         >
