@@ -204,3 +204,45 @@ describe("migrations/004_dirty_sweep.sql", () => {
     expect(day.losses).toBe(1);
   });
 });
+
+
+/**
+ * F7. Until 2026-08-28, `tsx scripts/migrate.mts` with no flag applied DDL to
+ * `DATABASE_URL` -- production -- while `--test` and `--preview` each asserted
+ * something about their target first. The shortest, most typeable invocation in
+ * the repo was the only unguarded one.
+ *
+ * These run the real binary as a subprocess and never reach a connection: the
+ * refusal happens on `process.argv` alone, before any variable is read.
+ */
+describe("migrate.mts: the target is named, never defaulted into", () => {
+  async function migrateWith(args: string[]): Promise<{ code: number; stderr: string }> {
+    try {
+      await run("npx", ["tsx", "scripts/migrate.mts", ...args], { timeout: 20_000 });
+      return { code: 0, stderr: "" };
+    } catch (error) {
+      const e = error as { code?: number; stderr?: string };
+      return { code: e.code ?? 1, stderr: e.stderr ?? "" };
+    }
+  }
+
+  it("refuses to run with no flag at all, and says what to type", async () => {
+    const { code, stderr } = await migrateWith([]);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("Name the database");
+    expect(stderr).toContain("--prod");
+    // And it stopped before it touched anything: the announcement line is the
+    // first thing a run that got as far as resolving a target prints.
+    expect(stderr).not.toContain("Applying migrations to");
+  }, 20_000);
+
+  it.each([
+    ["--test", "--prod"],
+    ["--preview", "--prod"],
+    ["--test", "--preview"],
+  ])("refuses %s together with %s", async (a, b) => {
+    const { code, stderr } = await migrateWith([a, b]);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("pass exactly one");
+  }, 20_000);
+});

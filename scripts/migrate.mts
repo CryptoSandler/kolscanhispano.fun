@@ -8,9 +8,26 @@ loadEnvLocal();
 
 const isTest = process.argv.includes("--test");
 const isPreview = process.argv.includes("--preview");
+const isProd = process.argv.includes("--prod");
 
-if (isTest && isPreview) {
-  throw new Error("--test and --preview name different databases; pass one.");
+// Production is named, never defaulted into.
+//
+// Until 2026-08-28 no flag meant `DATABASE_URL`, which made `npm run db:migrate`
+// -- the shortest of the three commands, and the one a person types from memory
+// -- the only one that applied DDL to production, while `--test` and `--preview`
+// each asserted distinctness first. The easiest thing to type was the only
+// unguarded one.
+//
+// All three flags are now equal: one of them, and exactly one. Passing two is
+// still refused, and passing none no longer silently means production.
+const targets = [isTest, isPreview, isProd].filter(Boolean).length;
+if (targets !== 1) {
+  throw new Error(
+    targets === 0
+      ? "Name the database: --prod, --test or --preview. Production is not the default; " +
+        "`npm run db:migrate -- --prod` is the whole command."
+      : "--prod, --test and --preview name different databases; pass exactly one."
+  );
 }
 
 // Three targets, one per Neon branch. `preview` exists because Vercel's

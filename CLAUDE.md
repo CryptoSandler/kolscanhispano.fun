@@ -90,9 +90,15 @@ have, because `scripts/migrate.mts` knew two targets and preview was neither. It
 now takes `--preview`, guarded by the same distinct-from-production assertion the
 `--test` path uses before it stamps its marker.
 
-    npm run db:migrate           # production
-    npm run db:migrate:test      # tests
-    npm run db:migrate:preview   # preview
+    npm run db:migrate -- --prod   # production
+    npm run db:migrate:test        # tests
+    npm run db:migrate:preview     # preview
+
+**Production is named, never defaulted into.** `npm run db:migrate` with no flag
+used to mean production DDL, which made the shortest command in the repo the only
+unguarded one. It now refuses and asks which database you meant; the `--prod` has
+to come from the keyboard, which is the whole point of it, so `package.json` does
+not carry it.
 
 ## The suite lock goes on a direct connection
 
