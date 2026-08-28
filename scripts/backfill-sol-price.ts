@@ -55,6 +55,7 @@
 import { loadEnvLocal } from "../src/lib/env";
 loadEnvLocal();
 
+import { announceDatabaseTarget } from "../src/lib/db";
 import { withLock } from "../src/lib/lock";
 import { DEFAULT_KLINE_REQUEST_CAP, fillSolPriceMinutes, type SolPriceFill } from "../src/lib/prices";
 
@@ -198,5 +199,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
 // Only when this file is the process entry point, not when a test imports it.
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // Which database, before any work: see announceDatabaseTarget. Inside the
+  // entry-point guard rather than at import, so a test that imports `main()`
+  // stays quiet while a person or a cron running this file is told.
+  announceDatabaseTarget();
   process.exit(await main());
 }

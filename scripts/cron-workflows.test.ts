@@ -1,5 +1,6 @@
 /**
- * Static checks on the two cron workflow files. This project has no
+ * Static checks on the cron plumbing: the two workflow files, and the entry
+ * points they run. This project has no
  * committed YAML-parsing dependency (js-yaml is only ever a transitive one,
  * present today but not something this repo declares -- see package.json),
  * so these checks read the files as text rather than adding one just for a
@@ -360,5 +361,52 @@ describe(".github/workflows/parse-pending.yml: requeue step", () => {
     expect(step).not.toContain("WALLET_ENC_KEY");
     expect(step).not.toContain("WALLET_HMAC_KEY");
     expect(step).not.toContain("HELIUS_API_KEY");
+  });
+});
+
+/**
+ * F6. `loadEnvLocal()` fills a variable that is *missing*, and only a missing
+ * one, so `unset DATABASE_URL` before running a script by hand does not point
+ * it at nothing — it points it at whatever `.env.local` says, which is
+ * production. That has happened on this repo: a one-off requeue run connected
+ * to the production branch and wrote nothing only because of which statement it
+ * happened to be.
+ *
+ * So every cron entry point prints the `ep-…` host it resolved before it does
+ * any work. `migrate.mts` had this line first and it is now the shared helper
+ * all of them use.
+ *
+ * A text check rather than a subprocess: the property is "no entry point is
+ * missing the call", which is about the set of files, and running eight of them
+ * to find out costs eight connections to prove something the source says.
+ */
+describe("every cron entry point announces its database", () => {
+  const ENTRY_POINTS = [
+    "scripts/parse-pending.ts",
+    "scripts/recompute-dirty.ts",
+    "scripts/prune-rate-limit.ts",
+    "scripts/requeue-no-rate.ts",
+    "scripts/backfill-prices.ts",
+    "scripts/backfill-sol-price.ts",
+    "scripts/refresh-token-metadata.ts",
+  ];
+
+  it.each(ENTRY_POINTS)("%s calls announceDatabaseTarget before main()", (path) => {
+    const text = readFileSync(path, "utf8");
+    const guardAt = text.indexOf("if (import.meta.url === `file://${process.argv[1]}`) {");
+    expect(guardAt, `${path} has no entry-point guard`).toBeGreaterThan(-1);
+    const shell = text.slice(guardAt);
+    expect(shell).toContain("announceDatabaseTarget()");
+    expect(shell.indexOf("announceDatabaseTarget()")).toBeLessThan(shell.indexOf("await main()"));
+  });
+
+  // The two scripts that resolve their own target rather than db.ts's, and so
+  // cannot use the same helper. Both must still print the host and only the
+  // host, through `hostFragment` -- the point of extracting it was that a regex
+  // copied nine times gets loosened in one of them.
+  it.each(["scripts/migrate.mts", "scripts/seed-preview.ts"])("%s prints its target through hostFragment", (path) => {
+    const text = readFileSync(path, "utf8");
+    expect(text).toContain("hostFragment(");
+    expect(text).not.toMatch(/match\(\/ep-/);
   });
 });

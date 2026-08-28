@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { assertDistinctFromProduction, assertVerifyFull } from "./connection-identity";
+import { assertDistinctFromProduction, assertVerifyFull, hostFragment } from "./connection-identity";
 import { loadEnvLocal } from "./env";
 
 loadEnvLocal();
@@ -37,6 +37,30 @@ export function resolveConnectionString(): string {
   }
 
   return value;
+}
+
+/**
+ * Prints the `ep-…` host of the database this process just resolved, and
+ * nothing else of the connection string.
+ *
+ * Every cron entry point calls it, and the reason is `loadEnvLocal()`: it fills
+ * a variable that is *missing*, and only a missing one, so `unset DATABASE_URL`
+ * does not make a script connect to nothing — it makes it connect to whatever
+ * `.env.local` says, which is production. That is not hypothetical here; it
+ * happened, and the run matched no rows by luck of the statement rather than by
+ * anything about the method (see `env.ts`).
+ *
+ * A printed line is not a guard, and this does not pretend to be one: the guard
+ * is `NODE_ENV=test` or an explicit `DATABASE_URL`. What it changes is that
+ * "the requeue released nothing" and "the requeue released nothing *on
+ * production*" stop looking identical in a terminal.
+ *
+ * It goes through `resolveConnectionString`, so it names the database the
+ * process will actually use rather than re-deriving which variable applies —
+ * the mis-derivation being exactly the failure it is reporting on.
+ */
+export function announceDatabaseTarget(): void {
+  console.log(`Database target: ${hostFragment(resolveConnectionString())}`);
 }
 
 /**
