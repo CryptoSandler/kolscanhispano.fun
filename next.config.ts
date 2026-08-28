@@ -72,13 +72,25 @@ const SECURITY_HEADERS = [
   // Closed to search engines until launch. The `<meta name="robots">` tag in
   // `src/app/layout.tsx` covers HTML pages; this covers every response that has
   // no <head> to carry a tag — the API routes, and any file served from the
-  // build output. The `/(admin|api)` block below already sets this for its own
-  // routes and keeps doing so once this line is removed, which is the point of
-  // leaving it there rather than folding it in here: those two must stay
-  // noindex forever, and this one is temporary.
+  // build output. The `NO_STORE_AND_NOINDEX` entries below already set this for
+  // the admin and the API routes, and the avatar path carries its own copy, so
+  // all of them keep it once this line is removed. That is the point of leaving
+  // it duplicated rather than folding it in here: those must stay noindex
+  // forever, and this one is temporary.
   //
   // **Removing this is a three-file change** — this entry, `metadata.robots` in
   // `src/app/layout.tsx`, and `src/app/robots.ts`. All three, or none.
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+];
+
+/**
+ * What the admin console and the API routes (bar one) must carry: never held
+ * by a shared cache, never indexed. The `X-Robots-Tag` here is the permanent
+ * one; the entry of the same name in `SECURITY_HEADERS` is temporary and says
+ * so.
+ */
+const NO_STORE_AND_NOINDEX = [
+  { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, private" },
   { key: "X-Robots-Tag", value: "noindex, nofollow" },
 ];
 
@@ -100,42 +112,35 @@ const nextConfig: NextConfig = {
       // The admin console and every API route must never be cached by a shared
       // cache. The board is dynamic too, but this is the set where a stale or
       // shared response would be a security problem rather than a stale number.
-      {
-        source: "/(admin|api)/:path*",
-        headers: [
-          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, private" },
-          { key: "X-Robots-Tag", value: "noindex, nofollow" },
-        ],
-      },
-      // The avatar is the one API response that must be cached, and the blanket
-      // `no-store` above is wrong for it: it is a public, non-personal image,
-      // byte-identical for every viewer, keyed by `kol_id` and nothing else.
-      // Left uncacheable, a ten-row leaderboard costs ten requests to us and ten
-      // to unavatar on every paint.
       //
-      // This entry comes *after* the `/(admin|api)` block on purpose. Next's
-      // rule is that when two entries match the same path and set the same
-      // header key, the later one wins -- so this replaces `Cache-Control` and
-      // leaves `X-Robots-Tag: noindex, nofollow` from that block untouched,
-      // which is what keeps avatars out of image search.
+      // `/api/avatar/*` is **excluded** rather than overridden. The two used to
+      // be written as this blanket plus a later entry that replaced
+      // `Cache-Control` for that one path, on the documented rule that the last
+      // matching entry wins — and it does win, which was the problem: it won
+      // over the *route* as well. The audit of `20040c7` measured a real
+      // `next start` serving `public, max-age=60, s-maxage=300` where the route
+      // had set `public, max-age=60, s-maxage=300, stale-while-revalidate=3600`.
+      // The route's `CACHE_IMAGE` (`s-maxage=86400`) was dead code and every
+      // avatar was cached for five minutes instead of a day: roughly 288x the
+      // unavatar fetches it was designed for.
       //
-      // The lifetimes themselves are set per response by the route, because a
-      // real image and the monogram an outage produces are worth remembering
-      // for very different lengths of time. This value is the floor a stale or
-      // misconfigured deploy falls back to.
+      // Only the route can tell a relayed picture from the monogram an outage
+      // produces, and those two are worth remembering for very different
+      // lengths of time, so the route owns the header and this file sets none
+      // for that path. The negative lookahead is Next's documented regex path
+      // matching (`:param(regex)`); it is what keeps `X-Robots-Tag` and the
+      // `no-store` on every *other* API route exactly as they were.
+      { source: "/api/:path((?!avatar/).*)", headers: NO_STORE_AND_NOINDEX },
+
+      // What the avatar path still takes from this file. `Cache-Control` is
+      // deliberately absent — see above.
       {
         source: "/api/avatar/:kolId",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=60, s-maxage=300" },
-        ],
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
       },
-      {
-        source: "/admin",
-        headers: [
-          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, private" },
-          { key: "X-Robots-Tag", value: "noindex, nofollow" },
-        ],
-      },
+
+      { source: "/admin", headers: NO_STORE_AND_NOINDEX },
+      { source: "/admin/:path*", headers: NO_STORE_AND_NOINDEX },
     ];
   },
 };
