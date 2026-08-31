@@ -44,9 +44,89 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { query, withTransaction } from "@/lib/db";
 import { readFeedPage } from "@/lib/feed";
 import { readLeaderboard, LEADERBOARD_TOP } from "@/lib/leaderboard";
+import { ONE, formatDecimal, mulDiv, parseDecimal } from "@/lib/decimal";
 import { recomputeDirty } from "@/lib/pnl";
 import { LEADERBOARD_WINDOWS, windowBounds } from "@/lib/windows";
-import { assertReconciled, placementDays, seedPreview, writeRoster } from "./seed-preview";
+import {
+  FEE_SOL,
+  ROSTER,
+  SOL_USD,
+  assertReconciled,
+  placementDays,
+  seedPreview,
+  writeRoster,
+  type Episode,
+} from "./seed-preview";
+
+/**
+ * What one episode realizes, in SOL and in USD, on `decimal.ts`'s scaled-integer
+ * grid.
+ *
+ * **This is a transcription of the spec, not of the seed.** The seed writes
+ * `trade` rows and nothing else; every figure asserted below is derived from
+ * them by `pnl.ts`'s `replayPosition`, which is the code under test. So this
+ * function states spec §4.4 and §4.8 independently — *"a buy costs
+ * `sol_amount + fee_sol` and a sell nets `sol_amount − fee_sol`"*, with the fee
+ * valued at that trade's own rate — and the assertions compare the two.
+ *
+ * Every roster episode buys and sells the same quantity whole, so each is a
+ * full exit: the position's entire basis is assigned on the sell and the next
+ * buy on that mint reopens it from zero (spec §4.8). That is what makes a
+ * per-episode formula exact for this fixture rather than an approximation of
+ * one, `velacorta`'s three round trips on one mint included.
+ *
+ * **No JS float appears anywhere in it.** `20.5 - 8.150005` is
+ * `12.349994999999999` in doubles, and the literals this file pins would be
+ * wrong in the seventh decimal if any step went through one. `bigint`
+ * throughout, exactly as `pnl.ts` and the seed do.
+ *
+ * `null` for a position that never sold: nothing closed, so it realizes nothing
+ * (`ejemplo_hilofino`, DESIGN.md's `sin cierres` row).
+ */
+function episodeRealized(episode: Episode): { sol: bigint; usd: bigint } | null {
+  if (episode.sell === null) return null;
+
+  const fee = parseDecimal(FEE_SOL);
+  const buy = parseDecimal(episode.buy);
+  const sell = parseDecimal(episode.sell);
+  // An unpriced block has no `sol_price` row, so `usd_amount`, `sol_usd` and
+  // the fee's USD are all absent and the episode contributes nothing to the USD
+  // side — never a zero standing in for a number (migration 005).
+  const rate = episode.unpriced ? 0n : parseDecimal(SOL_USD);
+  const usd = (sol: bigint) => mulDiv(sol, rate, ONE);
+
+  return {
+    sol: sell - fee - (buy + fee),
+    usd: usd(sell) - usd(fee) - (usd(buy) + usd(fee)),
+  };
+}
+
+/**
+ * What one KOL's `Diario` row must read, for a seed that ran at `instant`.
+ *
+ * The two inputs are the roster and the calendar, which is the whole point:
+ * `placementDays` decides which episodes land on the run's own UTC day, and on
+ * a Monday or a 1st that set is **larger** than on an ordinary Wednesday
+ * because a collapsed window folds its episodes into day zero. A literal cannot
+ * express that, and the one that used to be here did not — it failed on Monday
+ * 2026-08-31 at `11.84998` against `12.34999`.
+ */
+function expectedDay(handle: string, instant: number): { sol: string; usd: string } {
+  const kol = ROSTER.find((entry) => entry.handle === handle);
+  if (!kol) throw new Error(`no preview KOL with handle ${handle}`);
+
+  const days = placementDays(instant);
+  let sol = 0n;
+  let usd = 0n;
+  for (const episode of kol.episodes) {
+    if (days[episode.when] !== 0) continue;
+    const realized = episodeRealized(episode);
+    if (realized === null) continue;
+    sol += realized.sol;
+    usd += realized.usd;
+  }
+  return { sol: formatDecimal(sol), usd: formatDecimal(usd) };
+}
 
 /**
  * A syntactically valid connection URL naming a host that does not exist. Used
@@ -212,6 +292,147 @@ describe("the roster is placed by window, so it is correct on every calendar", (
   });
 });
 
+/**
+ * The expectations themselves, run against five calendars rather than against
+ * today.
+ *
+ * **Twice now a figure in this repository was correct on the day it was written
+ * and wrong later**: the roster's placement, which emptied `Diario` at the first
+ * midnight, and then the literal that pinned the roster's arithmetic, which
+ * failed on the first Monday. Both were caught by the calendar rather than by a
+ * reviewer. So the derivation the database test leans on is itself exercised on
+ * a Monday, a Sunday, a 1st, a 1st that is a Monday, and an ordinary midweek
+ * day — none of which is the day this file was written.
+ *
+ * Literals live here, and only here, because on a *fixed* instant a literal is
+ * a real statement about exact decimal arithmetic. `20.5 - 8.150005` is
+ * `12.349994999999999` in doubles and `8.15 * 231.71` is `1888.4365000000003`,
+ * so every figure below would be visibly wrong if any step went through one.
+ */
+describe("the day's expected figures follow the calendar, exactly", () => {
+  /** Noon UTC, so the day comes from the date and not from the hour. */
+  const at = (day: string) => Date.parse(`${day}T12:00:00.000Z`);
+
+  const WEDNESDAY = at("2026-08-26");
+  const SUNDAY = at("2026-08-30");
+  const MONDAY = at("2026-08-31");
+  const FIRST = at("2026-08-01");
+  const FIRST_ON_A_MONDAY = at("2026-06-01");
+
+  it("charges spec §4.4's two fees per episode, in SOL and in USD", () => {
+    // The anchor the old literal was, stated where it cannot go stale: one
+    // episode, no calendar involved. 20.5 - 8.15 - 2 x 0.000005.
+    const [win] = ROSTER.find((kol) => kol.handle === "ejemplo_brujularota")!.episodes;
+    const realized = episodeRealized(win)!;
+    expect(formatDecimal(realized.sol)).toBe("12.34999");
+    // At 231.71 SOL/USD with the fee valued at that same rate:
+    // 20.5 x 231.71 - 8.15 x 231.71 - 2 x (0.000005 x 231.71).
+    expect(formatDecimal(realized.usd)).toBe("2861.6161829");
+
+    // An open position realizes nothing at all -- not a zero, which is a
+    // number the leaderboard would rank (DESIGN.md: `sin cierres`, never `0 %`).
+    const open = ROSTER.find((kol) => kol.handle === "ejemplo_hilofino")!.episodes[0];
+    expect(episodeRealized(open)).toBeNull();
+
+    // An unpriced block contributes its SOL and no USD, rather than a zero
+    // standing in for a rate nobody looked up (migration 005).
+    const unpriced = ROSTER.find((kol) => kol.handle === "ejemplo_ecolejano")!.episodes.find(
+      (episode) => episode.unpriced,
+    )!;
+    const gap = episodeRealized(unpriced)!;
+    expect(formatDecimal(gap.sol)).toBe("-8.45001");
+    expect(formatDecimal(gap.usd)).toBe("0");
+  });
+
+  it("leaves an ordinary midweek day carrying only its own episodes", () => {
+    // Wednesday: the ISO week began on Monday the 24th and the month on the
+    // 1st, so nothing collapses and day zero is day zero.
+    expect(placementDays(WEDNESDAY)).toEqual({ today: 0, week: 2, month: 25 });
+    expect(expectedDay("ejemplo_brujularota", WEDNESDAY)).toEqual({
+      sol: "12.34999",
+      usd: "2861.6161829",
+    });
+    expect(expectedDay("ejemplo_tortugaveloz", WEDNESDAY)).toEqual({
+      sol: "7.39998",
+      usd: "1714.6493658",
+    });
+  });
+
+  it("folds the week into the day on a Monday, which is what broke the literal", () => {
+    // The measured failure, stated as the property that caused it: on a Monday
+    // `Semanal` is one day long, so `brujularota`'s `"week"` episode -- a
+    // 0.50001 SOL loss -- is on `Diario` as well. The day's total is genuinely
+    // 12.34999 - 0.50001, and the seed was right.
+    expect(placementDays(MONDAY).week).toBe(0);
+    expect(expectedDay("ejemplo_brujularota", MONDAY)).toEqual({
+      sol: "11.84998",
+      usd: "2745.7588658",
+    });
+    // The month does not collapse on the 31st, so nothing else joins.
+    expect(placementDays(MONDAY).month).toBe(30);
+    expect(expectedDay("ejemplo_tortugaveloz", MONDAY).sol).toBe("7.39998");
+  });
+
+  it("leaves a Sunday alone, which is the far end of the same week", () => {
+    // The other extreme of the ISO week: six days back, and therefore not day
+    // zero. A test that only checked Monday would pass with `week` pinned to 0.
+    expect(placementDays(SUNDAY).week).toBe(6);
+    expect(expectedDay("ejemplo_brujularota", SUNDAY)).toEqual({
+      sol: "12.34999",
+      usd: "2861.6161829",
+    });
+  });
+
+  it("folds the month into the day on the 1st", () => {
+    // Saturday 1 August: `Mensual` is one day long, so `tortugaveloz`'s
+    // `"month"` episode (+4.69999) lands on `Diario`. Its week does not
+    // collapse, so this is the month edge on its own.
+    expect(placementDays(FIRST)).toEqual({ today: 0, week: 5, month: 0 });
+    expect(expectedDay("ejemplo_tortugaveloz", FIRST)).toEqual({
+      sol: "12.09997",
+      usd: "2803.6840487",
+    });
+    expect(expectedDay("ejemplo_brujularota", FIRST).sol).toBe("12.34999");
+  });
+
+  it("folds both, and moves rank 1, on a 1st that is a Monday", () => {
+    // Monday 1 June 2026: every window is one day long and the whole roster is
+    // on `Diario`. This is the case that would have failed
+    // `entries[0].kol.slug === "preview-brujularota"` -- `tortugaveloz` gains
+    // 4.69999 where `brujularota` loses 0.50001, and the ranking swaps.
+    expect(placementDays(FIRST_ON_A_MONDAY)).toEqual({ today: 0, week: 0, month: 0 });
+
+    const brujula = expectedDay("ejemplo_brujularota", FIRST_ON_A_MONDAY);
+    const tortuga = expectedDay("ejemplo_tortugaveloz", FIRST_ON_A_MONDAY);
+    expect(brujula).toEqual({ sol: "11.84998", usd: "2745.7588658" });
+    expect(tortuga).toEqual({ sol: "12.09997", usd: "2803.6840487" });
+    expect(parseDecimal(tortuga.sol) > parseDecimal(brujula.sol)).toBe(true);
+  });
+
+  it("still leaves the gate its two signs and its `sin cierres` row, on all five", () => {
+    // The property the seed exists for, restated over the derivation so a
+    // future roster edit cannot quietly cost a window its colour. `hilofino`
+    // closes nothing on any calendar; the rest split both ways on every one.
+    for (const instant of [WEDNESDAY, SUNDAY, MONDAY, FIRST, FIRST_ON_A_MONDAY]) {
+      const label = new Date(instant).toISOString().slice(0, 10);
+      const totals = ROSTER.map((kol) => ({
+        handle: kol.handle,
+        sol: parseDecimal(expectedDay(kol.handle, instant).sol),
+        closes: kol.episodes.some(
+          (episode) => episode.sell !== null && placementDays(instant)[episode.when] === 0,
+        ),
+      }));
+
+      expect(totals.some((kol) => kol.closes && kol.sol > 0n), `${label}: a gain`).toBe(true);
+      expect(totals.some((kol) => kol.closes && kol.sol < 0n), `${label}: a loss`).toBe(true);
+      expect(
+        totals.filter((kol) => !kol.closes).map((kol) => kol.handle),
+        `${label}: sin cierres`,
+      ).toEqual(["ejemplo_hilofino"]);
+    }
+  });
+});
+
 describe("the trades are the only thing the seed invents", () => {
   beforeAll(async () => {
     await query(`TRUNCATE ${SEEDED_TABLES}`);
@@ -272,7 +493,12 @@ describe("the replayed roster produces the states the preview exists to show", (
     const [{ day }] = await query<{ day: string }>(
       "SELECT to_char(max(day), 'YYYY-MM-DD') AS day FROM pnl_daily",
     );
-    return readLeaderboard({ window, unit: "sol", now: new Date(`${day}T12:00:00.000Z`) });
+    // Handed back so the expectations can be derived against the *same*
+    // calendar the rows were seeded on, rather than against the suite's own
+    // clock — which is a different day for a run that starts before UTC
+    // midnight and reaches this test after it.
+    const at = Date.parse(`${day}T12:00:00.000Z`);
+    return { ...(await readLeaderboard({ window, unit: "sol", now: new Date(at) })), at };
   }
 
   it("ranks ten rows spanning gains and losses, with `sin cierres` among them", async () => {
@@ -356,22 +582,49 @@ describe("the replayed roster produces the states the preview exists to show", (
     }
   });
 
+  /**
+   * The one test in this file that can catch a float, and it stays that way.
+   *
+   * `20.5 - 8.150005` is `12.349994999999999` in doubles and `8.15 * 231.71` is
+   * `1888.4365000000003`, so a comparison against an exact string is what
+   * distinguishes "the arithmetic is right" from "the number is roughly right".
+   * It is asserted against a **derived** exact string rather than a typed one —
+   * see {@link expectedDay} — because a typed one is only true on the calendar
+   * it was typed on, which is how this test broke on Monday 2026-08-31.
+   * `episodeRealized` computes it in `bigint` from the roster's own strings, so
+   * neither side of the comparison has ever been a `number`.
+   *
+   * **The rank is looked up, not assumed.** `entries[0]` used to be
+   * `preview-brujularota` on every day the test had been run on — but on a
+   * Monday that is also the 1st, `preview-tortugaveloz` takes rank 1 (its
+   * `"month"` episode is worth +4.69999 and joins the day, while
+   * `brujularota`'s `"week"` episode is a 0.50001 loss that joins it too). That
+   * is a correct leaderboard and would have been a false failure here.
+   */
   it("derives the day's figures exactly, on the decimal grid and not through a float", async () => {
-    const { entries } = await leaderboardAtSeededDay();
-    const top = entries[0];
+    const { entries, at } = await leaderboardAtSeededDay();
 
-    // `ejemplo_brujularota`'s single day-zero episode: bought for 8.15 SOL,
-    // sold for 20.5, two 0.000005 fees charged separately (spec §4.4).
-    //   20.499995 - 8.150005 = 12.34999
-    // In doubles `20.5 - 8.150005` is 12.349994999999999, so this figure pins
-    // the arithmetic rather than merely agreeing with it.
-    expect(top.kol.slug).toBe("preview-brujularota");
-    expect(top.realizedSol).toBe("12.34999");
+    const row = entries.find((entry) => entry.kol.slug === "preview-brujularota");
+    expect(row, "preview-brujularota is on the board").toBeDefined();
 
-    // The same episode in USD, at 231.71 SOL/USD with the fee valued at that
-    // same rate: (20.5 - 0.000005) x 231.71 - (8.15 + 0.000005) x 231.71.
-    // `8.15 * 231.71` is 1888.4365000000003 in doubles.
-    expect(top.realizedUsd).toBe("2861.6161829");
+    const expected = expectedDay("ejemplo_brujularota", at);
+    // Spec §4.4's fee charge and §4.8's per-episode close, derived from the
+    // roster and the calendar, against what `pnl.ts` actually replayed. The two
+    // agree to the last of eighteen decimal places or they do not agree at all.
+    expect(row!.realizedSol).toBe(expected.sol);
+    expect(row!.realizedUsd).toBe(expected.usd);
+
+    // The USD side had exactly the same exposure as the SOL side and was never
+    // reached: the run that failed stopped on the line above it. Pinned here as
+    // its own statement rather than as a trailing assertion.
+    expect(expected.usd).not.toBe("0");
+
+    // ...and the ranking agrees with the same derivation, so no slug is pinned
+    // to a rank the calendar can move.
+    const totals = ROSTER.map((kol) => parseDecimal(expectedDay(kol.handle, at).sol));
+    expect(parseDecimal(entries[0].realizedSol)).toBe(
+      totals.reduce((best, total) => (total > best ? total : best)),
+    );
   });
 
   it("fills the feed past the eight rows the list is tall, with an unpriced trade in it", async () => {

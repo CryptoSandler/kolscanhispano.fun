@@ -175,7 +175,7 @@ const SLUG_PREFIX = "preview-";
  * "most KOLs have closed positions in every window" a consequence of the
  * roster rather than a coincidence of the date.
  */
-type Placement = "today" | "week" | "month";
+export type Placement = "today" | "week" | "month";
 
 /**
  * One round trip on one `(kol, mint)`: the buy that opens it and the sell that
@@ -189,7 +189,7 @@ type Placement = "today" | "week" | "month";
  *
  * Strings, always: a float here would defeat the point of `numeric` (spec §3).
  */
-type Episode = {
+export type Episode = {
   /** Which of the three windows both legs have to land in. See {@link Placement}. */
   when: Placement;
   /** Index into {@link TOKENS}. */
@@ -209,7 +209,7 @@ type Episode = {
   unpriced?: boolean;
 };
 
-type PreviewKol = {
+export type PreviewKol = {
   name: string;
   handle: string;
   cabal: string | null;
@@ -250,10 +250,10 @@ const TOKENS: { symbol: string | null; priceUsd: string | null }[] = [
  * it through a float would be visibly wrong rather than accidentally right.
  * (`0.1 * 231.7`, an earlier draft's example, is exactly `23.17` in doubles.)
  */
-const SOL_USD = "231.71";
+export const SOL_USD = "231.71";
 
 /** 5,000 lamports, the ordinary Solana transaction fee. Spec §4.4 charges it separately. */
-const FEE_SOL = "0.000005";
+export const FEE_SOL = "0.000005";
 
 /** Any plausible mainnet slot; only the *ordering* it gives the replay matters (spec §4.10). */
 const BASE_SLOT = 300_000_000;
@@ -267,7 +267,20 @@ const BASE_SLOT = 300_000_000;
  * the feed. It is not the leaderboard order: that is now earned by the
  * arithmetic, not declared here.
  */
-const ROSTER: PreviewKol[] = [
+/**
+ * Exported so `seed-preview.test.ts` can state its expectations as a function
+ * of *this data and the calendar*, rather than as literals that were true on
+ * the day they were typed.
+ *
+ * That is not a convenience. A run on Monday 2026-08-31 failed the exact-figure
+ * assertion at `11.84998` against a hard-coded `12.34999`: the ISO week is one
+ * day long on a Monday, so `brujularota`'s `"week"` episode — a 0.50001 SOL
+ * loss — joined its day-zero win, and the day's total is genuinely different.
+ * The seed was right and the literal was stale, which is the same defect that
+ * emptied the leaderboard, one layer up. A test reading this array follows the
+ * roster wherever it goes.
+ */
+export const ROSTER: readonly PreviewKol[] = [
   {
     name: "Brújula Rota",
     handle: "ejemplo_brujularota",
