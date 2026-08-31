@@ -108,3 +108,54 @@ nadie puede descartar.
 **Costo si estuvo mal:** una cadena sin `sslmode` que apuntara a un host que no soporta
 TLS ahora falla al conectar en vez de fallar al arrancar — más tarde y con un mensaje de
 `pg`, no nuestro. A cambio, ningún deploy depende de un valor que nadie puede leer.
+
+---
+
+## 2026-08-31 — El invariante público pasa de "cero addresses" a "solo quien optó"
+
+**No es una flexibilización: el test era más estricto que la norma.** Con los documentos
+abiertos:
+
+- `SECURITY.md`: *"**Most** listed KOLs choose `hide_wallets` (the default). **For them**,
+  publishing the address would be a deanonymisation they did not consent to."* — el "for
+  them" acota la promesa a quienes ocultan.
+- `SECURITY.md`, tabla de capas: *"**Serializer-level omission** for **hidden** KOLs (§7)"*.
+- `docs/spec-v1.md:481`: *"`hide_wallets` defaults to `true`. A hidden KOL's wallets are
+  indexed identically; **only publication**…"*, y `:495`: *"*Wallets ocultas* means we do
+  not publish the address."*
+
+`serialize.ts` omitía la address **siempre**, y el test afirmaba cero addresses en toda
+superficie. Eso fue correcto hasta hoy sólo porque `hide_wallets` es `true` por defecto y
+ningún KOL había optado nunca por lo contrario. La norma nunca prometió cero: prometió
+cero **para quien oculta**.
+
+**Decisión del dueño, aplicada:** el toggle apagado es un opt-in explícito de ese KOL a
+publicar su address. El invariante público se reescribe para afirmar **las dos** mitades:
+
+1. ninguna address de un KOL que no optó aparece en ninguna superficie ni payload;
+2. una address publicada corresponde a un KOL cuyo opt-in está **persistido** — no basta
+   con que el render lo crea.
+
+La segunda mitad es la que importa: sin ella, un bug que publique todo pasaría el test
+mientras exista un solo KOL que optó.
+
+**Costo si estuvo mal:** una address publicada no se puede despublicar — queda en cachés,
+en capturas y en la memoria de quien la vio. Por eso el default se queda en ocultar, el
+opt-in es una acción explícita del propio KOL sobre su propia sesión, y el admin no puede
+activarlo por él.
+
+---
+
+## 2026-08-31 — Un KOL sin verificar no aparece en el leaderboard
+
+Recomendación aplicada. El handle no está verificado hasta el tweet con código (spec §6),
+así que el KOL entra como **pendiente** y no aparece en ninguna superficie pública hasta
+la aprobación en admin.
+
+La alternativa —mostrarlo con un badge "sin verificar"— regala lo único que el registro
+protege: cualquiera puede escribir el `@` de otro y aparecer junto a su nombre en un
+ranking de trading. Un badge no arregla eso; sólo reparte la culpa.
+
+**Costo si estuvo mal:** fricción en el alta. Alguien que conecta, firma y no ve nada
+puede pensar que falló. Se compensa con lo que dice el modal al cerrar, no aflojando el
+gate. **Queda como pregunta abierta del dueño** si prefiere el badge.
