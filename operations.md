@@ -78,6 +78,27 @@ Two things that follow from the third line: `src/proxy.ts` **does** run and **do
 Postgres on Vercel — the open question at merge time, now closed by behaviour rather than
 by logs — and the two pages **share one bucket**, so 120/min is across both, not each.
 
+### The Vercel firewall sits in front, not instead
+
+Applied 2026-08-31 via the Vercel API (`PATCH /v1/security/firewall/config`, action
+`rules.insert` — note **PATCH**; `PUT` is rejected with a misleading
+*should NOT have additional property `action`*). Verified in the active config:
+
+    firewallEnabled: True
+    rule: public-read-ip-rate-limit | active=True | rate_limit 900/60s keys=['ip'] then 10m
+       match: path pre /api/     path eq /     path eq /leaderboard
+
+**900 per minute per IP, deliberately above every app bucket.** The highest single bucket
+is `avatar` at 600, and one leaderboard view costs roughly fourteen requests, so 900 is
+about sixty page loads a minute from one address. It is a flood ceiling, not a reader
+ceiling: the app limiters are what shape normal traffic, and this is what stops something
+that ignores them.
+
+The two layers are kept because they fail differently. The firewall runs at the edge and
+costs nothing when it denies, but it is platform configuration that no test can see and
+that a migration off Vercel would silently drop. The Postgres limiter is slower and costs
+a write, but it is in the suite, it is in the repository, and it survives the platform.
+
 The limiter is a Postgres write per request. `scripts/prune-rate-limit.ts` deletes rows
 older than seven days and runs every 15 minutes from `.github/workflows/recompute-dirty.yml`,
 after the recompute step so a prune failure cannot block it.
