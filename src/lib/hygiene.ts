@@ -44,12 +44,41 @@ export const HYGIENE_SKIP = ["src/lib/hygiene.ts", "package-lock.json"];
  * wallet's `address_hmac` is 64 lowercase hex characters, and this scan is one
  * of the things standing between that and a committed file.
  */
+/**
+ * Public contract addresses that documentation is allowed to name.
+ *
+ * The same category as `ALLOWED_BASE58`'s mints and programs: a contract is a
+ * published, permanent identifier that every explorer lists, not a person's
+ * wallet. `docs/multichain.md` names these because a parser has to decode
+ * their events, and a document that says "the V4 PoolManager" without saying
+ * which one is not documentation.
+ *
+ * Stripped before the scan rather than compared against it, because an EVM
+ * address is hex: base58 excludes `0`, so a 40-hex address is chopped into
+ * runs at every zero and what the scanner actually sees is a fragment. The
+ * fragment is not a stable thing to allowlist -- the full address is.
+ *
+ * Deliberately a short, hand-written list. Widening this to "any 0x-prefixed
+ * hex" would exempt every EVM wallet address in the repository, which is the
+ * opposite of the point.
+ */
+const ALLOWED_CONTRACTS = [
+  "0x8366a39cc670b4001a1121b8f6a443a643e40951", // Uniswap V4 PoolManager, Robinhood Chain 4663
+  "0x8876789976dEcBfCbBbe364623C63652db8C0904", // UniversalRouter (Robinhood fork), chain 4663
+];
+
+const ALLOWED_CONTRACT_RE = new RegExp(
+  ALLOWED_CONTRACTS.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  "gi",
+);
+
 const ACTION_PIN = /(uses:\s*[\w.-]+\/[\w.-]+)@[0-9a-f]{40}\b/g;
 
 /** Distinct maximal base58 runs of 32+ characters that are not allowlisted. */
 export function findDisallowedBase58(text: string): string[] {
   const found = new Set<string>();
-  for (const [match] of text.matchAll(CANDIDATE)) {
+  // Public contracts leave first, so their hex cannot be read as a base58 run.
+  for (const [match] of text.replace(ALLOWED_CONTRACT_RE, "<contract>").matchAll(CANDIDATE)) {
     if (ALLOWED_BASE58.has(match)) continue;
     found.add(match);
   }
