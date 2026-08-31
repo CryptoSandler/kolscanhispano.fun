@@ -140,7 +140,7 @@ async function detail(slug: string, search = ""): Promise<PublicKolDetail> {
 
 beforeEach(async () => {
   await query(
-    "TRUNCATE kol, kol_wallet, cabal, token, trade, position, pnl_daily, pnl_position_daily CASCADE",
+    "TRUNCATE kol, kol_wallet, cabal, token, trade, position, pnl_daily, pnl_position_daily, rate_limit CASCADE",
   );
   // Only `Date` is faked; faking timers wholesale would replace the
   // `setTimeout` the Postgres driver runs on and hang the suite.

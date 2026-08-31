@@ -24,7 +24,8 @@ import * as avatar from "@/lib/avatar";
 const NAME = "Brújula Rota";
 
 beforeEach(async () => {
-  await query("TRUNCATE kol, kol_wallet, cabal CASCADE");
+  // See the note in the other route tests: rate_limit is shared state.
+  await query("TRUNCATE kol, kol_wallet, cabal, rate_limit CASCADE");
 });
 
 afterEach(() => {

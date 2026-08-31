@@ -117,8 +117,12 @@ function cursorOf(trade: PublicTrade): string {
 let mint: string;
 
 beforeEach(async () => {
+  // `rate_limit` too: every one of these routes goes through `rateLimited()`
+  // now, the client IP is a constant in tests, so hits accumulate across
+  // cases and files until a later, unrelated case gets a 429 and fails for
+  // a reason nothing in it mentions.
   await query("TRUNCATE kol, kol_wallet, cabal, token, trade, position, pnl_daily, " +
-    "pnl_position_daily CASCADE");
+    "pnl_position_daily, rate_limit CASCADE");
   mint = inventAddress();
   vi.mocked(feed.readFeedPage).mockClear();
   vi.mocked(feed.readFeedValidator).mockClear();
