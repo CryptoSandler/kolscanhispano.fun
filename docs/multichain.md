@@ -143,3 +143,89 @@ merges or drops rows once real data exists. Nothing about them requires knowing 
 provider or which DEX, so they are safe to build before the research questions close.
 
 The parser and the ingestor do depend on those answers, which is what tanda 2 is for.
+
+---
+
+## 4. Robinhood Chain (4663)
+
+Verified live 2026-08-31 unless marked inferred.
+
+| Fact | Value |
+|---|---|
+| Chain id | **4663** (`eth_chainId` → `0x1237`), testnet **46630** |
+| Stack | Arbitrum Orbit / Nitro, settles to Ethereum, ETH gas, single-operator sequencer |
+| RPC | `https://rpc.mainnet.chain.robinhood.com` (responded live) |
+| Explorer | `robinhoodchain.blockscout.com` — canonical, the only one the official docs name |
+| Block time | **0.101 s/block**, measured over 100k / 1M / 5M-block spans |
+| Status | Mainnet live since 2026-07-01, TVL $725M |
+
+### Two premises in the brief were wrong, and both change the design
+
+**4.1 — The nftraffle lesson is the opposite of how it reached me.** I passed on "measure
+block time against Blockscout, not third parties". The repository says something else, and
+says it in capitals: block time is measured **against the RPC**, and Blockscout is ruled out
+as a source of truth — *"Verification reads the RPC, with Blockscout as a fallback for logs
+only… never as the source of truth for a verdict. Why: **an explorer is a re-indexer**"*
+(`nftraffle/docs/superpowers/specs/2026-08-31-multichain-analysis.md:180`). Half the
+recollection survives — not third parties — and the half that did not is the half that would
+have pointed our ingestion at an explorer.
+
+Reinforced by measurement: Blockscout's API sits behind a Cloudflare interstitial for
+non-browser clients, so **RPC is the ingestion path regardless of preference**.
+
+What nftraffle actually measured, and why it mattered there: third parties quote ~250 ms for
+Nitro chains; the real figure is 0.101 s, about 2.5× faster. Its note on the discarded first
+attempt is worth keeping — *"four seconds of span against one-second timestamp resolution
+measures the resolution, not the chain"*. And the direction of danger is inverted from
+Solana's: Solana can only lag, whereas a Robinhood chain running **faster** than estimated
+is the failure that bites. Also carried over: a real node **prunes** old blocks, so a `null`
+at a low height means "too old", not "look higher" — bracket back from the head.
+
+**4.2 — Testnet cannot verify the parser, only the plumbing.** Tanda 2 as briefed is
+"ingestion and parse verified with real testnet swaps". Chain 46630 is live and reachable,
+but it has **near-zero DEX volume** — there are no real swaps to parse. It verifies
+connection, auth, budget accounting and storage; it cannot verify a decoder.
+
+The honest shape: **plumbing on testnet, parsing against mainnet history replayed
+read-only.** That costs nothing and risks nothing — reading logs is not writing — and it is
+the only way to meet real swaps before the surface opens. There is also no official faucet;
+third-party ones exist and are listed, untested (nftraffle hit this same gap and never
+closed it).
+
+### Which DEXes, measured rather than guessed
+
+Far from "too early to tell". 24h DEX volume **$1.40B**, 7d $6.40B, 30d $16.5B
+(`api.llama.fi/overview/dexs/robinhood-chain`, read 2026-08-31):
+
+    Uniswap V4  $560.4M     Up v3        $51.9M     SushiSwap V3  $3.6M
+    Uniswap V3  $543.6M     Arcus Spot   $19.8M     Ekubo         $3.2M
+    Uniswap V2   $87.4M                             0x            $1.7M
+
+**Uniswap is ~85% of 24h volume.** Decode V4 and V3 first, V2 third, and stop. Curve and
+PancakeSwap are deployed and effectively dead — hundreds of dollars a day.
+
+Event decoding is stock: the V4 PoolManager `0x8366a39cc670b4001a1121b8f6a443a643e40951`
+(listed on Uniswap's own deployments page for chain 4663) emits the canonical v4 `Swap`
+topic0, 1,520 of them in a 200-block sample.
+
+### The trap, and the design rule it forces
+
+The chain's UniversalRouter `0x8876789976dEcBfCbBbe364623C63652db8C0904` is a
+**Robinhood-modified fork** — its v4 swap struct carries an extra `minHopPriceX36`, so stock
+Uniswap SDK calldata reverts, and two look-alike routers exist on the chain. That affects
+**calldata, not events**.
+
+So the rule: **attribute swaps at the pool level from `Swap` logs, never by router
+allowlist.** In the sample that router was only ~14% of v4 swap senders and the largest
+sender was unidentified — a router allowlist would have silently dropped 86% of the volume,
+which is the same failure shape as §1.1: a drop that leaves no evidence.
+
+That inference is mine, not measured; the router fork and the address are documented, the
+14% is from one 200-block sample.
+
+### What this does to ingestion volume
+
+0.101 s/block is roughly **ten blocks a second, 850k blocks a day**. Any design that walks
+blocks is not viable on a throttled GitHub cron. Ingestion has to be either pushed to us, or
+pulled as `eth_getLogs` **filtered by address over a block range** — never block-by-block.
+That constraint lands on the provider question in §5.
