@@ -272,6 +272,28 @@ promise published early cannot be withdrawn quietly; a mechanism built for one
 future has to be rebuilt for the other. The door stays open until its owner
 chooses to close it.
 
+## Nothing asks a wallet for money without a server-side pre-flight
+
+House rule, all projects. The full version, with the three Phantom warnings and the
+rehearsal procedure, is in `docs/wallet-warnings.md`.
+
+1. One signer — the user — an **explicit** chain, and `signAndSendTransaction`.
+2. **Pre-flight on the server before the transaction reaches the client**: the payer's
+   balance covers amount + estimated fee, and `simulateTransaction` with
+   `sigVerify: false` against our own RPC. If either fails, **Phantom does not open**, and
+   the UI says why in one sentence. A test per branch.
+3. A rehearsal with a real wallet before every change to the money path.
+
+**In this repository rules 1 and 2 are dormant on purpose.** Spec §6 makes `/registro` the
+only page that touches a wallet, and it asks for a signature over a *message*, never a
+transfer — so `signAndSendTransaction` is the very API spec §659-660 forbids being
+reachable. `src/lib/no-money-path.test.ts` fails if any transaction-constructing or
+-sending API becomes importable from application code, which is what keeps those rules
+dormant rather than quietly half-implemented.
+
+What rule 1 does apply to here is the SIWS message: one signer, and `solana:mainnet`
+stated in the signed payload rather than taken from whatever network the wallet is on.
+
 ## Verify an environment fact before writing it into a brief
 
 A claim about this environment — a key being present or absent, a service being reachable, a
