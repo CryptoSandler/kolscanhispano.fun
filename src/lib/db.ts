@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { assertDistinctFromProduction, assertVerifyFull, hostFragment } from "./connection-identity";
 import { loadEnvLocal } from "./env";
 
@@ -109,19 +109,38 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10_000,
 });
 
-// Issued per connection because neither the startup parameter nor the role
-// default survives Neon's pooler (see above). Through a transaction pooler this
-// setting can outlive the connection that set it on a shared backend — which is
-// harmless only because every connection this pool opens sets the same value.
-// A one-off `SET` from a psql session is a different matter: it leaks to the
-// next client of that backend, which happened during this investigation and was
-// cleared with `DISCARD ALL`.
-pool.on("connect", (client) => {
-  client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`).catch(() => {
-    // Never the error object: a driver message can carry the connection string.
-    console.warn("pool: could not set statement_timeout on a new connection");
-  });
-});
+/**
+ * Clients this process has already told about `statement_timeout`.
+ *
+ * **Not `pool.on("connect")`, and that cost a production incident.** `pg` does
+ * not await an `on("connect")` listener, so a `client.query()` started there is
+ * still in flight when the pool hands the client to a caller. The caller's own
+ * query then arrives on a client that is already executing, which `pg` warns
+ * about (*"Calling client.query() when the client is already executing a
+ * query"*) and which killed a `parse-pending` run against production on
+ * 2026-08-31 with *"Client has encountered a connection error and is not
+ * queryable"* after 189 rows.
+ *
+ * Doing it on acquisition instead is awaited, so the ordering is guaranteed.
+ * `max: 1` means this is one extra round trip per *connection*, not per query.
+ *
+ * A `WeakSet` because pooled clients are long-lived objects that the pool
+ * reuses and eventually discards; nothing here should keep one alive.
+ */
+const timeoutSet = new WeakSet<object>();
+
+async function withTimeoutSet<T>(run: (c: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    if (!timeoutSet.has(client)) {
+      await client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`);
+      timeoutSet.add(client);
+    }
+    return await run(client);
+  } finally {
+    client.release();
+  }
+}
 
 // Neon scales to zero and can drop idle connections; without a handler that
 // surfaces as an uncaught exception instead of a recoverable, logged event.
@@ -137,8 +156,10 @@ pool.on("error", () => {
 });
 
 export async function query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
-  const result = await pool.query(sql, params);
-  return result.rows as T[];
+  return withTimeoutSet(async (client) => {
+    const result = await client.query(sql, params);
+    return result.rows as T[];
+  });
 }
 
 /**

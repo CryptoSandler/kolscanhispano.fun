@@ -39,8 +39,18 @@ session**, which is what the application uses:
     # ALTER ROLE neondb_owner SET statement_timeout = '30s'
     direct endpoint   ->  30s            pooled, 24 fresh connections  ->  0 every time
 
-What works through the pooler is an explicit `SET` on the session, so `src/lib/db.ts`
-issues one on every new connection:
+`ALTER DATABASE neondb SET statement_timeout = '30s'` fails the same way: applied, and
+`0` on 12 fresh pooled connections.
+
+What works through the pooler is an explicit `SET` on the session, issued by
+`src/lib/db.ts` when it acquires a client — **on acquisition, not in
+`pool.on("connect")`**. `pg` does not await a `connect` listener, so a query started
+there is still in flight when the client is handed out; that shipped briefly on
+2026-08-31 and killed a `parse-pending` run against production after 189 rows with
+*"Client has encountered a connection error and is not queryable"*, preceded by pg's
+*"client.query() when the client is already executing a query"* warning. On acquisition
+it is awaited, and `max: 1` makes it one extra round trip per connection rather than per
+query.
 
     pool session statement_timeout: 30s
     SELECT pg_sleep(35)  ->  refused at 30.0s, pool immediately usable again
