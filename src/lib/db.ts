@@ -70,33 +70,57 @@ export function announceDatabaseTarget(): void {
  * timeouts below are not optional: with one client, one call that never
  * returns is the whole process, the webhook included.
  *
- * **`query_timeout`, not `statement_timeout`, and that is measured rather than
- * preferred.** `pg` does send `statement_timeout` as a startup parameter, and
- * Neon drops it: probed 2026-08-28 against TEST_DATABASE_URL with
- * `statement_timeout: 1000`, `current_setting('statement_timeout')` came back
- * `0` and `SELECT pg_sleep(3)` ran to completion — on the pooled endpoint *and*
- * on the direct one. Passing it through the connection string instead is worse
- * than useless: the pooler answers `unsupported startup parameter in options:
- * statement_timeout` and refuses to connect at all. `query_timeout` is a
- * client-side timer in `pg` and needs nothing from the server, so it is the one
- * that actually fires here (probed: 1 s timeout aborted a 3 s sleep, and the
- * pool was immediately usable again).
+ * **Both timeouts, because they defend different things.**
  *
- * What that buys and what it does not: the *caller* is freed after 30 s, and
- * the server keeps executing the statement it was sent. So this bounds how long
- * a request waits, not how long Neon works. Bounding the server needs a
- * `statement_timeout` set on the Neon role or database itself, which is console
- * configuration and not in this repository.
+ * `query_timeout` is a client-side timer in `pg`: it frees the *caller* after
+ * 30 s and needs nothing from the server. It does not stop Neon executing the
+ * statement it was already sent.
+ *
+ * `statement_timeout` is the server-side one, and it is the one that stops the
+ * work. Getting it applied took three attempts, all measured against Neon on
+ * 2026-08-31, because two of the obvious routes do not reach a pooled session:
+ *
+ * - as a `pg` pool option (a startup parameter): silently dropped —
+ *   `SHOW statement_timeout` came back `0` and `pg_sleep(3)` ran to completion;
+ * - in the connection string's `options=`: the pooler refuses to connect at
+ *   all, answering `unsupported startup parameter in options`;
+ * - as `ALTER ROLE neondb_owner SET statement_timeout`: applied, and visible
+ *   on the **direct** endpoint (`SHOW` → `30s`) — but **not through the
+ *   pooler**, where 24 fresh connections all read `0`.
+ *
+ * What does work through the pooler is an explicit `SET` on the session, which
+ * is why it is issued here on every new connection: probed, `SET … '2s'` then
+ * `pg_sleep(3)` is refused with *canceling statement due to statement timeout*.
+ *
+ * The `ALTER ROLE` default stays in place too — it is what covers the direct
+ * endpoint, which is what migrations and the suite's advisory lock use. See
+ * `operations.md`.
  *
  * 30 s because the slowest thing measured on any of these surfaces is the
  * KOL-detail read at 760 ms over four queries; 10 s to connect because Neon
  * scales to zero and a cold start is seconds, not milliseconds.
  */
+export const STATEMENT_TIMEOUT_MS = 30_000;
+
 export const pool = new Pool({
   connectionString: resolveConnectionString(),
   max: 1,
   query_timeout: 30_000,
   connectionTimeoutMillis: 10_000,
+});
+
+// Issued per connection because neither the startup parameter nor the role
+// default survives Neon's pooler (see above). Through a transaction pooler this
+// setting can outlive the connection that set it on a shared backend — which is
+// harmless only because every connection this pool opens sets the same value.
+// A one-off `SET` from a psql session is a different matter: it leaks to the
+// next client of that backend, which happened during this investigation and was
+// cleared with `DISCARD ALL`.
+pool.on("connect", (client) => {
+  client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`).catch(() => {
+    // Never the error object: a driver message can carry the connection string.
+    console.warn("pool: could not set statement_timeout on a new connection");
+  });
 });
 
 // Neon scales to zero and can drop idle connections; without a handler that
