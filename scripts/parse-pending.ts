@@ -71,18 +71,25 @@ const DEFAULT_BATCH_SIZE = 25;
 /**
  * Wall-clock budget for one run, in milliseconds.
  *
- * Four minutes, against the workflow's `timeout-minutes: 10` and the four
- * other steps sharing that job (checkout and `npm ci`, the `sol_price` fill,
- * the requeue in front; the pricing and metadata steps behind). At the CI
- * rate that is roughly 130 rows a run -- more than the 100 the single-shot
- * version managed -- while leaving over half the job's budget to the steps
- * this one must not starve. A job that hits `timeout-minutes` does not just
- * lose the parse; it loses the pricing and metadata steps behind it.
+ * Six minutes, against the workflow's `timeout-minutes: 12` and the four other
+ * steps sharing that job (checkout and `npm ci`, the `sol_price` fill, the
+ * requeue in front; the pricing and metadata steps behind). A job that hits
+ * `timeout-minutes` does not just lose the parse; it loses the pricing and
+ * metadata steps behind it, so the budget stays well under it.
+ *
+ * **Six, not four, and the arithmetic is the reason.** Ingest measured
+ * 2026-08-31 is about 19 rows an hour, ~465 a day. GitHub throttles this
+ * schedule hard -- gaps of 46 to 337 minutes against a five-minute cron
+ * (written `*` `/5`, which cannot be spelled inside a block comment), measured
+ * the same day -- so a bad day is four runs. Four minutes is ~130 rows a run, and
+ * 4 x 130 = 520 against 465 arriving: break-even, which is the same thing as
+ * falling behind the first time a run fails. Six minutes is ~200 a run, 800 on
+ * a four-run day, and a margin that survives a lost run.
  *
  * It is checked *between* batches, never during one: `parsePending` is not
  * cancellable, so the real ceiling is this plus one batch.
  */
-const DEFAULT_BUDGET_MS = 240_000;
+const DEFAULT_BUDGET_MS = 360_000;
 
 /** Env override for {@link DEFAULT_BATCH_SIZE}. Same spelling and same failure behaviour as `REQUEUE_LIMIT`. */
 const BATCH_SIZE_ENV = "PARSE_BATCH_SIZE";

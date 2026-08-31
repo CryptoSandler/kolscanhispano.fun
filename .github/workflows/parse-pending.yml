@@ -103,7 +103,7 @@ concurrency:
 jobs:
   parse-pending:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       # Pinned to a commit, with the tag it was in the comment beside it. A
