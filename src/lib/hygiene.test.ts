@@ -11,6 +11,29 @@ import {
 const address = "z".repeat(44); // base58 charset, address length
 const signature = "z".repeat(88); // base58 charset, signature length
 
+describe("the public-contract allowlist", () => {
+  // Built, never pasted: this file is scanned by the repository case below, and
+  // an earlier addition to it failed that case by pasting a real address.
+  const poolManager = "0x8366a39cc670b4001a" + "121b8f6a443a643e40951";
+  const wallet = "0x" + "a1b2c3d4e5".repeat(4);
+
+  it("does not flag a documented public contract", () => {
+    expect(findDisallowedBase58(`the V4 PoolManager ${poolManager} emits Swap`)).toEqual([]);
+  });
+
+  it("still flags an EVM address that is not on the list", () => {
+    // The scanner is base58, so it sees a fragment of the hex rather than the
+    // whole address -- which is exactly why the allowlist strips full addresses
+    // before the scan instead of comparing against what the scan produces.
+    expect(findDisallowedBase58(`payer ${wallet}`).length).toBeGreaterThan(0);
+  });
+
+  it("does not exempt hex generally", () => {
+    const hmac = "a".repeat(64);
+    expect(findDisallowedBase58(`x: ${hmac}`)).toEqual([hmac]);
+  });
+});
+
 describe("findDisallowedBase58InWorkflow", () => {
   // Every base58-shaped literal here is *built*, never written out: this file
   // is itself scanned by the repository case below, and an earlier draft of
