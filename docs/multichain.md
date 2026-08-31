@@ -229,3 +229,135 @@ That inference is mine, not measured; the router fork and the address are docume
 blocks is not viable on a throttled GitHub cron. Ingestion has to be either pushed to us, or
 pulled as `eth_getLogs` **filtered by address over a block range** — never block-by-block.
 That constraint lands on the provider question in §5.
+
+---
+
+## 5. Ingestion provider
+
+**Alchemy for all three chains** — one Address Activity webhook per chain, plus a
+cursor-based `eth_getLogs` reconciliation sweep. Robinhood Chain's first-party RPC is the
+free backstop. All verified 2026-08-31.
+
+### Why push, and why a sweep anyway
+
+Alchemy pushes, so the cron's 46–337 minute gaps are irrelevant to the live path — the same
+shape as Helius today, into the same encrypted-store-then-parse pipeline.
+
+The sweep exists because a gap only loses events if you poll `latest − N`. With a persisted
+cursor block it is a wider range, not lost data. Measured: Robinhood's own RPC answered
+`eth_getLogs` **genesis to latest** with an address filter in **0.30 s**, no block-range cap,
+erroring only past 10,000 *matched* logs. So lateness costs nothing and the sweep is
+gap-proof by construction — which is what makes §4's 850k-blocks-a-day survivable.
+
+**The lazier alternative, named as the house posture requires: poll only, no webhooks.** It
+fits the free tier easily. It costs push latency and the "live feed" story, which is most of
+what this product is.
+
+### The arithmetic
+
+Free tier: **30M compute units/month**, 5 apps, 5 webhooks, all mainnets.
+
+    webhook delivery   0.04 CU/byte  ~1 KB event  =  ~40 CU     30M / 40 = 750k events/month
+    eth_getLogs                                   =   75 CU
+    200 wallets x 3 chains x 20 trades/day        =  ~120k events/month  ~= 12M CU
+    5-min sweep, 3 chains, 25,920 calls           =  1.94M CU/month
+
+Both paths together stay under 15M of 30M. One webhook covers up to 100,000 addresses, so
+**payload bytes are the binding constraint, not wallet count** — count CU, not requests, and
+port the per-chain env budget and hard client-side cap over unchanged.
+
+The real risk is Address Activity firing on inbound spam airdrops, which are heavy on BNB. If
+CU climbs, move BNB to a Custom Webhook GraphQL filter over DEX-pool logs.
+
+### What each provider would learn, against our existing split
+
+Alchemy learns the full watchlist of addresses, our receiver URL and our IP — **no handles,
+no names**. That is the slot Helius already occupies, so it does not cross the third-party
+split SECURITY.md describes. Deliveries carry an HMAC `X-Alchemy-Signature`; verify it at the
+boundary exactly as the Helius secret is verified today. No key, no signing, no wallet
+anywhere in this.
+
+Robinhood's own RPC learns which addresses we query. They run the chain and see the activity
+regardless — but our *query pattern* reveals the watchlist, which is a different disclosure
+and worth stating.
+
+### Rejected, with the reason
+
+- **QuickNode — disqualified, and worth saying loudly.** Its "free" tier is a **30-day
+  trial**, after which the account is deactivated and *"all services will be disabled,
+  including RPC endpoints, Streams, Alerts, Webhooks"*. That is a paid-plan requirement on
+  day 31, against a hard constraint.
+- **Blockscout** — pull-only, and bot-gated: default `curl` UA gets **403**, a browser UA
+  gets 200, and `/api/eth-rpc` returned **429** under light load. Pretending to be a browser
+  to reach an ingest dependency is not a foundation. It stays valuable as an independent
+  human-readable cross-check and as the self-host escape hatch if terms change — running it
+  needs an archive node, so not now.
+- **Ankr** — no push, and no evidence of 4663 support.
+
+**No free public RPC fallback exists on BNB**: the public dataseeds refuse `eth_getLogs`
+outright, `-32005 limit exceeded` even on a 12-block range. Robinhood's works and showed no
+rate limiting over 25 rapid calls, though it is state-pruned — logs are fully indexed, which
+is all we need.
+
+### Reorgs
+
+Alchemy's payload carries a **`removed` boolean** for a transaction no longer on the
+canonical chain, which is most of the problem solved for free. We build: an idempotent upsert
+keyed on `(chainId, txHash, logIndex)` — which is §1.1's key by another name — honour
+`removed`, and carry a `finalized` flag from the `finalized` block tag.
+
+Measured finality lag:
+
+    BSC        finalized trails latest by      5 blocks  (~3.3 s)
+    Robinhood  finalized trails by        10,418 blocks  (~17.6 min)   L1 settlement, not reorg risk
+    Ethereum   genuine 1-2 block reorg window, ~13 min to finality
+
+Robinhood's lag is Arbitrum Nitro settling to L1, not reordering risk: the sequencer gives
+soft finality with no reordering absent operator misbehaviour. So **display on soft finality
+and mark hard-final later** — otherwise the feed is 18 minutes stale on the chain we activate
+first.
+
+**One thing left unverified**: what Alchemy actually does at the 30M CU ceiling on free. The
+docs cover throughput 429s, not monthly exhaustion. Our own client-side cap fires first by
+design, so this is a documentation gap rather than an operational one — but it does not get
+written into a brief as "it throttles" until someone has seen it.
+
+---
+
+## 6. Batch plan
+
+**Tanda 1 — the seam.** Schema and signing, no provider dependency, so it can start now:
+`chain` into `raw_tx`'s key, `trade`'s unique index, `token`'s PK, both PnL keys, and
+`kol_wallet`; address canonicalisation before `blindIndex`; `DECIMALS` 18 → 27; the no-doxx
+guard widened to `0x`-anchored hex; `native_price(chain, minute, usd)`; and the onboarding
+modal with SIWS **and** SIWE, chain badge per wallet, per-wallet `is_public`.
+
+Three of those keys are **irreversible if they land late** — each silently merges or drops
+rows once real data exists, and the evidence of the loss is the row that was not written.
+
+**Tanda 2 — one EVM adapter, three configs.** Alchemy webhook + sweep, pool-level `Swap`
+decoding for Uniswap V4/V3/V2, native price per chain on the existing per-minute rule.
+Plumbing verified on testnet; **parsing verified against mainnet history replayed
+read-only**, because testnet has no swaps to parse (§4.2). Each chain stays behind an env
+flag and its public surface stays closed until its ingestion carries real data.
+
+**Activation order: Robinhood → BNB → Ethereum**, as briefed. Robinhood first is well
+supported by the research: it is the one with a first-party free RPC that answers
+`eth_getLogs` without a range cap, and its DEX volume is concentrated enough that two
+decoders cover 85%.
+
+---
+
+## 7. What I need from you, in unblocking order
+
+1. **Alchemy account + one API key**, with apps for Robinhood Chain (4663), BNB (56) and
+   Ethereum (1). Blocks all of tanda 2. Free tier suffices per §5.
+2. **The webhook signing secret** Alchemy issues per webhook, one per chain — the analogue of
+   `HELIUS_WEBHOOK_SECRET`, and the thing that makes the ingest endpoint refusable.
+3. **A decision on the ranking** (§2): consolidated USD with a chain filter is applied; say
+   if you want a tab per chain instead. It changes `pnl_daily`'s key, so it is cheap now and
+   expensive after rows exist.
+4. **Testnet funds** for chain 46630 if you want plumbing verified on testnet rather than
+   against mainnet reads. There is no official faucet; third-party ones are listed in §4.2
+   and untested. Not a blocker — the read-only mainnet replay covers more.
+5. Nothing else. No private key, no signing key, no wallet is needed by any part of this.
