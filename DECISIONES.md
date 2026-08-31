@@ -129,12 +129,31 @@ superficie. Eso fue correcto hasta hoy sólo porque `hide_wallets` es `true` por
 ningún KOL había optado nunca por lo contrario. La norma nunca prometió cero: prometió
 cero **para quien oculta**.
 
-**Decisión del dueño, aplicada:** el toggle apagado es un opt-in explícito de ese KOL a
-publicar su address. El invariante público se reescribe para afirmar **las dos** mitades:
+**Decisión del dueño, aplicada — y es por wallet, no por KOL.** El switch vive en cada
+fila de "Wallets conectadas" (`Pública / Privada`, default **Privada**) y se persiste en
+`kol_wallet.is_public`, nunca como un flag global del KOL. Un KOL puede publicar una
+wallet y guardarse otra, que es lo que realmente hace alguien que separa su operación.
 
-1. ninguna address de un KOL que no optó aparece en ninguna superficie ni payload;
-2. una address publicada corresponde a un KOL cuyo opt-in está **persistido** — no basta
-   con que el render lo crea.
+Consecuencia sobre `kol.hide_wallets`: deja de gobernar la publicación. Todo lo que se
+publica —la address, y también la **firma** de un trade, que en un explorer revela a su
+firmante— pasa a seguir la wallet de ese trade (`trade.wallet_id`), no un flag del KOL.
+La columna queda sin lectores; se cae en una migración aparte cuando el admin deje de
+escribirla, y hasta entonces está anotada como tal para que no repita la historia de
+`key_version`.
+
+El invariante público se reescribe para afirmar **las dos** mitades:
+
+1. ninguna address de una wallet con `is_public = false` aparece en ningún HTML servido
+   ni payload — verificado hasheando por blind index contra `address_hmac`, no a ojo;
+2. una address publicada corresponde a una wallet cuyo `is_public` está **persistido** —
+   no basta con que el render lo crea;
+3. el detalle del KOL muestra "N wallets privadas" y esa **N coincide con la base**: un
+   conteo que se despega es un bug que ninguna de las dos primeras mitades ve.
+
+El leaderboard **no se parte**: el PnL del ranking suma todas las wallets del KOL,
+públicas y privadas. El desglose por wallet existe sólo en el detalle y sólo para las
+públicas — si el ranking dependiera de cuáles son públicas, el opt-in dejaría de ser una
+decisión sobre privacidad y pasaría a ser una sobre el puesto.
 
 La segunda mitad es la que importa: sin ella, un bug que publique todo pasaría el test
 mientras exista un solo KOL que optó.
