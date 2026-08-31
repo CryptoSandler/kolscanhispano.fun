@@ -76,7 +76,24 @@ reasoning for each number. Verified in production, 2026-08-31, 130 concurrent re
 
 Two things that follow from the third line: `src/proxy.ts` **does** run and **does** reach
 Postgres on Vercel — the open question at merge time, now closed by behaviour rather than
-by logs — and the two pages **share one bucket**, so 120/min is across both, not each.
+by logs — and the two pages **share one bucket**.
+
+### `/` and `/leaderboard` share the `page` bucket, and that is the decision
+
+120 per minute is across **both pages together**, not 120 each. It is visible in the run
+above: `/` spent the bucket, and `/leaderboard` was refused 130 times out of 130 in the
+same minute.
+
+**Decision, 2026-08-31: it stays shared.** A real reader does not come close. Two page
+views a second, sustained for a minute, from one address, is not a person navigating —
+and the pages are the cheap surface anyway: the expensive reads are behind `/api/kol`
+(60/min) and `/api/feed` (240/min), which have buckets of their own and are unaffected by
+anything the pages spend.
+
+What it costs, stated so nobody rediscovers it as a bug: everything behind one corporate
+or carrier NAT counts as one caller, and for those the shared bucket halves the effective
+allowance. If that ever shows up, the fix is a bucket per path rather than a bigger number
+— the limit is not the thing that is wrong, the sharing is.
 
 ### The Vercel firewall sits in front, not instead
 
