@@ -132,6 +132,43 @@ after the recompute step so a prune failure cannot block it.
 
 ---
 
+## GitHub does not run a scheduled workflow on its schedule
+
+Measured 2026-08-31, against cron files that ask for `*/5` and `*/15`, the gaps between
+consecutive scheduled runs were:
+
+    46, 107, 115, 272, 288 and 337 minutes
+
+Not 5 and not 15. GitHub's scheduler is best-effort and deprioritises schedules under load,
+and there is nothing to configure about it.
+
+**Anyone sizing a batch, a budget or a backlog drain against the cron's stated cadence is
+designing against a number that does not happen.** The parse cron is bounded by a
+wall-clock budget per run (`scripts/parse-pending.ts`, four minutes by default), so the
+drain rate is that budget times however many runs actually fire — which on the numbers
+above can be four a day rather than 288. A backlog large enough to matter is drained by
+hand (`PARSE_BUDGET_MS` set high, run the script locally), not by waiting for the cron.
+
+---
+
+## The parse holds its lock for one batch, not for one run
+
+`withLock` takes its advisory lock on a **dedicated** connection (see `src/lib/lock.ts` for
+why it may not borrow the pool), and that connection sits idle for as long as the work
+inside the lock runs. Neon drops an idle connection at around five minutes, so a run long
+enough kills its own lock. Measured 2026-08-31 against production:
+
+    local run 1: 189 rows, then "Client has encountered a connection error and is not queryable"
+    local run 2: 191 rows in 707 s, same failure
+    CI  run 33435133074: 100 rows in 178 s -> success
+
+That is ~1.8 s/row in CI and ~3.7 s/row locally. `scripts/parse-pending.ts` therefore loops
+small locked batches — 25 rows, ~45 s in CI and ~90 s locally — releasing the lock between
+each. There is deliberately **no keepalive** on the lock connection: batching needs no
+timer and no reasoning about a keepalive racing the work.
+
+---
+
 ## The three databases
 
 `production`, `tests` and `preview` are separate Neon branches, and a migration lands in

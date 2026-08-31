@@ -75,6 +75,11 @@ on:
     # time-critical: parsePending derives every trade from whatever raw_tx
     # rows are currently pending, so a late run does exactly what a punctual
     # one would.
+    #
+    # "Late" is much later than it sounds, and the measured gaps are in
+    # operations.md ("GitHub does not run a scheduled workflow on its
+    # schedule"): 46 to 337 minutes against this `*/5`. Do not size a batch,
+    # a budget or a backlog drain against the number written here.
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
@@ -230,6 +235,18 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           WALLET_ENC_KEY: ${{ secrets.WALLET_ENC_KEY }}
           WALLET_HMAC_KEY: ${{ secrets.WALLET_HMAC_KEY }}
+          # The batching knobs. All three are optional; unset means the
+          # script's own defaults (25 rows a batch, a four-minute budget, no
+          # batch cap), which is what this cron wants. They are repository
+          # *variables* rather than edits to this file so a one-off drain --
+          # or a smaller batch after a slow spell on Neon -- needs no commit.
+          # See scripts/parse-pending.ts for why each default is the number it
+          # is; the short version is that a batch has to finish well inside
+          # Neon's ~5-minute idle window, because the advisory lock is held on
+          # a dedicated connection for the length of one batch.
+          PARSE_BATCH_SIZE: ${{ vars.PARSE_BATCH_SIZE }}
+          PARSE_BUDGET_MS: ${{ vars.PARSE_BUDGET_MS }}
+          PARSE_MAX_BATCHES: ${{ vars.PARSE_MAX_BATCHES }}
         run: |
           set -euo pipefail
 
