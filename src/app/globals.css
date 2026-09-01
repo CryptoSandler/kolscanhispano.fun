@@ -290,12 +290,23 @@ a {
    Spec §6 makes `/registro` the only page that ever connects a wallet and it
    does not exist yet; DESIGN.md's last Don't is "**Don't** show a control that
    does not work." So: muted, no hover, no pointer, not focusable. */
+/* A link since `/registro` shipped. It was `cursor: default` and unselectable
+   while it was a label standing in for a page that did not exist. */
 .registro {
-  color: var(--ink-subtle);
+  color: var(--ink-muted);
   font-size: 12px;
   white-space: nowrap;
-  cursor: default;
-  user-select: none;
+  text-decoration: none;
+}
+
+.registro:hover {
+  color: var(--ink);
+}
+
+.registro:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
 }
 
 /* Spec §1.9. Rendered only when the setting exists, so this styles a state the

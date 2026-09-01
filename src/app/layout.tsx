@@ -98,18 +98,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="topbar-right">
               <LeaderboardControls windows={LEADERBOARD_WINDOWS} units={LEADERBOARD_UNITS} />
               {/*
-                The wallet action's slot, as a label rather than a control.
-                Spec §6 makes `/registro` the only page that ever connects a
-                wallet, and that page does not exist yet; DESIGN.md's last
-                Don't is "**Don't** show a control that does not work." So this
-                is muted, unclickable and not focusable — it holds the slot the
-                genre puts here without pretending to be a flow.
+                The wallet action's slot. Spec §6 makes `/registro` the only
+                page that ever connects a wallet, and it now exists — so this is
+                a real link, which is what the note that stood here promised
+                would happen when it shipped.
 
-                **When `/registro` ships this becomes a real link.**
+                It held a muted, unfocusable label until then, because
+                DESIGN.md's last Don't is "**Don't** show a control that does
+                not work." A label saying `próximamente` over a page that works
+                is the same Don't read backwards.
               */}
-              <span className="registro" aria-disabled="true">
-                Registro — próximamente
-              </span>
+              <a className="registro" href="/registro">
+                Entrar al padrón
+              </a>
               {/*
                 Spec §1.9: the affiliate slot is configurable from the admin and
                 empty at launch, where it renders nothing. The admin that

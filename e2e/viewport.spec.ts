@@ -137,16 +137,22 @@ test.describe("the home page at 1280×900", () => {
    * wallet slot is a label, not a control. *"Don't show a control that does not
    * work"*: `/registro` does not exist yet, so nothing here may be clickable.
    */
-  test("holds the wallet slot without pretending it is a flow", async ({ page }) => {
+  test("the wallet slot is a real link now that the page behind it exists", async ({ page }) => {
     await page.goto("/");
 
     await expect(page.getByText("Ranking de traders hispanos")).toBeVisible();
     const registro = page.locator(".registro");
-    await expect(registro).toHaveText("Registro — próximamente");
-    await expect(registro).toHaveAttribute("aria-disabled", "true");
-    // Not a link, not a button, and not reachable by keyboard.
-    expect(await registro.evaluate((node) => node.tagName)).toBe("SPAN");
-    expect(await registro.evaluate((node) => node.hasAttribute("tabindex"))).toBe(false);
+    // It held a muted, unfocusable label while `/registro` did not exist --
+    // DESIGN.md's "don't show a control that does not work". The page exists,
+    // so the same rule now requires the opposite, and this case moved with it.
+    await expect(registro).toHaveAttribute("href", "/registro");
+    expect(await registro.evaluate((node) => node.tagName)).toBe("A");
+
+    // And it goes somewhere that answers.
+    await registro.click();
+    await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible({
+      timeout: 30_000,
+    });
   });
 });
 
