@@ -392,7 +392,35 @@ a {
   border-radius: var(--radius-pill);
 }
 
+/* **This class has to render identically on an `<a>` and on a `<button>`, and
+   until now it only worked on the `<a>`.** The header's segments are links
+   because every combination there is a real URL; the modal's period is not a
+   route, so its segments are buttons. Nothing below stated a background, a
+   border or a face, so the links — which have no UA chrome — came out right and
+   the buttons inherited Chrome's: `background: ButtonFace` (which under
+   `color-scheme: dark` is `rgb(107,107,107)`), `border: 2px outset`, and
+   `font-family: Arial`, because a button does not inherit the document face.
+   On a near-black panel that read as light mode leaking in, and it violated
+   Typography's "**Inter** for all text" besides.
+
+   So the four UA declarations are answered here rather than in either caller.
+   `font: inherit` first, so the three explicit font properties after it still
+   win; it also normalises `line-height`, which a button otherwise takes as
+   `normal` and a link inherits from `body` — a 3px height difference between
+   the header's pills and the modal's.
+
+   DESIGN.md's `segmented` fixes only the selected segment: *"selected segment
+   `surface-3` with cyan text."* It says nothing about the unselected one, so
+   `transparent` is not quoted from it — it is what the header has always
+   rendered, and it lets the segment be the `surface-2` track it sits on rather
+   than a third surface the palette does not name. Recorded in the report as a
+   gap in the document. */
 .segment {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.06em;
