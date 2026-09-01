@@ -1,4 +1,13 @@
 import { expect, test } from "@playwright/test";
+import { activeChains } from "../src/lib/chain";
+
+/**
+ * The preview route mocks two wallets per chain with live ingestion, so the
+ * count is derived rather than written down: this spec and the page read the
+ * same flags, and a chain switched on moves both together. Hardcoding `4` is
+ * what broke this file the first time.
+ */
+const ROWS = activeChains().length * 2;
 
 /**
  * The screenshots the owner's gate reviews: `¡Casi listo!` and the KOL detail,
@@ -31,11 +40,12 @@ for (const { name, viewport } of SIZES) {
     test("¡Casi listo!, con varias wallets", async ({ page }) => {
       await page.goto("/preview/onboarding");
 
-      // The preview route invents four wallets across three chains, so the
-      // shot shows what a multi-row list actually looks like -- a single row
-      // hides every layout question this screen has.
+      // Two rows per active chain, so the shot shows what a multi-row list
+      // actually looks like -- a single row hides every layout question this
+      // screen has.
       const rows = page.locator(".row-wallet");
-      await expect(rows).toHaveCount(4, { timeout: 30_000 });
+      await expect(rows).toHaveCount(ROWS, { timeout: 30_000 });
+      expect(ROWS).toBeGreaterThan(1);
       await expect(page.getByText("¡Casi listo!")).toBeVisible();
 
       await page.screenshot({ path: `${OUT}/onboarding-${name}.png`, fullPage: true });
@@ -43,7 +53,7 @@ for (const { name, viewport } of SIZES) {
 
     test("¡Casi listo!, con una wallet pública y el handle escrito", async ({ page }) => {
       await page.goto("/preview/onboarding");
-      await expect(page.locator(".row-wallet")).toHaveCount(4, { timeout: 30_000 });
+      await expect(page.locator(".row-wallet")).toHaveCount(ROWS, { timeout: 30_000 });
 
       // The second state worth photographing: one row switched to `Pública`,
       // and the handle field showing what it will store. A shot of the default
