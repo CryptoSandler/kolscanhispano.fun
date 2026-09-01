@@ -253,3 +253,57 @@ constantes que en realidad son escala-independientes; también se corrigió.
 
 **Costo si estuvo mal:** ninguno en datos. El riesgo era exactamente el que apareció —
 aserciones que codificaban la escala— y quedó pinchado por tests que ahora la derivan.
+
+---
+
+## 2026-09-01 — La prueba de wallet se construye; el registro no
+
+`docs/wallet-proof.md` cierra la ronda adversarial completa. Lo que quedó:
+
+**Se construye el verificador, no los endpoints.** El formato del mensaje firmado es una
+puerta de una sola dirección —una vez que alguien firmó, cambiarlo invalida esa firma— y el
+modal depende de él. Los endpoints y las tablas `claim` sí son prematuros: no existe
+sesión, no existe nonce endpoint, y el verificador va a estar sin usar hasta que se
+construyan. Eso está dicho en el documento en vez de disimulado.
+
+**`@noble/curves` para las dos cadenas, no solo para secp256k1.** En EVM no hay opción:
+Node no tiene recuperación de clave pública y la aritmética de curva no se escribe a mano.
+En Solana `node:crypto` alcanzaba, pero solo envolviendo una clave cruda de 32 bytes en un
+prefijo SPKI DER de 12 bytes — una constante mágica entre una firma y su aceptación. Como
+la dependencia se toma igual, una biblioteca y un modelo mental le ganan a una biblioteca
+más un encabezado DER armado a mano. `npm audit`: 0 vulnerabilidades.
+
+La afirmación contraria que el repo ya tenía escrita —`no-money-path.test.ts` decía que
+SIWS *"is an ed25519 check `node:crypto` already does"*— **se corrigió en el lugar**, no se
+dejó pudrir. Es exactamente el error que fue `key_version`: una afirmación escrita que
+nadie volvió a leer.
+
+**El nonce lo emite el servidor y se quema en la misma sentencia que lo reclama.** La
+implementación de referencia (`nftraffle`) documenta su propio techo: nonce elegido por el
+cliente, así que un par mensaje-firma capturado se puede reusar dentro de la ventana. Acá
+no. Un `SELECT` seguido de un `UPDATE` está a dos requests concurrentes de aceptar un nonce
+dos veces; es un solo `UPDATE ... WHERE used_at IS NULL RETURNING`, y hay un test que corre
+ocho reclamos concurrentes y exige que pase exactamente uno.
+
+**Pregunta abierta, del dueño:** si un KOL puede registrar una wallet EVM **antes** de que
+esa cadena esté activada. No bloquea nada —`chain.ts` ya nombra las cadenas y SIWE se puede
+agregar o retener sin tocar SIWS— pero cambia qué ofrece el modal.
+
+**Costo si estuvo mal:** el verificador queda sin usar hasta que existan los endpoints. Es
+código muerto acotado y probado, no una dependencia que haya que desandar.
+
+---
+
+## 2026-09-01 — `/preview/onboarding` es una vista previa, y se borra
+
+La pantalla `¡Casi listo!` necesita una página para poder mirarse, y el registro no existe.
+Un `/registro` que renderizara wallets inventadas sería una página que dice ser un flujo que
+no es, así que la ruta dice lo que es.
+
+**Cerrada en producción por `VERCEL_ENV`, no por `NODE_ENV`:** Vercel construye un
+deployment de Preview con `NODE_ENV=production`, así que un guard por `NODE_ENV` habría
+cerrado justamente el deployment para el que la página existe. Contesta `notFound()`, no un
+redirect, para que el path sea indistinguible de uno que nunca se ruteó.
+
+**Se borra en la tanda que construya `/registro` de verdad.** Anotado acá y no recordado,
+para que no se convierta en una segunda entrada permanente.
