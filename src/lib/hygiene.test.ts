@@ -6,6 +6,7 @@ import {
   HYGIENE_SKIP,
   findDisallowedBase58,
   findDisallowedBase58InWorkflow,
+  findDisallowedEvm,
 } from "./hygiene";
 
 const address = "z".repeat(44); // base58 charset, address length
@@ -28,9 +29,63 @@ describe("the public-contract allowlist", () => {
     expect(findDisallowedBase58(`payer ${wallet}`).length).toBeGreaterThan(0);
   });
 
+  it("does not flag a documented public contract as EVM either", () => {
+    expect(findDisallowedEvm(`the V4 PoolManager ${poolManager} emits Swap`)).toEqual([]);
+  });
+
   it("does not exempt hex generally", () => {
     const hmac = "a".repeat(64);
     expect(findDisallowedBase58(`x: ${hmac}`)).toEqual([hmac]);
+  });
+});
+
+/**
+ * `docs/multichain.md` §1: the base58 scan is *nearly blind* to EVM, because
+ * base58 excludes `0` and a 40-hex address is chopped at every zero. Every
+ * literal below is built from halves, never pasted, for the same reason the
+ * block above builds its own: this file is scanned by the repository case.
+ */
+describe("findDisallowedEvm", () => {
+  // Zeros scattered through it, which is the ordinary case and the blind one.
+  const walletWithZeros = "0x" + "0a1b0c2d0e".repeat(4);
+  const txHash = "0x" + "0f1e0d2c0b".repeat(6) + "0a1b";
+
+  it("flags an EVM address the base58 scan cannot see", () => {
+    expect(findDisallowedEvm(`payer ${walletWithZeros}`)).toEqual([walletWithZeros]);
+    // The blindness itself, pinned: without this scan the address is invisible.
+    expect(findDisallowedBase58(`payer ${walletWithZeros}`)).toEqual([]);
+  });
+
+  it("flags a 64-hex transaction hash", () => {
+    expect(findDisallowedEvm(`tx ${txHash}`)).toEqual([txHash]);
+  });
+
+  it("does not flag a git commit SHA, which carries no 0x", () => {
+    // 40 lowercase hex and not an address. This is why the pattern is anchored
+    // on the prefix rather than on bare hex.
+    expect(findDisallowedEvm(`pinned at ${"49933ea5288caeca8642" + "d1e84afbd3f7d6820020"}`)).toEqual(
+      [],
+    );
+  });
+
+  it("does not flag a blind index, which is 64 bare hex", () => {
+    expect(findDisallowedEvm(`hmac ${"a".repeat(64)}`)).toEqual([]);
+  });
+
+  it("ignores hex of the wrong length", () => {
+    expect(findDisallowedEvm("0x" + "0a".repeat(19) + "0")).toEqual([]); // 39
+    expect(findDisallowedEvm("0x" + "0a".repeat(25))).toEqual([]); // 50
+  });
+
+  it("reports each distinct offender once", () => {
+    expect(findDisallowedEvm(`${walletWithZeros} and ${walletWithZeros}`)).toEqual([
+      walletWithZeros,
+    ]);
+  });
+
+  it("is case-insensitive, so EIP-55 casing does not evade it", () => {
+    const checksummed = "0x" + "0A1b0C2d0E".repeat(4);
+    expect(findDisallowedEvm(`payer ${checksummed}`)).toEqual([checksummed]);
   });
 });
 
@@ -108,7 +163,7 @@ describe("findDisallowedBase58", () => {
 });
 
 describe("the repository itself", () => {
-  it("contains no Solana address or signature outside the allowlist", () => {
+  it("contains no Solana or EVM identifier outside the allowlist", () => {
     const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" })
       .split("\n")
       .filter((f) => f && !HYGIENE_SKIP.includes(f));
@@ -128,6 +183,9 @@ describe("the repository itself", () => {
         ? findDisallowedBase58InWorkflow
         : findDisallowedBase58;
       for (const hit of scan(text)) offenders.push(`${file}: ${hit}`);
+      // The EVM scan runs on every file with no workflow variant: an action
+      // pin carries no `0x`, so it cannot collide with this pattern.
+      for (const hit of findDisallowedEvm(text)) offenders.push(`${file}: ${hit}`);
     }
 
     expect(offenders).toEqual([]);

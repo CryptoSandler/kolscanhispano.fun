@@ -89,3 +89,35 @@ export function findDisallowedBase58(text: string): string[] {
 export function findDisallowedBase58InWorkflow(text: string): string[] {
   return findDisallowedBase58(text.replace(ACTION_PIN, "$1@PINNED"));
 }
+
+/**
+ * EVM addresses and transaction hashes, which the base58 scan above is nearly
+ * blind to.
+ *
+ * **Why a second pattern and not a wider first one.** Base58 excludes `0`, so
+ * a 40-hex address is chopped into runs at every zero and the scanner sees
+ * fragments; only an address whose hex happens to contain no `0` early enough
+ * survives as a run long enough to clear the 32-character floor. Measured in
+ * `docs/multichain.md` §1: about **7.6%** of them. A guard that catches one in
+ * thirteen is worse than none, because it reads as coverage.
+ *
+ * **Why anchored on `0x` rather than on bare hex.** `[0-9a-f]{40}` is also a
+ * git commit SHA, and `ACTION_PIN` above already records what happens when
+ * this scan meets one. Requiring the `0x` prefix means that carve-out needs no
+ * second exception — and, more importantly, it does not exempt a 64-character
+ * lowercase-hex `address_hmac`, which is precisely the value the strict scan
+ * exists to keep out of a committed file.
+ *
+ * ponytail: exact lengths, 40 and 64, with the prefix as the delimiter. An
+ * address abutting further hex with no `0x` and no boundary is not matched;
+ * if that ever appears in practice, the upgrade is a maximal-hex-run scan with
+ * a length window, which costs the SHA carve-out a second exception.
+ */
+const EVM_IDENTIFIER = /(?<![0-9a-fA-Fx])0x(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})(?![0-9a-fA-F])/g;
+
+/** Distinct EVM addresses and transaction hashes that are not public contracts. */
+export function findDisallowedEvm(text: string): string[] {
+  // The same strip as above and for the same reason: a documented public
+  // contract is a published identifier, not a person's wallet.
+  return [...new Set(text.replace(ALLOWED_CONTRACT_RE, "<contract>").match(EVM_IDENTIFIER) ?? [])];
+}
