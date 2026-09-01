@@ -84,7 +84,11 @@ kol            id, slug, display_name, x_handle unique citext, avatar_override_u
                status enum(pending, approved, rejected, suspended),
                approved_at, suspended_at, created_at
 
-kol_wallet     id, kol_id, address_enc bytea, address_hmac bytea unique, key_version,
+kol_wallet     id, kol_id, chain, address_enc bytea, address_hmac bytea, key_version,
+               -- SUPERSEDED by migration 011 (DECISIONES.md, 2026-09-01): `chain` is part
+               -- of the key, and `address_hmac` is `unique (chain, address_hmac)` rather
+               -- than unique on its own -- the same EVM address is a distinct wallet on
+               -- two chains. `key_version` was dropped by migration 010.
                proof_signature_enc, proof_message_enc, proof_verified_at,
                status enum(active, withdrawn), added_at, withdrawn_at,
                backfill_status enum(queued, running, done, capped, failed), backfill_cursor
@@ -124,8 +128,12 @@ pnl_position_daily
                -- position first. A per-mint replay writing kol-level daily rows directly
                -- would overwrite every other mint's contribution to that day.
 
-pnl_daily      kol_id, day date, realized_sol, realized_usd, wins, losses
-               pk (kol_id, day)
+pnl_daily      kol_id, chain, day date, realized_sol, realized_usd, wins, losses
+               pk (kol_id, chain, day)
+               -- SUPERSEDED by migration 011 (DECISIONES.md, 2026-09-01): `chain` entered
+               -- the key before any non-Solana row existed, because a chain cannot be
+               -- derived back out of an aggregate. The ranking stays consolidated in USD:
+               -- storage is per chain, and `leaderboard.ts` sums across them when reading.
                -- Derived: the sum of pnl_position_daily over the KOL's mints for that day,
                -- excluding positions whose basis is unknown (§4.5).
 

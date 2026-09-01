@@ -178,3 +178,78 @@ ranking de trading. Un badge no arregla eso; sólo reparte la culpa.
 **Costo si estuvo mal:** fricción en el alta. Alguien que conecta, firma y no ve nada
 puede pensar que falló. Se compensa con lo que dice el modal al cerrar, no aflojando el
 gate. **Queda como pregunta abierta del dueño** si prefiere el badge.
+
+---
+
+## 2026-09-01 — `chain` entra en las claves antes de que exista una fila que no sea de Solana
+
+Migración `011_chain.sql`. `chain TEXT` en `kol_wallet`, `trade`, `raw_tx`, `token`,
+`position`, `pnl_position_daily` y `pnl_daily`, y dentro de la clave en las siete.
+
+**Por qué ahora y no cuando haya datos EVM.** `docs/multichain.md` §1 mide tres fallas
+que son irrecuperables si la clave llega tarde, y las tres comparten forma: **borran o
+funden una fila en silencio, y la evidencia de la pérdida es la fila que no se escribió.**
+No hay excepción, no hay log, y el webhook contesta `200`.
+
+- `raw_tx.signature_hmac` era PK sola, y **la misma transacción firmada difundida en dos
+  cadenas EVM tiene hash idéntico**. La copia de la segunda cadena caía en
+  `ON CONFLICT DO NOTHING`. Igual `trade_unique_idx`.
+- `token.mint` era PK sola, y CREATE2 pone **la misma address en varias cadenas EVM** de
+  forma rutinaria: dos tokens distintos habrían compartido fila de precio y se habrían
+  fundido en una posición.
+- `pnl_daily` tenía PK `(kol_id, day)`, y **una cadena no se puede derivar hacia atrás
+  desde un agregado**.
+
+**El ranking no cambia: sigue consolidado en USD.** La agregación de `pnl_daily` ahora
+agrupa **por cadena**, así que el almacenamiento es por cadena y la consolidación ocurre
+al *leer* (`leaderboard.ts` suma sin predicado de cadena). Esa es la única forma de que el
+filtro por cadena de §2 siga siendo barato después.
+
+**`address_hmac` deja de ser único global y pasa a `UNIQUE (chain, address_hmac)`.** La
+misma address EVM es una wallet legítima y **distinta** en BNB y en Ethereum. Con el
+índice viejo, un KOL habría podido registrar su address en la cadena que alcanzara primero
+y el resto le habría dado error de clave duplicada sin nada que pudiera hacer al respecto.
+
+**La FK compuesta `trade (wallet_id, chain) → kol_wallet (id, chain)`.** `trade.wallet_id`
+ya referenciaba una wallet real, pero nada ataba la cadena del trade a la de la wallet: un
+bug del parser, o un ingestor EVM apuntado a la config equivocada, podía archivar un trade
+de BNB contra una wallet de Solana y todo aguas abajo lo aceptaba. Es una condición que la
+base verifica en cada insert y que la aplicación no puede verificar de forma confiable.
+
+**El `DEFAULT 'solana'` se mantiene, y es una decisión con techo.** Soltarlo sería más
+estricto, pero obligaba a reescribir los ~30 `INSERT` del repositorio en el mismo cambio
+que reclava siete tablas, así que un error en cualquiera de las dos mitades se descubriría
+contra la otra. Hoy no puede causar nada: **no existe ingestor EVM**, así que no hay insert
+al que el default pueda contestar mal. Se suelta en la migración que traiga el primer
+ingestor EVM, que toca todos los sitios de insert igual.
+
+**Costo si estuvo mal:** ninguna de estas claves se puede corregir una vez que hay filas
+reales de dos cadenas, porque lo que habría que recuperar son las filas que nunca se
+escribieron. Ese asimetría es la razón de hacerlo antes y no después.
+
+---
+
+## 2026-09-01 — `DECIMALS` pasa de 18 a 27
+
+La regla escrita en `decimal.ts` era *"nueve dígitos de sobra por debajo de la unidad más
+chica que existe en cadena"*. Con `DECIMALS = 18` esa regla **era falsa para EVM**: un wei
+es 10^-18, o sea exactamente una unidad en el último lugar, el margen era cero, y el
+redondeo que el módulo documentaba como *"inalcanzable en la práctica"* pasaba a ser
+alcanzable por el monto más chico que una cadena EVM puede expresar.
+
+`27 - 18 = 9` restituye el margen enunciado, exacto.
+
+**No mueve nada en la base:** las 20 columnas `NUMERIC` están declaradas sin precisión ni
+escala (verificado contra `information_schema.columns`), y `formatDecimal` corta ceros a la
+derecha, así que la cadena escrita para un valor dado es byte por byte la que era a 18.
+
+**Lo que sí movió fueron los tests que fijaban la escala a mano.** Nueve en `prices.test.ts`
+(literales `10n ** 18n`, incluido el piso de liquidez `FLOOR`, donde 999 pasaba a superar
+el piso y el estado daba `priced` en vez de `unpriced`), dos en `pnl.test.ts` y dos en
+`parse-swap.test.ts`. Todos se reescribieron **en función de `DECIMALS`** en vez de con
+cadenas literales, porque un literal de 18 dígitos hace que un cambio de escala parezca un
+cambio de aritmética. Un comentario en `format.ts` afirmaba "escalado por 10^18" sobre dos
+constantes que en realidad son escala-independientes; también se corrigió.
+
+**Costo si estuvo mal:** ninguno en datos. El riesgo era exactamente el que apareció —
+aserciones que codificaban la escala— y quedó pinchado por tests que ahora la derivan.
