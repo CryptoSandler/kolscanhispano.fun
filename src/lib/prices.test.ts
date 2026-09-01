@@ -18,7 +18,7 @@ import {
   valueTrade,
   type ParsedPair,
 } from "./prices";
-import { ONE, parseDecimal } from "./decimal";
+import { DECIMALS, ONE, parseDecimal } from "./decimal";
 
 beforeEach(async () => {
   await query("TRUNCATE token, sol_price CASCADE");
@@ -117,7 +117,7 @@ function pair(overrides: Partial<ParsedPair> = {}): ParsedPair {
   };
 }
 
-const FLOOR = 1000n * 10n ** 18n; // matches decimal.ts scaling of "1000"
+const FLOOR = 1000n * ONE; // scaled by decimal.ts, not by a literal exponent
 
 describe("deriveTokenUpdate", () => {
   it("prices a liquid, recently traded pair", () => {
@@ -382,8 +382,8 @@ describe("solUsdAt", () => {
     const later = new Date("2026-01-01T00:05:00.000Z");
     await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '100'), ($2, '120')", [early, later]);
 
-    expect(await solUsdAt(new Date("2026-01-01T00:02:00.000Z"))).toBe(100n * 10n ** 18n);
-    expect(await solUsdAt(new Date("2026-01-01T00:10:00.000Z"))).toBe(120n * 10n ** 18n);
+    expect(await solUsdAt(new Date("2026-01-01T00:02:00.000Z"))).toBe(100n * ONE);
+    expect(await solUsdAt(new Date("2026-01-01T00:10:00.000Z"))).toBe(120n * ONE);
   });
 });
 
@@ -394,8 +394,8 @@ describe("solUsdForMinute", () => {
 
     // Any instant inside the minute resolves to it: the query truncates the
     // argument the same way `refreshSolPrice` truncates what it writes.
-    expect(await solUsdForMinute(minute)).toBe(120n * 10n ** 18n);
-    expect(await solUsdForMinute(new Date("2026-01-01T00:05:59.999Z"))).toBe(120n * 10n ** 18n);
+    expect(await solUsdForMinute(minute)).toBe(120n * ONE);
+    expect(await solUsdForMinute(new Date("2026-01-01T00:05:59.999Z"))).toBe(120n * ONE);
   });
 
   it("returns null for a minute with no row of its own, however recent the last one is", async () => {
@@ -410,9 +410,9 @@ describe("solUsdForMinute", () => {
 
     expect(await solUsdForMinute(new Date("2026-01-01T00:01:00.000Z"))).toBeNull();
     expect(await solUsdForMinute(new Date("2026-01-01T00:05:00.000Z"))).toBeNull();
-    expect(await solUsdAt(new Date("2026-01-01T00:05:00.000Z"))).toBe(100n * 10n ** 18n);
+    expect(await solUsdAt(new Date("2026-01-01T00:05:00.000Z"))).toBe(100n * ONE);
 
-    expect(await solUsdForMinute(early)).toBe(100n * 10n ** 18n);
+    expect(await solUsdForMinute(early)).toBe(100n * ONE);
   });
 
   it("never reaches forward to a later row either", async () => {
@@ -434,7 +434,7 @@ describe("refreshSolPrice", () => {
 
     expect(wrote).toBe(true);
     const usd = await solUsdAt(now);
-    expect(usd).toBe(15025n * 10n ** 16n); // 150.25 scaled
+    expect(usd).toBe(parseDecimal("150.25"));
   });
 
   it("leaves a minute it already recorded alone, whatever the second call is told", async () => {
@@ -488,7 +488,7 @@ describe("refreshSolPrice", () => {
     const wrote = await refreshSolPrice(fn, new Date("2026-01-01T00:05:00.000Z"));
 
     expect(wrote).toBe(false);
-    expect(await solUsdAt(new Date("2026-01-01T00:05:00.000Z"))).toBe(100n * 10n ** 18n);
+    expect(await solUsdAt(new Date("2026-01-01T00:05:00.000Z"))).toBe(100n * ONE);
     const [{ count }] = await query<{ count: string }>("SELECT count(*) FROM sol_price");
     expect(Number(count)).toBe(1); // no new row written at all
   });
@@ -548,7 +548,7 @@ describe("valueTrade", () => {
     // One third of a SOL at 1 USD: truncated on the grid, not rounded up and
     // not carrying a float's tail.
     const third = ONE / 3n;
-    expect(valueTrade(third, null, ONE).usdAmount).toBe("0.333333333333333333");
+    expect(valueTrade(third, null, ONE).usdAmount).toBe(`0.${"3".repeat(DECIMALS)}`);
   });
 });
 
@@ -617,7 +617,7 @@ describe("fillSolPriceMinutes", () => {
     ]);
     // Every filled minute now answers `solUsdForMinute`, which is the whole
     // point: the `=` lookup, not the `<=` one.
-    expect(await solUsdForMinute(new Date("2026-08-25T12:03:30.000Z"))).toBe(203n * 10n ** 18n);
+    expect(await solUsdForMinute(new Date("2026-08-25T12:03:30.000Z"))).toBe(203n * ONE);
   });
 
   it("is idempotent: a second run over a filled range changes not one value", async () => {
@@ -778,7 +778,7 @@ describe("fillSolPriceMinutes", () => {
       expect(result.filled).toBe(9);
       expect(result.missing).toBe(1);
       expect(await solUsdForMinute(new Date("2026-08-25T12:03:00.000Z"))).toBeNull();
-      expect(await solUsdForMinute(new Date("2026-08-25T12:04:00.000Z"))).toBe(204n * 10n ** 18n);
+      expect(await solUsdForMinute(new Date("2026-08-25T12:04:00.000Z"))).toBe(204n * ONE);
     } finally {
       warn.mockRestore();
     }
@@ -800,7 +800,7 @@ describe("fillSolPriceMinutes", () => {
       expect(result.filled).toBe(9);
       expect(result.missing).toBe(1);
       expect(await solUsdForMinute(new Date("2026-08-25T12:03:00.000Z"))).toBeNull();
-      expect(await solUsdForMinute(new Date("2026-08-25T12:04:00.000Z"))).toBe(204n * 10n ** 18n);
+      expect(await solUsdForMinute(new Date("2026-08-25T12:04:00.000Z"))).toBe(204n * ONE);
     } finally {
       warn.mockRestore();
     }

@@ -1,6 +1,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { query } from "./db";
+import { DECIMALS } from "./decimal";
 import { inventAddress } from "./ids";
 import { recomputeDirty, replayPosition } from "./pnl";
 import { addWallet } from "./wallets";
@@ -220,9 +221,13 @@ describe("replayPosition: cost basis", () => {
     await replayPosition(kolId, mint);
 
     const row = await position();
-    expect(row.realized_sol).toBe("0.666666666666666667");
-    expect(row.cost_sol).toBe("0.666666666666666667");
-    expect(row.avg_cost_sol).toBe("0.333333333333333333");
+    // Written against DECIMALS rather than as a literal: the digits are the
+    // scale's, not this test's, and pinning them by hand made a change to the
+    // scale look like a change to the arithmetic. 2/3 rounds up on the last
+    // digit; 1/3 truncates.
+    expect(row.realized_sol).toBe(`0.${"6".repeat(DECIMALS - 1)}7`);
+    expect(row.cost_sol).toBe(`0.${"6".repeat(DECIMALS - 1)}7`);
+    expect(row.avg_cost_sol).toBe(`0.${"3".repeat(DECIMALS)}`);
     expect(row.qty).toBe("2");
   });
 
@@ -240,10 +245,10 @@ describe("replayPosition: cost basis", () => {
     await replayPosition(kolId, mint);
 
     const row = await position();
-    expect(row.realized_sol).toBe("0.166666666666666667");
+    expect(row.realized_sol).toBe(`0.1${"6".repeat(DECIMALS - 2)}7`);
     // Exactly what the sale did not take: the position's cost stays consistent
     // with the amount removed from it, by construction.
-    expect(row.cost_sol).toBe("0.166666666666666667");
+    expect(row.cost_sol).toBe(`0.1${"6".repeat(DECIMALS - 2)}7`);
     expect(row.qty).toBe("0.5");
   });
 

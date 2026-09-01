@@ -37,6 +37,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ONE } from "../src/lib/decimal";
 import { MalformedPayloadError, evaluateSwap, type EnhancedTx } from "../src/lib/parse-swap";
 
 const ENDPOINT = "https://mainnet.helius-rpc.com/v0/addresses";
@@ -294,7 +295,7 @@ function verdictFor(payload: EnhancedTx, address: string): Verdict {
     // A non-null rate so a stablecoin-quoted swap is not refused for want of
     // one: this measures attribution, not valuation. 200 USD/SOL on the
     // 18-decimal grid prices.ts uses.
-    const evaluation = evaluateSwap(payload, { id: "shadow", kolId: "shadow", address }, 200n * 10n ** 18n);
+    const evaluation = evaluateSwap(payload, { id: "shadow", kolId: "shadow", address }, 200n * ONE);
     return { kind: "outcome", label: evaluation.outcome };
   } catch (error) {
     if (error instanceof MalformedPayloadError) {

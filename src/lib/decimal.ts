@@ -14,16 +14,30 @@
  * `number` appears in this module at all, so no caller can pick one up by
  * accident.
  *
- * **Why 18 decimals.** Every quantity this project stores is a lamport count
- * (9 decimals), an SPL token amount (at most 9 decimals), or a product of one
- * with a USD rate. 18 leaves nine spare digits below the smallest unit that
- * exists on chain, so an intermediate division truncates well under a
- * lamport. It is not enough for an *arbitrary* decimal, which is why
+ * **Why 27 decimals.** The rule is *nine spare digits below the smallest unit
+ * that exists on chain*, and the smallest unit is no longer a lamport. A
+ * lamport is 10^-9 and an SPL token amount carries at most 9 decimals, but
+ * **EVM native is 18** — one wei is 10^-18 — so the scale has to sit nine
+ * digits below that. `18 - 9 = 9` on Solana; `18 - 18 = 0` on EVM, which is
+ * no margin at all: at 18 decimals one wei is exactly one unit in the last
+ * place, and {@link parseDecimal}'s rounding — documented as *"unreachable in
+ * practice"* — becomes reachable by the smallest amount an EVM chain can
+ * express. 27 restores the stated margin exactly (`27 - 18 = 9`), so an
+ * intermediate division still truncates well under the smallest real unit.
+ *
+ * Nothing in the database moves with this constant. All 20 `NUMERIC` columns
+ * are declared with no precision and no scale (verified against
+ * `information_schema.columns` on the tests branch, 2026-09-01: every one has
+ * `numeric_precision` and `numeric_scale` NULL), so Postgres already stores
+ * arbitrary scale; and {@link formatDecimal} strips trailing zeros, so the
+ * string written for a given value is byte-for-byte what it was at 18.
+ *
+ * It is still not enough for an *arbitrary* decimal, which is why
  * {@link parseDecimal} rounds rather than pretending: see its own note.
  */
 
 /** Digits kept after the decimal point. */
-export const DECIMALS = 18;
+export const DECIMALS = 27;
 
 /** 1, in the scaled representation. Multiply to scale up, divide to scale down. */
 export const ONE = 10n ** BigInt(DECIMALS);
@@ -52,10 +66,11 @@ const DECIMAL_PATTERN = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
  *
  * More than {@link DECIMALS} fractional digits is **rounded** (half away from
  * zero), not rejected: refusing would leave the position permanently dirty
- * and re-replayed forever, and no value this system writes has more than 9
- * fractional digits, so the rounding is unreachable in practice and bounded
- * by 5·10^-19 — eleven orders of magnitude below one lamport — if it is ever
- * reached anyway.
+ * and re-replayed forever. The smallest unit any chain this project reads can
+ * express is one wei, 10^-18, so the rounding is nine digits below anything
+ * this system writes and is bounded by 5·10^-28 if it is ever reached anyway.
+ * That claim was false while {@link DECIMALS} was 18 — one wei was exactly one
+ * ulp — and it is the reason the constant is 27.
  */
 export function parseDecimal(text: string): bigint {
   const match = DECIMAL_PATTERN.exec(text.trim());

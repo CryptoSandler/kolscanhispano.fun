@@ -149,7 +149,12 @@ export function formatPercent(text: string): string {
   return `${renderAmount(parseDecimal(text), 3, 0)} %`;
 }
 
-/** Scaled by 10^18, so dividing the scaled value by these divides the real one. */
+/**
+ * Plain magnitudes, deliberately *not* scaled by {@link DECIMALS}: they are
+ * used as `ONE * MILLION` and `value / MILLION`, so they multiply and divide a
+ * scaled value without knowing what the scale is. That is why they survived
+ * `DECIMALS` moving from 18 to 27 untouched.
+ */
 const MILLION = 10n ** 6n;
 const TRILLION = 10n ** 12n;
 

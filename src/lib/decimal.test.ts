@@ -6,7 +6,7 @@ describe("parseDecimal", () => {
     expect(parseDecimal("1")).toBe(ONE);
     expect(parseDecimal("0.5")).toBe(ONE / 2n);
     expect(parseDecimal("4")).toBe(4n * ONE);
-    expect(parseDecimal("0.000000001")).toBe(10n ** 9n);
+    expect(parseDecimal("0.000000001")).toBe(ONE / 10n ** 9n);
   });
 
   it("keeps values a double cannot represent", () => {
@@ -29,7 +29,7 @@ describe("parseDecimal", () => {
 
   it("reads exponent notation, which `pg` produces for a small JS number", () => {
     // String(1e-8) === "1e-8", and Postgres stores that faithfully.
-    expect(parseDecimal("1e-8")).toBe(10n ** 10n);
+    expect(parseDecimal("1e-8")).toBe(ONE / 10n ** 8n);
     expect(parseDecimal("1.5e3")).toBe(1500n * ONE);
     expect(parseDecimal("2E+2")).toBe(200n * ONE);
   });
@@ -52,6 +52,30 @@ describe("parseDecimal", () => {
     for (const bad of ["", ".", "abc", "1.2.3", "NaN", "Infinity", "1,5", "0x10", "1 2", "--1", "1e"]) {
       expect(() => parseDecimal(bad), bad).toThrow(/not a decimal number/);
     }
+  });
+
+  /**
+   * `multichain.md` §1.4. The module's stated invariant is *nine spare digits
+   * below the smallest unit that exists on chain*, and the smallest unit is
+   * one wei — 10^-18 — not one lamport. At DECIMALS = 18 a wei was exactly one
+   * unit in the last place, the margin was zero, and the rounding above (which
+   * the module calls unreachable in practice) was reachable by the smallest
+   * amount an EVM chain can express.
+   *
+   * Both halves are pinned: the margin as arithmetic, and one wei surviving a
+   * round trip through the two doors of this module unchanged. A regression to
+   * 18 fails the first; a regression to anything below 18 fails the second.
+   */
+  it("keeps nine spare digits below one wei, the smallest on-chain unit", () => {
+    const WEI_DECIMALS = 18;
+    expect(DECIMALS - WEI_DECIMALS).toBe(9);
+
+    const oneWei = `0.${"0".repeat(WEI_DECIMALS - 1)}1`;
+    expect(formatDecimal(parseDecimal(oneWei))).toBe(oneWei);
+    // Nine digits of headroom means a division by 10^9 still lands on the grid
+    // exactly rather than rounding: that is what "spare digits" buys.
+    expect(parseDecimal(oneWei) / 10n ** 9n).toBe(1n);
+    expect(parseDecimal(oneWei) % 10n ** 9n).toBe(0n);
   });
 
   it("refuses a magnitude no real amount could reach", () => {
@@ -101,7 +125,7 @@ describe("mulDiv", () => {
     let cost = start;
     let qty = 3n * ONE;
     const removed = mulDiv(cost, ONE, qty);
-    expect(formatDecimal(removed)).toBe("0.333333333333333333");
+    expect(formatDecimal(removed)).toBe(`0.${"3".repeat(DECIMALS)}`);
     cost -= removed;
     qty -= ONE;
     const onePass = removed + mulDiv(cost, 2n * ONE, qty);

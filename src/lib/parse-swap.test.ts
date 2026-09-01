@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { query } from "./db";
-import { parseDecimal } from "./decimal";
+import { DECIMALS, ONE, formatDecimal, mulDiv, parseDecimal } from "./decimal";
 import { buildObservedSwapPayload, buildSwapPayload } from "./fixtures/swap";
 import { inventAddress, inventSignature } from "./ids";
 import { addWallet } from "./wallets";
@@ -2576,18 +2576,17 @@ describe("parsePending", () => {
     // 125 tests green.
     //
     // Measured rather than assumed. In node 26, `0.1 / 7` is
-    // 0.014285714285714287; exact division truncated on decimal.ts's
-    // 18-decimal grid is 0.014285714285714285. They differ in the value of
-    // the last digit, not merely its length, so neither a `toBeCloseTo` nor
-    // a shorter-string comparison can tell them apart.
+    // 0.014285714285714287, while the exact quotient is 1/70 — a `0` followed
+    // by `142857` for ever. The float goes wrong in the *value* of a digit,
+    // not merely in how many there are, so neither a `toBeCloseTo` nor a
+    // shorter-string comparison can tell the two apart at any scale.
     //
     //   node -e 'console.log(0.1/7, (0.1/7)*231.71, 0.1*231.71)'
     //   0.014285714285714287 3.3101428571428575 23.171000000000003
     //
-    // and exactly, as integers scaled by 10^18:
-    //   price_sol  0.014285714285714285
-    //   price_usd  3.310142857142856977
-    //   usd_amount 23.171
+    // The expectations below are written against DECIMALS instead of as the
+    // three literals this comment used to carry, which were the 18-decimal
+    // grid's and silently became wrong when the scale moved to 27.
     const minute = new Date("2026-08-25T12:00:00.000Z");
     await query("INSERT INTO sol_price (minute, usd) VALUES ($1, '231.71')", [minute]);
 
@@ -2608,10 +2607,17 @@ describe("parsePending", () => {
     const [trade] = await query<Record<string, unknown>>("SELECT * FROM trade WHERE kol_id = $1", [kolId]);
     expect(trade.sol_amount).toBe("0.1");
     expect(trade.token_amount).toBe("7");
-    expect(trade.price_sol).toBe("0.014285714285714285");
+    // The exact expansion of 1/70, truncated to the scale: the digits belong
+    // to the arithmetic and the count belongs to DECIMALS.
+    const priceSol = `0.${("0" + "142857".repeat(10)).slice(0, DECIMALS)}`;
+    expect(trade.price_sol).toBe(priceSol);
     // price_usd is derived from price_sol, so a float price_sol poisons it
     // too — asserted here so the chain is covered, not just its first link.
-    expect(trade.price_usd).toBe("3.310142857142856977");
+    // Restated as `price_sol x rate` rather than recomputed by the parser, so
+    // this stays a check on the parser and not a mirror of it.
+    expect(trade.price_usd).toBe(
+      formatDecimal(mulDiv(parseDecimal(priceSol), parseDecimal("231.71"), ONE)),
+    );
     expect(trade.usd_amount).toBe("23.171");
   });
 
