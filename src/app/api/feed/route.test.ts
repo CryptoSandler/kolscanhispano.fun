@@ -3,7 +3,7 @@ import { aadFor, blindIndex, encrypt } from "@/lib/crypto";
 import { query } from "@/lib/db";
 import { inventAddress, inventSignature } from "@/lib/ids";
 import type { PublicTrade } from "@/lib/serialize";
-import { addWallet } from "@/lib/wallets";
+import { addWallet, setWalletVisibility } from "@/lib/wallets";
 import { GET } from "./route";
 
 // `spy: true` keeps every real implementation and wraps it, so these tests
@@ -89,8 +89,13 @@ async function insertKol(options: {
     [id, options.slug, options.slug.toUpperCase(), options.slug, cabalId, options.hideWallets,
      options.status ?? "approved"],
   );
+  // Publication is per wallet since migration 012, and these fixtures were
+  // written when it was per KOL. `hideWallets: false` meant "this KOL's
+  // signatures are published", so it now publishes the wallet -- the same
+  // intent, expressed against the row that actually decides.
   const address = inventAddress();
   const walletId = await addWallet(id, address);
+  if (!options.hideWallets) await setWalletVisibility(id, walletId, true);
   return { id, walletId, address };
 }
 

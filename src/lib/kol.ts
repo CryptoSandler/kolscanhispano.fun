@@ -86,9 +86,23 @@ const MAX_SLUG_LENGTH = 128;
  * Postgres to cast in the *session* time zone, which is the local-time leak
  * `windows.ts` exists to prevent.
  */
+/**
+ * Counted with scalar subqueries rather than a join, for the reason
+ * `leaderboard.ts` spells out at `PUBLIC_WALLETS`: this statement sums
+ * `pnl_daily`, and a join to `kol_wallet` would multiply those sums by the
+ * number of wallets. `status = 'active'` because a withdrawn wallet is not
+ * part of what this KOL operates, and the counts are what the detail prints.
+ */
+const WALLET_COUNTS = `
+  (SELECT count(*)::int FROM kol_wallet w
+    WHERE w.kol_id = k.id AND w.status = 'active' AND w.is_public) AS public_wallets,
+  (SELECT count(*)::int FROM kol_wallet w
+    WHERE w.kol_id = k.id AND w.status = 'active' AND NOT w.is_public) AS private_wallets`;
+
 const DETAIL_SQL = `
   SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets,
          c.tag AS cabal_tag,
+         ${WALLET_COUNTS},
          COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(d.realized_usd), 0) AS realized_usd
     FROM kol k

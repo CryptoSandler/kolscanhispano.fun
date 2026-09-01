@@ -20,7 +20,7 @@ import { query } from "@/lib/db";
 import { findDisallowedBase58 } from "@/lib/hygiene";
 import { inventAddress, inventSignature } from "@/lib/ids";
 import type { PublicKolDetail } from "@/lib/serialize";
-import { addWallet } from "@/lib/wallets";
+import { addWallet, setWalletVisibility } from "@/lib/wallets";
 import { GET } from "./route";
 
 /** The same Tuesday 01:00 UTC `/api/leaderboard`'s suite pins, and for the same reason. */
@@ -63,8 +63,13 @@ async function insertKol(options: {
       options.status ?? "approved",
     ],
   );
+  // Publication is per wallet since migration 012, and these fixtures were
+  // written when it was per KOL. `hideWallets: false` meant "this KOL's
+  // signatures are published", so it now publishes the wallet -- the same
+  // intent, expressed against the row that actually decides.
   const address = inventAddress();
   const walletId = await addWallet(id, address);
+  if (!(options.hideWallets ?? false)) await setWalletVisibility(id, walletId, true);
   return { id, slug: options.slug, walletId, address };
 }
 
@@ -423,8 +428,8 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
     const body = (await response.json()) as PublicKolDetail;
 
     expect(Object.keys(body).sort()).toEqual(
-      ["kol", "realizedSol", "realizedUsd", "series", "tradeCount", "trades", "volumeSol",
-       "window"].sort(),
+      ["kol", "privateWallets", "publicWallets", "realizedSol", "realizedUsd", "series",
+       "tradeCount", "trades", "volumeSol", "window"].sort(),
     );
     expect(Object.keys(body.kol).sort()).toEqual(
       ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "xHandle"].sort(),

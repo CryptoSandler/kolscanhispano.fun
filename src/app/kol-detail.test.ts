@@ -53,6 +53,8 @@ function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
       avatarUrl: "/api/avatar/00000000-0000-4000-8000-000000000000",
       hideWallets: false,
     },
+    publicWallets: 1,
+    privateWallets: 2,
     realizedSol: "12.35",
     realizedUsd: "2861.62",
     volumeSol: "28.65",

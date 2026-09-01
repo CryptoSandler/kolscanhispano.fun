@@ -40,6 +40,8 @@ type FeedQueryRow = {
   slug: string;
   display_name: string;
   hide_wallets: boolean;
+  /** `kol_wallet.is_public` for the wallet that signed this trade. See {@link JOINS}. */
+  wallet_is_public: boolean;
   cabal_tag: string | null;
   symbol: string | null;
 };
@@ -65,12 +67,31 @@ const COLUMNS = `
   t.block_time, t.signature_enc,
   k.slug, k.display_name, k.hide_wallets,
   c.tag AS cabal_tag,
-  tk.symbol
+  tk.symbol,
+  w.is_public AS wallet_is_public
 `;
 
+/**
+ * `kol_wallet` is joined for one column, and it is a column that decides what
+ * gets published.
+ *
+ * `DECISIONES.md`, 2026-08-31: publication follows **the wallet a trade came
+ * from**, not a flag on the KOL. A signature is not a weaker version of an
+ * address -- paste it into any explorer and it names the signer -- so a trade
+ * made from a wallet its owner kept private must not carry one, even when the
+ * same KOL publishes a different wallet.
+ *
+ * An inner join, and on the *pair*: migration 011's composite foreign key
+ * `trade (wallet_id, chain) -> kol_wallet (id, chain)` guarantees the row
+ * exists, so this can never drop a trade. Joining on `w.id` alone would still
+ * find it today, but it would stop matching the constraint that makes the
+ * guarantee -- and a `LEFT JOIN` would turn a missing wallet into a NULL that
+ * reads as "not public" while looking like data.
+ */
 const JOINS = `
   FROM trade t
   JOIN kol k ON k.id = t.kol_id
+  JOIN kol_wallet w ON w.id = t.wallet_id AND w.chain = t.chain
   LEFT JOIN cabal c ON c.id = k.cabal_id
   LEFT JOIN token tk ON tk.mint = t.mint
 `;
@@ -199,6 +220,7 @@ function toPublic(row: FeedQueryRow): PublicTrade {
     block_time: row.block_time,
     signature: revealSignature(row),
     hide_wallets: row.hide_wallets,
+    wallet_is_public: row.wallet_is_public,
   });
 }
 

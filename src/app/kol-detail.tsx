@@ -107,6 +107,17 @@ export function KolDetail({
         </Stat>
       </section>
 
+      {/* `DECISIONES.md`, 2026-08-31: the visibility decision is per wallet, so
+          the detail says how much of this KOL's operation is on show — as a
+          **count and a padlock, never a list**. The number is the honest thing
+          to publish: it states the shape of what is hidden without naming any
+          of it. Publishing the public addresses would be a different decision
+          and is not this one. */}
+      <WalletVisibility
+        publicWallets={detail.publicWallets}
+        privateWallets={detail.privateWallets}
+      />
+
       {/* DESIGN.md `card-chain-pnl`: "one line, SOL, because that is every chain
           we index" — and the brief's gloss, "do not imply others". So: one row,
           no column of chains with one entry, no "otras cadenas" placeholder. */}
@@ -127,6 +138,62 @@ export function KolDetail({
         <TradeList trades={detail.trades} hideWallets={detail.kol.hideWallets} />
       </section>
     </>
+  );
+}
+
+/**
+ * `Wallets públicas` and `Wallets privadas`, as counts.
+ *
+ * **A KOL with no wallets at all renders nothing.** DESIGN.md's rule is that
+ * *"Absence is rendered as absence, never as a zero"*, and two zeroes under a
+ * heading would read as a measurement of a KOL who chose to publish none —
+ * which is a different statement from having none to publish.
+ *
+ * Each half is omitted when it is zero, for the same reason: `0 wallets
+ * privadas` invites the reader to wonder what happened to them, and a KOL who
+ * published everything has nothing private to count.
+ *
+ * The padlock is {@link Padlock}, the same drawn one the `PRIVADO` chip uses,
+ * and **not** an emoji. DESIGN.md's objection to an emoji medal applies here
+ * exactly: an emoji carries its own colour, so it can be neither tinted with
+ * the text nor kept out of the green and red this document reserves for money.
+ * `kol-detail.test.ts` asserts the absence of `🔒` for that reason, and it
+ * caught this component using one.
+ *
+ * It carries `aria-hidden`: the label already says `Privadas`, and a screen
+ * reader announcing "lock" before a number it cannot place is noise. The count
+ * is the accessible content.
+ */
+function WalletVisibility({
+  publicWallets,
+  privateWallets,
+}: {
+  publicWallets: number;
+  privateWallets: number;
+}) {
+  if (publicWallets === 0 && privateWallets === 0) return null;
+
+  return (
+    <section className="card card-wallets">
+      <div className="card-head">
+        <h3 className="label">Wallets</h3>
+      </div>
+      <div className="wallet-counts">
+        {publicWallets > 0 && (
+          <Stat label="Públicas">
+            <span className="num">{publicWallets}</span>
+          </Stat>
+        )}
+        {privateWallets > 0 && (
+          <Stat label="Privadas">
+            <span className="num">
+              <Padlock />
+              {privateWallets}
+            </span>
+          </Stat>
+        )}
+      </div>
+    </section>
   );
 }
 

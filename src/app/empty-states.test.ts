@@ -109,6 +109,8 @@ function quietDetail(): PublicKolDetail {
       avatarUrl: `/api/avatar/${crypto.randomUUID()}`,
       hideWallets: false,
     },
+    publicWallets: 0,
+    privateWallets: 0,
     realizedSol: "0",
     realizedUsd: "0",
     volumeSol: "0",

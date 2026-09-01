@@ -55,8 +55,23 @@ export const LEADERBOARD_TOP = 10;
  * zone, which is the local-time leak `windows.ts` exists to prevent, one layer
  * further down.
  */
+/**
+ * The wallet count is a **scalar subquery, not a join**, and that is load-bearing.
+ *
+ * This statement already `LEFT JOIN`s `pnl_daily` and sums it. Adding
+ * `LEFT JOIN kol_wallet` would multiply every one of those rows by the number
+ * of wallets the KOL has, so a KOL with three wallets would rank on three times
+ * their realized PnL -- silently, with every figure still looking like a
+ * figure. A correlated subquery on `k.id` produces one value per group and
+ * cannot fan anything out.
+ */
+const PUBLIC_WALLETS = `
+  (SELECT count(*)::int FROM kol_wallet w
+    WHERE w.kol_id = k.id AND w.status = 'active' AND w.is_public)`;
+
 const SELECT = `
   SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag AS cabal_tag,
+         ${PUBLIC_WALLETS} AS public_wallets,
          COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(d.realized_usd), 0) AS realized_usd,
          COALESCE(SUM(d.wins), 0)::int    AS wins,

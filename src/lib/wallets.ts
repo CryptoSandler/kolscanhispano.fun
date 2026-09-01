@@ -64,6 +64,36 @@ export async function findWalletByAddress(
 }
 
 /**
+ * Publishes a wallet, or takes it back to private.
+ *
+ * Separate from {@link addWallet} on purpose. Migration 012 makes `is_public`
+ * default to `FALSE`, so a wallet is private the moment it exists and becomes
+ * public only through this call — the *explicit action* `DECISIONES.md`
+ * requires, taken by the KOL on their own session. Folding it into `addWallet`
+ * as an argument would make publication something a caller could pass by
+ * accident while adding a wallet for some other reason.
+ *
+ * Returns whether a row changed, so a caller can tell "set to public" from
+ * "no such wallet" rather than reporting success for a wallet that does not
+ * exist. Scoped by `kolId` as well as the wallet id: this is reached from a
+ * session, and a session that could name any wallet id could publish somebody
+ * else's address, which is the one mistake on this path that cannot be undone.
+ */
+export async function setWalletVisibility(
+  kolId: string,
+  walletId: string,
+  isPublic: boolean,
+): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    `UPDATE kol_wallet SET is_public = $3
+      WHERE id = $1 AND kol_id = $2 AND status = 'active'
+      RETURNING id`,
+    [walletId, kolId, isPublic],
+  );
+  return rows.length === 1;
+}
+
+/**
  * Decrypts exactly one address. Every caller is either the admin reveal path,
  * which audits the call, or the Helius address-set builder.
  */

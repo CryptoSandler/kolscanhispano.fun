@@ -62,14 +62,14 @@
 import bs58 from "bs58";
 import { createElement } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
-import { aadFor, blindIndex, encrypt } from "@/lib/crypto";
+import { aadFor, blindIndex, decrypt, encrypt } from "@/lib/crypto";
 import { query } from "@/lib/db";
 import { readFeedPage } from "@/lib/feed";
 import { findDisallowedBase58 } from "@/lib/hygiene";
 import { inventAddress, inventSignature } from "@/lib/ids";
 import { readKolDetail } from "@/lib/kol";
 import { readLeaderboard } from "@/lib/leaderboard";
-import { addWallet } from "@/lib/wallets";
+import { addWallet, setWalletVisibility } from "@/lib/wallets";
 import { utcDayString } from "@/lib/windows";
 import { KolDetail } from "./kol-detail";
 import HomePage from "./page";
@@ -83,15 +83,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 type Kol = {
   id: string;
   slug: string;
-  walletId: string;
-  /** The real, encrypted-at-rest address this KOL's trades were signed by. */
-  address: string;
+  wallets: Wallet[];
 };
+
+/** One wallet of the fixture: its id, its real address, and whether it is published. */
+type Wallet = { id: string; address: string; isPublic: boolean };
 
 async function insertKol(options: {
   slug: string;
   hideWallets: boolean;
   cabalTag?: string;
+  /** One entry per wallet: `true` publishes it. Order is the fixture's own. */
+  wallets: boolean[];
+  /** Spec §9's public-surface gate. Defaults to the approved case. */
+  status?: "pending" | "approved";
 }): Promise<Kol> {
   let cabalId: string | null = null;
   if (options.cabalTag) {
@@ -105,16 +110,34 @@ async function insertKol(options: {
   const id = crypto.randomUUID();
   await query(
     `INSERT INTO kol (id, slug, display_name, x_handle, cabal_id, hide_wallets, status, approved_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'approved', now())`,
-    [id, options.slug, options.slug.toUpperCase(), options.slug, cabalId, options.hideWallets],
+     VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $7 = 'approved' THEN now() END)`,
+    [
+      id,
+      options.slug,
+      options.slug.toUpperCase(),
+      options.slug,
+      cabalId,
+      options.hideWallets,
+      options.status ?? "approved",
+    ],
   );
-  const address = inventAddress();
-  const walletId = await addWallet(id, address);
-  return { id, slug: options.slug, walletId, address };
+  const wallets: Wallet[] = [];
+  for (const isPublic of options.wallets) {
+    const address = inventAddress();
+    const walletId = await addWallet(id, address);
+    // Through the real setter, not an UPDATE of our own: a fixture that wrote
+    // `is_public` directly would still pass if `setWalletVisibility` were
+    // broken, and that function is the only way a wallet is ever published.
+    if (isPublic) expect(await setWalletVisibility(id, walletId, true)).toBe(true);
+    wallets.push({ id: walletId, address, isPublic });
+  }
+  return { id, slug: options.slug, wallets };
 }
 
 type TradeSpec = {
   kol: Kol;
+  /** Which of the KOL's wallets signed it. The signature follows this, not the KOL. */
+  wallet: Wallet;
   mint: string;
   side: "buy" | "sell";
   sol: string;
@@ -151,7 +174,7 @@ async function insertTrades(specs: TradeSpec[]): Promise<string[]> {
       rows.map((r) => blindIndex(r.signature, "signature").toString("hex")),
       rows.map((r) => encrypt(r.signature, aadFor("trade", "signature", r.id)).toString("hex")),
       rows.map((r) => r.kol.id),
-      rows.map((r) => r.kol.walletId),
+      rows.map((r) => r.wallet.id),
       rows.map((r) => r.mint),
       rows.map((r) => r.side),
       rows.map((r) => r.tokens),
@@ -225,6 +248,8 @@ function findBlindIndex(text: string, forAddresses: string[]): string[] {
   return found;
 }
 
+/** Every KOL the fixture built, with its wallets and their persisted visibility. */
+let kols: Kol[];
 /** Every address the fixture put in the database. None may reach a page. */
 let addresses: string[];
 /** The mints the fixture traded. Cleartext by spec §3, and never rendered today. */
@@ -233,6 +258,10 @@ let mints: string[];
 let publicSignatures: string[];
 /** Signatures of the KOL that hides them: never anywhere. */
 let hiddenSignatures: string[];
+/** Signatures of the KOL awaiting approval: never anywhere, published wallet or not. */
+let pendingSignatures: string[];
+/** The slug of that KOL, for the "not reachable by guessing it" case. */
+const PENDING_SLUG = "kol-pendiente";
 
 /** The union of both pages' emitted HTML. */
 let html: string;
@@ -260,9 +289,41 @@ beforeAll(async () => {
     "TRUNCATE kol, kol_wallet, cabal, token, trade, position, pnl_daily, pnl_position_daily CASCADE",
   );
 
-  const abierto = await insertKol({ slug: "kol-abierto", hideWallets: false, cabalTag: "ABT" });
-  const oculto = await insertKol({ slug: "kol-oculto", hideWallets: true });
-  addresses = [abierto.address, oculto.address];
+  // Three KOLs, because the promise now has three shapes rather than two.
+  //
+  // `kol-mixto` is the one the old per-KOL rule could not express at all, and
+  // it is the reason the decision moved (`DECISIONES.md`, 2026-08-31): one
+  // person, one published wallet and one kept back. Its `hide_wallets` is
+  // deliberately set to the value that would give the *wrong* answer under the
+  // old code -- `false`, which used to mean "publish everything" -- so a
+  // regression to reading the KOL flag publishes a private wallet's signature
+  // and this file fails.
+  const abierto = await insertKol({
+    slug: "kol-abierto",
+    hideWallets: false,
+    cabalTag: "ABT",
+    wallets: [true],
+  });
+  const oculto = await insertKol({ slug: "kol-oculto", hideWallets: true, wallets: [false] });
+  const mixto = await insertKol({ slug: "kol-mixto", hideWallets: false, wallets: [true, false] });
+
+  // `DECISIONES.md`, 2026-08-31: a KOL is `pending` until the tweet with the
+  // code and the admin approval, and *"no aparece en ninguna superficie
+  // pública hasta la aprobación"*.
+  //
+  // Given a **published** wallet on purpose, which is the combination that
+  // matters: publication is per wallet now, so a gate that only consulted the
+  // wallet would put this KOL's signatures on the feed. Both gates have to
+  // hold, and only the status gate can stop this one.
+  const pendiente = await insertKol({
+    slug: "kol-pendiente",
+    hideWallets: false,
+    wallets: [true],
+    status: "pending",
+  });
+
+  kols = [abierto, oculto, mixto];
+  addresses = kols.flatMap((kol) => kol.wallets.map((wallet) => wallet.address));
 
   // Two mints: one with a symbol, one the token table has never heard of, so
   // both branches of the feed row's symbol and price rendering are exercised.
@@ -274,12 +335,24 @@ beforeAll(async () => {
   const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
   publicSignatures = await insertTrades([
-    { kol: abierto, mint: conSimbolo, side: "buy", sol: "12.5", tokens: "1000", priceUsd: "0.0125", at: at(4) },
-    { kol: abierto, mint: sinSimbolo, side: "sell", sol: "3.25", tokens: "40", priceUsd: null, at: at(3) },
+    { kol: abierto, wallet: abierto.wallets[0], mint: conSimbolo, side: "buy", sol: "12.5", tokens: "1000", priceUsd: "0.0125", at: at(6) },
+    { kol: abierto, wallet: abierto.wallets[0], mint: sinSimbolo, side: "sell", sol: "3.25", tokens: "40", priceUsd: null, at: at(5) },
+    // The published half of the mixed KOL: this signature must appear.
+    { kol: mixto, wallet: mixto.wallets[0], mint: conSimbolo, side: "buy", sol: "5.5", tokens: "300", priceUsd: "0.018", at: at(4) },
+  ]);
+  // Not added to either list: these belong to a KOL that has no public
+  // surface at all, so they are neither published nor "withheld from a page
+  // that shows the KOL". They get their own assertion.
+  pendingSignatures = await insertTrades([
+    { kol: pendiente, wallet: pendiente.wallets[0], mint: conSimbolo, side: "buy", sol: "9.9", tokens: "500", priceUsd: "0.02", at: at(7) },
   ]);
   hiddenSignatures = await insertTrades([
-    { kol: oculto, mint: conSimbolo, side: "sell", sol: "8.75", tokens: "600", priceUsd: "0.014", at: at(2) },
-    { kol: oculto, mint: sinSimbolo, side: "buy", sol: "1.5", tokens: "90", priceUsd: null, at: at(1) },
+    { kol: oculto, wallet: oculto.wallets[0], mint: conSimbolo, side: "sell", sol: "8.75", tokens: "600", priceUsd: "0.014", at: at(3) },
+    { kol: oculto, wallet: oculto.wallets[0], mint: sinSimbolo, side: "buy", sol: "1.5", tokens: "90", priceUsd: null, at: at(2) },
+    // The withheld half of the *same* KOL whose other wallet publishes. Under
+    // the old rule this row's signature was published, because its KOL's
+    // `hide_wallets` is false.
+    { kol: mixto, wallet: mixto.wallets[1], mint: sinSimbolo, side: "sell", sol: "2.25", tokens: "70", priceUsd: null, at: at(1) },
   ]);
 
   // The leaderboard's window is `now`-relative and the pages take no injectable
@@ -294,12 +367,16 @@ beforeAll(async () => {
        FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int[], $6::int[])
             AS e(kol_id, day, sol, usd, wins, losses)`,
     [
-      [abierto.id, abierto.id, oculto.id, oculto.id],
-      [utcDayString(today), utcDayString(tomorrow), utcDayString(today), utcDayString(tomorrow)],
-      ["18.42", "18.42", "-4.10", "-4.10"],
-      ["1802.40", "1802.40", "-401.30", "-401.30"],
-      [3, 3, 1, 1],
-      [1, 1, 2, 2],
+      [abierto.id, abierto.id, oculto.id, oculto.id, mixto.id, mixto.id],
+      [
+        utcDayString(today), utcDayString(tomorrow),
+        utcDayString(today), utcDayString(tomorrow),
+        utcDayString(today), utcDayString(tomorrow),
+      ],
+      ["18.42", "18.42", "-4.10", "-4.10", "6.30", "6.30"],
+      ["1802.40", "1802.40", "-401.30", "-401.30", "615.90", "615.90"],
+      [3, 3, 1, 1, 2, 2],
+      [1, 1, 2, 2, 1, 1],
     ],
   );
 
@@ -316,6 +393,7 @@ beforeAll(async () => {
   const details = await Promise.all([
     readKolDetail({ slug: "kol-abierto", window: "diario" }),
     readKolDetail({ slug: "kol-oculto", window: "diario" }),
+    readKolDetail({ slug: "kol-mixto", window: "diario" }),
   ]);
   modalHtml = details
     .map((detail) => renderToStaticMarkup(createElement(KolDetail, { detail: detail! })))
@@ -329,10 +407,11 @@ describe("the fixture is populated, so the assertions below are about a real pag
   it("renders both KOLs, their rows and their figures", () => {
     expect(html).toContain("KOL-ABIERTO");
     expect(html).toContain("KOL-OCULTO");
-    // Four feed rows and two ranked rows: the empty states are not what is
+    expect(html).toContain("KOL-MIXTO");
+    // Six feed rows and three ranked rows: the empty states are not what is
     // being scanned.
-    expect(html.match(/class="row-feed/g)).toHaveLength(4);
-    expect(html.match(/class="row-leaderboard/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(html.match(/class="row-feed/g)).toHaveLength(6);
+    expect(html.match(/class="row-leaderboard/g)?.length).toBeGreaterThanOrEqual(3);
     expect(html).not.toContain("state-empty");
   });
 
@@ -420,6 +499,128 @@ describe("no wallet address reaches the rendered page", () => {
     expect(findDisallowedBase58(props).sort()).toEqual(
       [...publicSignatures, ...mints].sort(),
     );
+  });
+
+  /**
+   * `DECISIONES.md`, 2026-08-31 rewrote this invariant into three halves, and
+   * the set comparison above is only the first of them. *"La segunda mitad es
+   * la que importa: sin ella, un bug que publique todo pasaría el test mientras
+   * exista un solo KOL que optó."*
+   *
+   * So publication is resolved **back to the row that authorised it**. It is
+   * not enough that the render believed a wallet was public: every base58 run
+   * that reached a surface is looked up by its blind index and the wallet that
+   * signed it is read out of the database.
+   */
+  it("publishes a signature only for a wallet whose is_public is persisted", async () => {
+    const published = findDisallowedBase58(surfaces);
+    // A fixture that published nothing would pass the loop below vacuously,
+    // which is the failure the whole file is built to avoid.
+    expect(published.length).toBeGreaterThan(0);
+
+    for (const signature of published) {
+      const rows = await query<{ is_public: boolean }>(
+        `SELECT w.is_public FROM trade t
+           JOIN kol_wallet w ON w.id = t.wallet_id AND w.chain = t.chain
+          WHERE t.signature_hmac = $1`,
+        [blindIndex(signature, "signature")],
+      );
+      // Named, never quoted: a failure message must not print the value.
+      expect(rows, "a published base58 run is not a known trade signature").toHaveLength(1);
+      expect(rows[0].is_public, "a signature reached a surface from a private wallet").toBe(true);
+    }
+  });
+
+  it("withholds every signature signed by a wallet that is not published", async () => {
+    // Driven from the database rather than from the fixture's variables, so a
+    // trade inserted by some future edit is covered without anyone remembering.
+    const privateWalletIds = kols
+      .flatMap((kol) => kol.wallets)
+      .filter((wallet) => !wallet.isPublic)
+      .map((wallet) => wallet.id);
+    expect(privateWalletIds.length).toBeGreaterThan(0);
+
+    const rows = await query<{ id: string; signature_enc: Buffer }>(
+      `SELECT id, signature_enc FROM trade WHERE wallet_id = ANY ($1::uuid[])`,
+      [privateWalletIds],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+
+    for (const row of rows) {
+      const signature = decrypt(row.signature_enc, aadFor("trade", "signature", row.id));
+      // `not.toContain` on a large haystack prints the haystack into the diff,
+      // and the haystack here is a page that would be carrying the leak. The
+      // boolean form says the same thing and prints neither: this file's own
+      // rule about `needlesFor` -- name the leak, never quote it -- applies to
+      // the assertion that finds one as much as to the message beside it.
+      expect(surfaces.includes(signature), "a private wallet's signature is on a surface").toBe(
+        false,
+      );
+      expect(props.includes(signature), "a private wallet's signature is in the props").toBe(false);
+    }
+  });
+
+  /**
+   * The third half, and the one neither of the other two can see: *"el detalle
+   * del KOL muestra 'N wallets privadas' y esa N coincide con la base."*
+   *
+   * Checked against the **fixture's own intent** as well as against the
+   * database. Comparing the detail only to a query would be two reads of one
+   * table agreeing with each other; the fixture's array is what this test
+   * asked for before any query ran.
+   */
+  it("counts public and private wallets exactly as the fixture built them", async () => {
+    for (const kol of kols) {
+      const detail = await readKolDetail({ slug: kol.slug, window: "diario" });
+      expect(detail, `no detail for ${kol.slug}`).not.toBeNull();
+
+      const intendedPublic = kol.wallets.filter((wallet) => wallet.isPublic).length;
+      const intendedPrivate = kol.wallets.length - intendedPublic;
+      expect(detail!.publicWallets, `${kol.slug}: public count`).toBe(intendedPublic);
+      expect(detail!.privateWallets, `${kol.slug}: private count`).toBe(intendedPrivate);
+
+      const [row] = await query<{ pub: string; priv: string }>(
+        `SELECT count(*) FILTER (WHERE is_public) AS pub,
+                count(*) FILTER (WHERE NOT is_public) AS priv
+           FROM kol_wallet WHERE kol_id = $1 AND status = 'active'`,
+        [kol.id],
+      );
+      expect(Number(row.pub)).toBe(detail!.publicWallets);
+      expect(Number(row.priv)).toBe(detail!.privateWallets);
+    }
+  });
+
+  /**
+   * `DECISIONES.md`, 2026-08-31: *"Un KOL sin verificar no aparece en el
+   * leaderboard."* The handle is not verified until the tweet with the code
+   * (spec §6), so a KOL enters as `pending` and is on no public surface until
+   * an admin approves them.
+   *
+   * The fixture gives this KOL a **published** wallet, which is the whole
+   * point of the case: publication is per wallet now, so a surface that
+   * consulted only `is_public` would carry these rows. Two gates have to hold
+   * independently, and only `status` can stop this one.
+   */
+  it("keeps a pending KOL off every public surface, published wallet and all", async () => {
+    expect(pendingSignatures).toHaveLength(1);
+
+    expect(surfaces).not.toContain("KOL-PENDIENTE");
+    expect(props).not.toContain(PENDING_SLUG);
+    for (const signature of pendingSignatures) {
+      expect(surfaces.includes(signature), "a pending KOL's signature is on a surface").toBe(false);
+      expect(props.includes(signature), "a pending KOL's signature is in the props").toBe(false);
+    }
+
+    // And its slug is not reachable by guessing it: `readKolDetail` answers
+    // `null`, which is the same answer a slug that never existed gets.
+    expect(await readKolDetail({ slug: PENDING_SLUG, window: "diario" })).toBeNull();
+  });
+
+  it("renders the private count on the detail, as a count and never a list", () => {
+    // `kol-mixto` has one of each, so its modal is the one that must show both.
+    expect(modalHtml).toContain("Wallets");
+    expect(modalHtml).toContain("Privadas");
+    expect(modalHtml).toContain("Públicas");
   });
 
   /**

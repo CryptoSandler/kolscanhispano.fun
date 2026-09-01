@@ -8,10 +8,13 @@
  * - **The address is never published, for any KOL, hidden or not.** It is not
  *   a field of {@link PublicTrade}, so no caller can add it back by passing a
  *   different row; the only way to leak it is to change this file.
- * - **For a KOL with `hide_wallets`, neither is the transaction signature.**
+ * - **A signature is published only for a wallet whose owner published it.**
  *   A signature is not a weaker version of an address: paste it into any
  *   explorer and it names the signer. Publishing it while withholding the
- *   address publishes the address one click later.
+ *   address publishes the address one click later. The decision follows the
+ *   wallet the trade came from (`kol_wallet.is_public`), not a flag on the
+ *   KOL -- one person can publish one wallet and keep another, and a per-KOL
+ *   flag can only answer for both at once (`DECISIONES.md`, 2026-08-31).
  *
  * The avatar URL is keyed by `kol_id` for the same reason (spec §7):
  * kolscan.io serves `cdn.kolscan.io/profiles/<wallet>.png` and leaks the
@@ -58,6 +61,12 @@ export type FeedRow = {
   price_usd: string | null;
   block_time: Date;
   signature: string | null;
+  /**
+   * `kol_wallet.is_public` for the wallet **this trade came from**, joined in
+   * by `feed.ts`. Not a property of the KOL: one person can publish one wallet
+   * and keep another, and the signature follows the wallet that signed.
+   */
+  wallet_is_public: boolean;
   hide_wallets: boolean;
   address?: string | null;
 };
@@ -122,6 +131,8 @@ export type LeaderboardRow = {
   x_handle: string;
   cabal_tag: string | null;
   hide_wallets: boolean;
+  /** Active wallets this KOL has published. See {@link PublicLeaderboardEntry.hideWallets}. */
+  public_wallets: number;
   realized_sol: string;
   realized_usd: string;
   wins: number;
@@ -156,6 +167,14 @@ export type PublicLeaderboardEntry = {
      * this comment followed it. `b0f2a43` corrected the document: `hide_wallets`
      * defaults to `TRUE`, so a handle switch would have erased the person from
      * almost every row.)
+     *
+     * **Derived from the wallets, not from `kol.hide_wallets`.** Since
+     * `DECISIONES.md` 2026-08-31 the decision is per wallet, so the only
+     * honest reading of "this KOL's wallets are hidden" is *none of them is
+     * published*. Reading the KOL flag here while the signature read the
+     * wallet would have let the row say `Wallets ocultas` above a trade
+     * carrying a signature, which is a marker that lies about the thing
+     * underneath it.
      */
     hideWallets: boolean;
   };
@@ -204,7 +223,7 @@ export function serializeLeaderboardEntry(row: LeaderboardRow, rank: number): Pu
       xHandle: row.x_handle,
       cabalTag: row.cabal_tag,
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
-      hideWallets: row.hide_wallets,
+      hideWallets: row.public_wallets === 0,
     },
     realizedSol: row.realized_sol,
     realizedUsd: row.realized_usd,
@@ -224,7 +243,12 @@ export function serializeTrade(row: FeedRow): PublicTrade {
       // encodeURIComponent on an id that is always a UUID is belt and braces;
       // it costs nothing and stops a future non-UUID id from building a path.
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
-      hideWallets: row.hide_wallets,
+      // The chip marks the row whose signature is withheld, so it reads the
+      // same fact the signature does. Reading `hide_wallets` here while the
+      // signature read the wallet would put `Wallets ocultas` on a row that
+      // carries a Solscan link, and leave the mixed KOL's private row with no
+      // marker at all beside its missing one.
+      hideWallets: !row.wallet_is_public,
     },
     side: row.side,
     mint: row.mint,
@@ -234,8 +258,11 @@ export function serializeTrade(row: FeedRow): PublicTrade {
     usdAmount: row.usd_amount,
     priceUsd: row.price_usd,
     blockTime: row.block_time.toISOString(),
-    // The whole invariant, in one expression.
-    signature: row.hide_wallets ? null : row.signature,
+    // The whole invariant, in one expression -- and it reads the *wallet*, not
+    // the KOL. `DECISIONES.md`, 2026-08-31: `hide_wallets` no longer governs
+    // publication, because a KOL who separates their operation publishes one
+    // wallet and keeps another, and a per-KOL flag can only answer for both.
+    signature: row.wallet_is_public ? row.signature : null,
   };
 }
 
@@ -254,6 +281,10 @@ export type KolDetailRow = {
   x_handle: string;
   cabal_tag: string | null;
   hide_wallets: boolean;
+  /** Active wallets this KOL has published. */
+  public_wallets: number;
+  /** Active wallets this KOL has kept private. Rendered as a count and a padlock. */
+  private_wallets: number;
   realized_sol: string;
   realized_usd: string;
   /** Trades executed inside the window, both sides. */
@@ -299,6 +330,22 @@ export type PublicKolDetail = {
     /** See {@link PublicLeaderboardEntry}: it decides the address slot, never the handle. */
     hideWallets: boolean;
   };
+  /**
+   * How many active wallets this KOL has published, and how many they have
+   * kept private.
+   *
+   * **Counts, and never a list.** `DECISIONES.md` 2026-08-31 puts *"Wallets
+   * públicas"* and *"Wallets privadas"* on the detail as a quantity and a
+   * padlock, because the number is the honest thing to publish: it says how
+   * much of this KOL's operation is on show without naming any of it. A list
+   * of public addresses would be a different decision and would need its own.
+   *
+   * The private count is the one that has to be *right* rather than merely
+   * present: it is the third half of the public invariant, and a count that
+   * drifts from the database is a bug neither of the other two halves can see.
+   */
+  publicWallets: number;
+  privateWallets: number;
   realizedSol: string;
   realizedUsd: string;
   /** `card-stats`: volume, in SOL. */
@@ -340,8 +387,10 @@ export function serializeKolDetail(options: {
       xHandle: row.x_handle,
       cabalTag: row.cabal_tag,
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
-      hideWallets: row.hide_wallets,
+      hideWallets: row.public_wallets === 0,
     },
+    publicWallets: row.public_wallets,
+    privateWallets: row.private_wallets,
     realizedSol: row.realized_sol,
     realizedUsd: row.realized_usd,
     volumeSol: row.volume_sol,

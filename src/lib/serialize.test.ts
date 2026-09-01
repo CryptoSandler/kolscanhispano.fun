@@ -18,24 +18,44 @@ const base = {
   block_time: new Date("2026-08-25T12:00:00Z"),
   signature: inventSignature(),
   hide_wallets: true,
+  wallet_is_public: false,
   address: inventAddress(),
 };
 
 describe("serializeTrade", () => {
-  it("omits the signature and the address for a KOL that hides its wallets", () => {
+  it("omits the signature and the address for a trade from a private wallet", () => {
     const out = serializeTrade(base);
     expect(out.signature).toBeNull();
     expect(JSON.stringify(out)).not.toContain(base.signature);
     expect(JSON.stringify(out)).not.toContain(base.address);
   });
 
-  it("includes the signature for a KOL that publishes its wallets", () => {
-    const out = serializeTrade({ ...base, hide_wallets: false });
+  it("includes the signature for a trade from a published wallet", () => {
+    const out = serializeTrade({ ...base, wallet_is_public: true });
     expect(out.signature).toBe(base.signature);
   });
 
-  it("never includes the wallet address, hidden or not", () => {
-    expect(JSON.stringify(serializeTrade({ ...base, hide_wallets: false }))).not.toContain(
+  /**
+   * The two directions that separate "per wallet" from "per KOL", and the pair
+   * the old rule would have got wrong in both directions.
+   *
+   * `DECISIONES.md`, 2026-08-31: publication follows the wallet a trade came
+   * from. A KOL who publishes one wallet and keeps another is the whole reason
+   * the decision moved, so `hide_wallets` must not be able to override either
+   * answer -- and the old code, which read only `hide_wallets`, passes neither.
+   */
+  it("publishes on the wallet even when the KOL flag says hidden", () => {
+    const out = serializeTrade({ ...base, hide_wallets: true, wallet_is_public: true });
+    expect(out.signature).toBe(base.signature);
+  });
+
+  it("withholds on the wallet even when the KOL flag says published", () => {
+    const out = serializeTrade({ ...base, hide_wallets: false, wallet_is_public: false });
+    expect(out.signature).toBeNull();
+  });
+
+  it("never includes the wallet address, published or not", () => {
+    expect(JSON.stringify(serializeTrade({ ...base, wallet_is_public: true }))).not.toContain(
       base.address,
     );
   });
@@ -56,7 +76,7 @@ describe("serializeTrade", () => {
   // fixed, so a new field carrying anything at all has to be added here
   // deliberately.
   it("emits exactly the public shape and nothing else", () => {
-    const out = serializeTrade({ ...base, hide_wallets: false });
+    const out = serializeTrade({ ...base, wallet_is_public: true });
     expect(Object.keys(out).sort()).toEqual(
       [
         "blockTime",
@@ -121,9 +141,9 @@ describe("serializeTrade", () => {
   // must not be derived from the signature.
   it("states the wallet promise separately from whether a signature came through", () => {
     expect(serializeTrade(base).kol.hideWallets).toBe(true);
-    expect(serializeTrade({ ...base, hide_wallets: false }).kol.hideWallets).toBe(false);
+    expect(serializeTrade({ ...base, wallet_is_public: true }).kol.hideWallets).toBe(false);
     expect(
-      serializeTrade({ ...base, hide_wallets: false, signature: null }).kol.hideWallets,
+      serializeTrade({ ...base, wallet_is_public: true, signature: null }).kol.hideWallets,
     ).toBe(false);
   });
 
