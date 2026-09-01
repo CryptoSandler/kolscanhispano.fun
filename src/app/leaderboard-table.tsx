@@ -88,45 +88,55 @@ export function LeaderboardTable({
 
   return (
     <>
-      <table className="leaderboard">
-        <colgroup>
-          <col className="col-rank" />
-          <col className="col-kol" />
-          <col className="col-closed" />
-          <col className="col-rate" />
-          <col className="col-primary" />
-          <col className="col-secondary" />
-        </colgroup>
-        {showHeader && (
-          <thead>
-            <tr>
-              <th scope="col" className="label">
-                #
-              </th>
-              <th scope="col" className="label">
-                KOL
-              </th>
-              <th scope="col" className="label num-head">
-                Cerradas
-              </th>
-              <th scope="col" className="label num-head">
-                % ganadas
-              </th>
-              <th scope="col" className="label num-head">
-                {unit === "sol" ? "PnL realizado (SOL)" : "PnL realizado (USD)"}
-              </th>
-              <th scope="col" className="label num-head">
-                {unit === "sol" ? "USD" : "SOL"}
-              </th>
-            </tr>
-          </thead>
-        )}
-        <tbody>
-          {entries.map((entry) => (
-            <Row key={entry.kol.slug} entry={entry} unit={unit} />
-          ))}
-        </tbody>
-      </table>
+      {/*
+        The table scrolls inside this box rather than pushing the document
+        sideways. DESIGN.md requires the column widths to be fixed and says
+        nothing at all about narrow viewports, so on a screen too small for
+        them the overflow has to go somewhere; putting it here keeps the page
+        still, which is the behaviour `viewport.spec.ts` now pins at 390×844.
+        `.table-scroll` carries the reasoning.
+      */}
+      <div className="table-scroll">
+        <table className="leaderboard">
+          <colgroup>
+            <col className="col-rank" />
+            <col className="col-kol" />
+            <col className="col-closed" />
+            <col className="col-rate" />
+            <col className="col-primary" />
+            <col className="col-secondary" />
+          </colgroup>
+          {showHeader && (
+            <thead>
+              <tr>
+                <th scope="col" className="label">
+                  #
+                </th>
+                <th scope="col" className="label">
+                  KOL
+                </th>
+                <th scope="col" className="label num-head">
+                  Cerradas
+                </th>
+                <th scope="col" className="label num-head">
+                  % ganadas
+                </th>
+                <th scope="col" className="label num-head">
+                  {unit === "sol" ? "PnL realizado (SOL)" : "PnL realizado (USD)"}
+                </th>
+                <th scope="col" className="label num-head">
+                  {unit === "sol" ? "USD" : "SOL"}
+                </th>
+              </tr>
+            </thead>
+          )}
+          <tbody>
+            {entries.map((entry) => (
+              <Row key={entry.kol.slug} entry={entry} unit={unit} />
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/*
         Spec §4.8: the definition, stated, rather than a bare percentage. When

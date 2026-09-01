@@ -495,11 +495,48 @@ a {
 
 /* ---------- leaderboard ---------- */
 
+/* The table's own scroll container.
+
+   DESIGN.md's Do — "fix column widths so a live update never reflows a table" —
+   and a 390px viewport cannot both be satisfied by one table: the five numeric
+   columns are 548px of fixed widths before the KOL column has any. Something
+   has to give, and it is not the widths, because the Do is the written rule and
+   the viewport is not: **DESIGN.md has no responsive section at all** — no
+   breakpoint, no media query, no narrow size named anywhere in it. So the
+   choice made here is a judgement recorded rather than a rule quoted, and it is
+   the conservative one: the columns keep their widths and the *table* scrolls
+   inside this box, so the document behind it never moves.
+
+   What it fixes: at 390px the table was 548px wide inside a 358px panel, so
+   `documentElement.scrollWidth` was 581 against a 390 viewport on both `/` and
+   `/leaderboard` — the whole page slid sideways as soon as anything scrolled it
+   there, which is what put a half-cut wordmark in the production capture. The
+   modal was blamed for that and was never the cause; it fits 390px unaided.
+
+   ponytail: the lazier fix is a media query that hides the two count columns
+   below some width. It is rejected because it *removes data* on the size most
+   readers are on, and this box costs three declarations. */
+.table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
 /* Fixed layout is the point: DESIGN.md requires "fixed column widths so a live
    update never reflows a table", and automatic layout widens the PnL column the
-   moment a figure crosses from 9,99 to 10,01. */
+   moment a figure crosses from 9,99 to 10,01.
+
+   `min-width` is the floor those fixed widths need to survive a narrow screen:
+   `width: 100%` alone let the table shrink to the container, and under
+   `table-layout: fixed` the only column without a stated width — the KOL
+   column — absorbed the whole shortfall and collapsed to **0px**, which is why
+   the mobile capture reads `KOLCERRADAS` in its header. 768px is the 548px of
+   stated widths plus 220px for the identity block (36px avatar, 10px gap, and
+   room for a name over a handle before the ellipsis these cells already carry).
+   Above it the KOL column takes the slack exactly as it did before, so 1280px
+   is unchanged. */
 .leaderboard {
   width: 100%;
+  min-width: 768px;
   table-layout: fixed;
   border-collapse: collapse;
 }
