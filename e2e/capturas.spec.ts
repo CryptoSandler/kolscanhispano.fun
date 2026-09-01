@@ -11,8 +11,8 @@ import { E2E_ADMIN_TOKEN } from "../playwright.config";
 const ROWS = activeChains().length * 2;
 
 /**
- * The screenshots the owner's gate reviews: `¡Casi listo!` and the KOL detail,
- * each at the desktop width DESIGN.md names and at 390px.
+ * The screenshots the **closing agent** reads: `¡Casi listo!` and the KOL
+ * detail, each at the desktop width DESIGN.md names and at 390px.
  *
  * **These are captures, not assertions**, and they are kept apart from
  * `viewport.spec.ts` for that reason. That file states rules and fails when
@@ -20,6 +20,16 @@ const ROWS = activeChains().length * 2;
  * `expect`s in it exist only to make sure the shot was taken *after* the thing
  * being photographed had arrived — a screenshot of a half-rendered modal is
  * worse than no screenshot, because it looks like a finding.
+ *
+ * **They are not the owner's gate, and they are not handed over.** `~/.claude/
+ * GATES.md` and `/cierre` §3: the agent closing the batch opens every one of
+ * these, describes it in a line, and contrasts it against `DESIGN.md` and the
+ * copy the page is supposed to say — any deviation becomes a finding of the
+ * close, red test or not. Listing the paths and letting the owner look is the
+ * failure mode that rule exists to prevent: the run wrote files, and nobody
+ * read them. The single exception is an aesthetic batch, where the owner's eye
+ * is the acceptance criterion — and there the gate is the **preview URL**, the
+ * real page at their viewport, never a directory of PNGs.
  *
  * Output goes to `test-results/capturas/`, which `.gitignore` already covers:
  * an image of a screen is a build artefact, and committing one would put a
