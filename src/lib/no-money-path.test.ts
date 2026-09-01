@@ -71,8 +71,19 @@ describe("the money path this project does not have", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
     const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
     // `@solana/web3.js` is how a transaction gets built; a wallet adapter is how
-    // it gets signed. Neither is needed to verify a SIWS signature, which is an
-    // ed25519 check `node:crypto` already does.
+    // it gets signed. Neither is needed to verify a wallet proof.
+    //
+    // This comment used to add "which is an ed25519 check `node:crypto` already
+    // does", and that stopped being what the code does when `wallet-proof.ts`
+    // landed. It was true -- but only by wrapping a raw 32-byte key in a 12-byte
+    // SPKI DER prefix, and `@noble/curves` had to be taken anyway for the EVM
+    // half, where Node has no public-key recovery at all. `docs/wallet-proof.md`
+    // §1 argues it out. Corrected here rather than left to rot, which is the
+    // mistake `key_version` was: a written claim nobody re-read.
+    //
+    // What still holds, and is what this case actually asserts: verification
+    // needs no transaction library. `@noble/curves` recovers and checks; it
+    // constructs nothing and sends nothing.
     expect(deps.filter((d) => /^@solana\/(web3\.js|wallet-adapter)/.test(d))).toEqual([]);
   });
 
