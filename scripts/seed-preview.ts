@@ -664,11 +664,17 @@ export async function writeRoster(tx: TxQuery): Promise<RosterResult> {
   );
   counts.kols = kols.length;
 
+  // `is_public` follows the roster's own `hideWallets`, which is what that
+  // field meant before migration 012 moved the decision to the wallet. Written
+  // here rather than left to the column's `FALSE` default: a preview where
+  // every wallet is private shows only half of the surface it exists to show
+  // -- no Solscan link anywhere, and a detail card with one number on it.
   await tx(
-    `INSERT INTO kol_wallet (id, kol_id, address_enc, address_hmac, backfill_status)
-     SELECT e.id::uuid, e.kol_id::uuid, decode(e.enc, 'hex'), decode(e.hmac, 'hex'), 'done'
-       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[])
-            AS e(id, kol_id, enc, hmac)`,
+    `INSERT INTO kol_wallet (id, kol_id, address_enc, address_hmac, backfill_status, is_public)
+     SELECT e.id::uuid, e.kol_id::uuid, decode(e.enc, 'hex'), decode(e.hmac, 'hex'), 'done',
+            e.is_public
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::bool[])
+            AS e(id, kol_id, enc, hmac, is_public)`,
     [
       kols.map((kol) => kol.walletId),
       kols.map((kol) => kol.id),
@@ -676,6 +682,7 @@ export async function writeRoster(tx: TxQuery): Promise<RosterResult> {
         encrypt(kol.address, aadFor("kol_wallet", "address", kol.walletId)).toString("hex"),
       ),
       kols.map((kol) => blindIndex(kol.address, "address").toString("hex")),
+      kols.map((kol) => !kol.spec.hideWallets),
     ],
   );
   counts.wallets = kols.length;

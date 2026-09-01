@@ -164,8 +164,21 @@ describe("findDisallowedBase58", () => {
 
 describe("the repository itself", () => {
   it("contains no Solana or EVM identifier outside the allowlist", () => {
-    const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" })
-      .split("\n")
+    // `ls-files` alone lists only files git already **tracks**, so a brand new
+    // file is invisible to this scan until it is committed -- and the run that
+    // would have caught it is the one after the commit, by which point the
+    // value is in history and history cannot be un-published. Measured here:
+    // `chain.test.ts` carried two 32-character base58 literals through a clean
+    // full-suite run for exactly that reason, and failed the next run once it
+    // was tracked.
+    //
+    // `--others --exclude-standard` adds the untracked files git would offer to
+    // add, and excludes everything `.gitignore` covers -- so `node_modules`,
+    // `.next` and the Helius payload cache stay out while a new source file is
+    // scanned before it is ever committed.
+    const listed = (args: string[]) =>
+      execFileSync("git", ["ls-files", ...args], { encoding: "utf8" }).split("\n");
+    const tracked = [...new Set([...listed([]), ...listed(["--others", "--exclude-standard"])])]
       .filter((f) => f && !HYGIENE_SKIP.includes(f));
 
     const offenders: string[] = [];
