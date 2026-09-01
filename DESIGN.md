@@ -144,6 +144,33 @@ update never reflows a table.
 Header: wordmark and subtitle left, nav centre, unit and window controls plus the wallet
 action right.
 
+## Responsive
+
+**This section exists because it was quoted before it was written.** Three fixes on
+2026-08-31 rested on "nothing may push the page sideways" — a line that lived in
+`e2e/viewport.spec.ts`'s own commentary, a previous author's gloss on Layout's *"1280px
+maximum, 16px gutters"*, read back as if this document said it. It did not. A rule enforced
+by a test and absent from the norm is one nobody can argue with and nobody agreed to.
+
+**Two sizes are designed and guarded: 1280×900 and 390×844** — the layout maximum against a
+laptop, and a phone. There is no breakpoint system and no intermediate design; between them
+the layout is fluid, and those two are what the e2e suite asserts.
+
+**The page never scrolls horizontally, at either size.** `document.scrollWidth` may not
+exceed `window.innerWidth`. Wide content — the ranking table, a trade list, the chart —
+scrolls **inside its own container**, never by moving the body.
+
+That is the rule the ranking table broke: under `table-layout: fixed` a column with no
+stated width collapsed to zero and the table measured 581px inside a 390px viewport, before
+anything was clicked. So **every column in a fixed-layout table states its width** — the
+same requirement the Do's already make for a different reason (*"fix column widths so a live
+update never reflows a table"*), and the two now share one cause.
+
+**Clipping is not a compact layout, it is a bug.** A cell whose text is in the DOM but
+painted outside its box still reads `31/08 02:12 UTC` from `textContent` while the glyphs
+are gone. Any guard for it asserts the cell is **reachable** — inside the visible box once
+its own container is scrolled — never merely that the text exists.
+
 ## Components
 
 **`row-leaderboard`** — 56px, hairline bottom, `surface-2` on hover, whole row clickable and
