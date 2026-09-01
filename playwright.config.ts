@@ -45,6 +45,12 @@ const HOST = "localhost";
 
 const PORT = Number(process.env.E2E_PORT ?? 3210);
 
+/**
+ * The admin token the e2e server runs with, exported so a spec can type it into
+ * the screen rather than keeping a second copy that can drift.
+ */
+export const E2E_ADMIN_TOKEN = "e2e-admin-token";
+
 export default defineConfig({
   testDir: "./e2e",
   globalSetup: "./e2e/global-setup.ts",
@@ -67,6 +73,11 @@ export default defineConfig({
       // Turbopack's first compile of a route is slow enough to matter against
       // the 120s budget above; the leaderboard is the one the guard needs.
       NEXT_TELEMETRY_DISABLED: "1",
+      // A fixed value, and it is not a secret: this server only ever talks to
+      // the test database, and the admin screen cannot be photographed at all
+      // without a token that the routes accept. The real one lives in Vercel's
+      // environment and never here.
+      ADMIN_TOKEN: E2E_ADMIN_TOKEN,
     },
   },
 });

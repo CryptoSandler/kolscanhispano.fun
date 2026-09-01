@@ -1,5 +1,6 @@
 import { activeChains, isChain } from "@/lib/chain";
 import { audit, isAdmin } from "@/lib/admin";
+import { query } from "@/lib/db";
 import { createKol, type WalletInput } from "@/lib/roster";
 import { normalizeXHandle } from "@/lib/x-handle";
 
@@ -34,6 +35,54 @@ type Payload = {
  */
 function refuse(reason: string, status = 400): Response {
   return Response.json({ error: reason }, { status });
+}
+
+/**
+ * `GET /api/admin/kol` — the approval queue, and enough to decide from.
+ *
+ * Pending first and newest first, because that is the working order. It carries
+ * **no address**: the decision an admin makes here is about a handle and a
+ * tweet, and the wallet is a count -- spec §9's reveal path is a different
+ * operation that audits itself, and this list is not it.
+ */
+export async function GET(request: Request): Promise<Response> {
+  if (!isAdmin(request.headers.get("authorization"))) {
+    return refuse("unauthorized", 401);
+  }
+
+  const rows = await query<{
+    id: string;
+    slug: string;
+    x_handle: string;
+    status: string;
+    tweet_url: string | null;
+    tweet_verified_at: Date | null;
+    created_at: Date;
+    wallets: number;
+    public_wallets: number;
+  }>(
+    `SELECT k.id, k.slug, k.x_handle, k.status, k.tweet_url, k.tweet_verified_at, k.created_at,
+            (SELECT count(*)::int FROM kol_wallet w
+              WHERE w.kol_id = k.id AND w.status = 'active') AS wallets,
+            (SELECT count(*)::int FROM kol_wallet w
+              WHERE w.kol_id = k.id AND w.status = 'active' AND w.is_public) AS public_wallets
+       FROM kol k
+      ORDER BY (k.status = 'pending') DESC, k.created_at DESC
+      LIMIT 100`,
+  );
+
+  return Response.json({
+    kols: rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      handle: row.x_handle,
+      status: row.status,
+      tweetUrl: row.tweet_url,
+      tweetVerified: row.tweet_verified_at !== null,
+      wallets: row.wallets,
+      publicWallets: row.public_wallets,
+    })),
+  });
 }
 
 export async function POST(request: Request): Promise<Response> {

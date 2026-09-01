@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { activeChains } from "../src/lib/chain";
+import { E2E_ADMIN_TOKEN } from "../playwright.config";
 
 /**
  * The preview route mocks two wallets per chain with live ingestion, so the
@@ -63,6 +64,34 @@ for (const { name, viewport } of SIZES) {
       await expect(page.locator(".onboarding-echo")).toContainText("@ejemplo");
 
       await page.screenshot({ path: `${OUT}/onboarding-activo-${name}.png`, fullPage: true });
+    });
+
+    /**
+     * The admin, with the roster the seed built. The token is typed the way an
+     * operator types it, so the shot is of the screen as it is actually used
+     * rather than of a state only a test can reach.
+     */
+    test("admin, con el padrón cargado", async ({ page }) => {
+      await page.goto("/admin");
+      await page.locator('input[type="password"]').fill(E2E_ADMIN_TOKEN);
+      await page.getByRole("button", { name: "Ver el padrón" }).click();
+
+      // Waits for the roster rather than for the click: a shot taken between
+      // the two would photograph an empty table and look like a finding.
+      await expect(page.locator(".admin-table .row-leaderboard").first()).toBeVisible({
+        timeout: 30_000,
+      });
+      await page.screenshot({ path: `${OUT}/admin-${name}.png`, fullPage: true });
+    });
+
+    test("/registro, el paso de conectar", async ({ page }) => {
+      await page.goto("/registro");
+      // No wallet extension exists in this browser, so this is the state a
+      // first-time visitor sees. The steps behind it are photographed by the
+      // onboarding captures above, which render the same component.
+      await expect(page.getByText("Entrá al padrón")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible();
+      await page.screenshot({ path: `${OUT}/registro-${name}.png`, fullPage: true });
     });
 
     test("detalle del KOL", async ({ page }) => {

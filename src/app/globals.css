@@ -1502,3 +1502,59 @@ a.row-moment:hover {
   vertical-align: -1px;
   color: var(--ink-subtle);
 }
+
+/* --------------------------------------------------------------- admin, /registro */
+
+.admin {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.admin-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.admin-table td {
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+
+/* A `<select>` styled as an `.input`. `appearance: none` removes the UA arrow,
+   which cannot be tinted and is the one part of a native select that refuses to
+   match anything around it. */
+select.input {
+  appearance: none;
+  padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-subtle) 50%),
+    linear-gradient(135deg, var(--ink-subtle) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  width: auto;
+  min-width: 110px;
+}
+
+/* The code a person has to copy into a tweet. Selectable, wrapping, and in the
+   numeric face so an `O` and a `0` are told apart -- which is the whole reason
+   the code's alphabet excludes both. */
+.code-block {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* `a.cta` alongside `button.cta`: the tweet step's action is a link, because it
+   goes to X. Same rule `.segment` already had to learn. */
+a.cta {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+}
