@@ -717,7 +717,7 @@ async function upsertToken(mint: string, fields: TokenUpdate): Promise<void> {
   await query(
     `INSERT INTO token (mint, symbol, name, decimals, image_url, price_usd, price_sol, liquidity_usd, price_state, pair_url, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
-     ON CONFLICT (mint) DO UPDATE SET
+     ON CONFLICT (chain, mint) DO UPDATE SET
        symbol        = COALESCE(EXCLUDED.symbol, token.symbol),
        name          = COALESCE(EXCLUDED.name, token.name),
        decimals      = COALESCE($4, token.decimals),

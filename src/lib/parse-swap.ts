@@ -1681,7 +1681,7 @@ async function insertTrade(
                           mint, side, token_amount, sol_amount, usd_amount, sol_usd, price_sol,
                           price_usd, fee_sol, block_time, slot, priced_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
-       ON CONFLICT (signature_hmac, instruction_index, wallet_id) DO NOTHING`,
+       ON CONFLICT (chain, signature_hmac, instruction_index, wallet_id) DO NOTHING`,
       [
         id,
         signatureHmac,
@@ -1705,7 +1705,7 @@ async function insertTrade(
 
     await tx(
       `INSERT INTO position (kol_id, mint, dirty) VALUES ($1, $2, TRUE)
-       ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = TRUE`,
+       ON CONFLICT (kol_id, chain, mint) DO UPDATE SET dirty = TRUE`,
       [wallet.kol_id, trade.mint],
     );
   });

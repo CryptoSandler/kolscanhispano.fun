@@ -64,7 +64,7 @@ async function seedOneDirtyPosition(): Promise<{ kolId: string; mint: string }> 
   );
   await query(
     `INSERT INTO position (kol_id, mint, dirty) VALUES ($1, $2, TRUE)
-     ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = TRUE`,
+     ON CONFLICT (kol_id, chain, mint) DO UPDATE SET dirty = TRUE`,
     [kolId, mint],
   );
 

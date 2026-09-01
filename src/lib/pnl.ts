@@ -40,6 +40,7 @@
  *    end, for display; it is never an input to the arithmetic.
  */
 
+import type { Chain } from "./chain";
 import { ONE, formatDecimal, mulDiv, parseDecimal } from "./decimal";
 import { query, withTransaction, type TxQuery } from "./db";
 
@@ -81,7 +82,7 @@ type DayTotals = { realizedSol: bigint; realizedUsd: bigint; wins: number; losse
 const TRADES_SQL = `
   SELECT side, token_amount, sol_amount, usd_amount, fee_sol, sol_usd, basis, block_time
     FROM trade
-   WHERE kol_id = $1 AND mint = $2
+   WHERE kol_id = $1 AND chain = $2 AND mint = $3
    ORDER BY block_time, slot, instruction_index, id`;
 
 /**
@@ -318,8 +319,19 @@ function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): voi
  * All of it inside one transaction. A `position` that disagrees with its own
  * daily rows is not a visibly broken state; both halves stay well-formed and
  * only the leaderboard is wrong.
+ *
+ * `chain` is last and defaulted so that the identifying pair a reader thinks
+ * in — the KOL and the mint — stays first, and so that the sixty-odd existing
+ * Solana call sites read unchanged. The one caller that matters,
+ * {@link recomputeDirty}, never takes the default: it passes the `chain` it
+ * read from the `position` row it is replaying, which is the only way a
+ * non-Solana position could ever be reached.
  */
-export async function replayPosition(kolId: string, mint: string): Promise<void> {
+export async function replayPosition(
+  kolId: string,
+  mint: string,
+  chain: Chain = "solana",
+): Promise<void> {
   const threshold = closedPositionThreshold();
 
   await withTransaction(async (tx) => {
@@ -331,32 +343,34 @@ export async function replayPosition(kolId: string, mint: string): Promise<void>
     // visible to the SELECT below — or it blocks behind this lock and
     // re-dirties the position after this replay commits.
     await tx(
-      `INSERT INTO position (kol_id, mint, dirty) VALUES ($1, $2, TRUE)
-       ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = position.dirty`,
-      [kolId, mint],
+      `INSERT INTO position (kol_id, chain, mint, dirty) VALUES ($1, $2, $3, TRUE)
+       ON CONFLICT (kol_id, chain, mint) DO UPDATE SET dirty = position.dirty`,
+      [kolId, chain, mint],
     );
 
-    const trades = await tx<TradeRow>(TRADES_SQL, [kolId, mint]);
+    const trades = await tx<TradeRow>(TRADES_SQL, [kolId, chain, mint]);
 
     const state = emptyState();
     for (const trade of trades) applyTrade(state, trade, threshold);
 
     const previousDays = await tx<{ day: string }>(
       `SELECT to_char(day, 'YYYY-MM-DD') AS day FROM pnl_position_daily
-        WHERE kol_id = $1 AND mint = $2`,
-      [kolId, mint],
+        WHERE kol_id = $1 AND chain = $2 AND mint = $3`,
+      [kolId, chain, mint],
     );
-    await tx(`DELETE FROM pnl_position_daily WHERE kol_id = $1 AND mint = $2`, [kolId, mint]);
+    await tx(`DELETE FROM pnl_position_daily WHERE kol_id = $1 AND chain = $2 AND mint = $3`,
+      [kolId, chain, mint]);
 
     const days = [...new Set([...previousDays.map((row) => row.day), ...state.daily.keys()])].sort();
 
     if (trades.length === 0) {
       // Nothing to derive from. Leaving a zeroed row behind would put a
       // position on the KOL page for a mint the KOL never traded.
-      await tx(`DELETE FROM position WHERE kol_id = $1 AND mint = $2`, [kolId, mint]);
+      await tx(`DELETE FROM position WHERE kol_id = $1 AND chain = $2 AND mint = $3`,
+        [kolId, chain, mint]);
     } else {
-      await writePosition(tx, kolId, mint, state);
-      await writePositionDays(tx, kolId, mint, state);
+      await writePosition(tx, kolId, chain, mint, state);
+      await writePositionDays(tx, kolId, chain, mint, state);
     }
 
     await refreshDaily(tx, kolId, days);
@@ -366,6 +380,7 @@ export async function replayPosition(kolId: string, mint: string): Promise<void>
 async function writePosition(
   tx: TxQuery,
   kolId: string,
+  chain: Chain,
   mint: string,
   state: ReplayState,
 ): Promise<void> {
@@ -374,16 +389,17 @@ async function writePosition(
   const averageCost = state.qty > 0n ? mulDiv(state.costSol, ONE, state.qty) : 0n;
 
   await tx(
-    `INSERT INTO position (kol_id, mint, qty, cost_sol, avg_cost_sol, realized_sol, realized_usd,
-                           first_buy_at, last_trade_at, basis, dirty)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE)
-     ON CONFLICT (kol_id, mint) DO UPDATE SET
+    `INSERT INTO position (kol_id, chain, mint, qty, cost_sol, avg_cost_sol, realized_sol,
+                           realized_usd, first_buy_at, last_trade_at, basis, dirty)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE)
+     ON CONFLICT (kol_id, chain, mint) DO UPDATE SET
        qty = EXCLUDED.qty, cost_sol = EXCLUDED.cost_sol, avg_cost_sol = EXCLUDED.avg_cost_sol,
        realized_sol = EXCLUDED.realized_sol, realized_usd = EXCLUDED.realized_usd,
        first_buy_at = EXCLUDED.first_buy_at, last_trade_at = EXCLUDED.last_trade_at,
        basis = EXCLUDED.basis, dirty = FALSE`,
     [
       kolId,
+      chain,
       mint,
       formatDecimal(state.qty),
       formatDecimal(state.costSol),
@@ -409,6 +425,7 @@ async function writePosition(
 async function writePositionDays(
   tx: TxQuery,
   kolId: string,
+  chain: Chain,
   mint: string,
   state: ReplayState,
 ): Promise<void> {
@@ -419,13 +436,15 @@ async function writePositionDays(
   const totals = entries.map(([, total]) => total);
 
   await tx(
-    `INSERT INTO pnl_position_daily (kol_id, mint, day, realized_sol, realized_usd, wins, losses)
-     SELECT $1, $2, entry.day::date, entry.realized_sol::numeric, entry.realized_usd::numeric,
+    `INSERT INTO pnl_position_daily (kol_id, chain, mint, day, realized_sol, realized_usd,
+                                     wins, losses)
+     SELECT $1, $2, $3, entry.day::date, entry.realized_sol::numeric, entry.realized_usd::numeric,
             entry.wins::int, entry.losses::int
-       FROM unnest($3::text[], $4::text[], $5::text[], $6::int[], $7::int[])
+       FROM unnest($4::text[], $5::text[], $6::text[], $7::int[], $8::int[])
             AS entry(day, realized_sol, realized_usd, wins, losses)`,
     [
       kolId,
+      chain,
       mint,
       days,
       totals.map((total) => formatDecimal(total.realizedSol)),
@@ -451,17 +470,18 @@ async function refreshDaily(tx: TxQuery, kolId: string, days: string[]): Promise
       WHERE kol_id = $1 AND day = ANY ($2::date[])
         AND NOT EXISTS (SELECT 1 FROM pnl_position_daily contribution
                          WHERE contribution.kol_id = pnl_daily.kol_id
+                           AND contribution.chain = pnl_daily.chain
                            AND contribution.day = pnl_daily.day)`,
     [kolId, days],
   );
 
   await tx(
-    `INSERT INTO pnl_daily (kol_id, day, realized_sol, realized_usd, wins, losses)
-     SELECT kol_id, day, SUM(realized_sol), SUM(realized_usd), SUM(wins), SUM(losses)
+    `INSERT INTO pnl_daily (kol_id, chain, day, realized_sol, realized_usd, wins, losses)
+     SELECT kol_id, chain, day, SUM(realized_sol), SUM(realized_usd), SUM(wins), SUM(losses)
        FROM pnl_position_daily
       WHERE kol_id = $1 AND day = ANY ($2::date[])
-      GROUP BY kol_id, day
-     ON CONFLICT (kol_id, day) DO UPDATE SET
+      GROUP BY kol_id, chain, day
+     ON CONFLICT (kol_id, chain, day) DO UPDATE SET
        realized_sol = EXCLUDED.realized_sol, realized_usd = EXCLUDED.realized_usd,
        wins = EXCLUDED.wins, losses = EXCLUDED.losses`,
     [kolId, days],
@@ -480,15 +500,15 @@ async function refreshDaily(tx: TxQuery, kolId: string, days: string[]): Promise
 export async function recomputeDirty(limit: number = DEFAULT_DIRTY_LIMIT): Promise<number> {
   if (!Number.isInteger(limit) || limit < 0) throw new Error("limit must be a non-negative integer");
 
-  const dirty = await query<{ kol_id: string; mint: string }>(
-    `SELECT kol_id, mint FROM position WHERE dirty ORDER BY kol_id, mint LIMIT $1`,
+  const dirty = await query<{ kol_id: string; chain: Chain; mint: string }>(
+    `SELECT kol_id, chain, mint FROM position WHERE dirty ORDER BY kol_id, chain, mint LIMIT $1`,
     [limit],
   );
 
   let replayed = 0;
   for (const position of dirty) {
     try {
-      await replayPosition(position.kol_id, position.mint);
+      await replayPosition(position.kol_id, position.mint, position.chain);
       replayed += 1;
     } catch (error) {
       // The mint is public data (spec §3); the KOL id is not an address, and

@@ -1,0 +1,98 @@
+import { describe, expect, it } from "vitest";
+import { CHAINS, EVM_CHAIN_IDS, canonicalAddress, isChain, isEvm } from "./chain";
+import { blindIndex } from "./crypto";
+import { inventAddress, inventEvmAddress } from "./ids";
+
+/**
+ * The bug this guards is not "two strings differ". It is "two digests differ",
+ * because `kol_wallet.address_hmac` is what a wallet is looked up by and a
+ * lookup that misses reports the wallet as untracked rather than as an error.
+ * So every assertion below that matters goes through {@link blindIndex}, which
+ * is the thing whose case-sensitivity caused it (`docs/multichain.md` §1.2).
+ */
+describe("canonicalAddress", () => {
+  it("collapses EIP-55 and lowercase EVM casing onto one digest", () => {
+    const address = inventEvmAddress();
+    const checksummed = `0x${address.slice(2).toUpperCase()}`;
+
+    expect(canonicalAddress(checksummed, "ethereum")).toBe(address);
+    expect(blindIndex(canonicalAddress(checksummed, "ethereum"), "address")).toEqual(
+      blindIndex(canonicalAddress(address, "ethereum"), "address"),
+    );
+  });
+
+  it("is the reason the two digests differ without it", () => {
+    // The mutation, written down rather than described: this is what the code
+    // did before, and it is why a wallet could be registered and never found.
+    const address = inventEvmAddress();
+    const checksummed = `0x${address.slice(2).toUpperCase()}`;
+    expect(blindIndex(checksummed, "address")).not.toEqual(blindIndex(address, "address"));
+  });
+
+  it("leaves Solana untouched, because base58 case is significant", () => {
+    const address = inventAddress();
+    expect(canonicalAddress(address, "solana")).toBe(address);
+  });
+
+  /**
+   * The negative half, and the one that would have caught a "just lowercase
+   * everything" fix. Two base58 strings differing only in case are two
+   * different addresses; mapping them onto one digest would make the second
+   * wallet unregistrable against a `UNIQUE` index.
+   */
+  it("keeps two base58 addresses that differ only in case distinct", () => {
+    // Only letters valid in *both* cases: base58 drops lowercase `l` and
+    // uppercase `I` and `O`, so a pair built from the whole alphabet would
+    // fail validation rather than exercise the case rule.
+    const lower = "abcdefghjkmnpqrstuvwxyz123456789";
+    const upper = "ABCDEFGHJKMNPQRSTUVWXYZ123456789";
+    expect(canonicalAddress(lower, "solana")).not.toBe(canonicalAddress(upper, "solana"));
+    expect(blindIndex(canonicalAddress(lower, "solana"), "address")).not.toEqual(
+      blindIndex(canonicalAddress(upper, "solana"), "address"),
+    );
+  });
+
+  it("refuses an address of the wrong shape for its chain", () => {
+    expect(() => canonicalAddress(inventAddress(), "ethereum")).toThrow(/ethereum/);
+    expect(() => canonicalAddress(inventEvmAddress(), "solana")).toThrow(/solana/);
+    expect(() => canonicalAddress("0xnothex", "bnb")).toThrow();
+    expect(() => canonicalAddress("", "solana")).toThrow();
+    // 39 hex digits: one short, and a silent accept here is a permanent row.
+    expect(() => canonicalAddress(`0x${"a".repeat(39)}`, "bnb")).toThrow();
+  });
+
+  it("never puts the address in the error it throws", () => {
+    const address = inventEvmAddress();
+    try {
+      canonicalAddress(address, "solana");
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(String(error)).not.toContain(address);
+    }
+  });
+
+  it("trims surrounding whitespace, which a paste into a field carries", () => {
+    const address = inventEvmAddress();
+    expect(canonicalAddress(`  ${address}\n`, "bnb")).toBe(address);
+  });
+});
+
+describe("chain vocabulary", () => {
+  it("treats every chain but Solana as EVM", () => {
+    expect(CHAINS.filter(isEvm)).toEqual(["robinhood", "bnb", "ethereum"]);
+    expect(isEvm("solana")).toBe(false);
+  });
+
+  it("carries the EIP-155 id of every EVM chain and of no other", () => {
+    // `docs/multichain.md` §4 and §6. These are signed into a SIWE payload, so
+    // a wrong number is a signature valid on a chain the user did not mean.
+    expect(EVM_CHAIN_IDS).toEqual({ robinhood: 4663, bnb: 56, ethereum: 1 });
+    expect(Object.keys(EVM_CHAIN_IDS).sort()).toEqual(CHAINS.filter(isEvm).sort());
+  });
+
+  it("narrows an arbitrary string", () => {
+    expect(isChain("solana")).toBe(true);
+    expect(isChain("polygon")).toBe(false);
+    expect(isChain("")).toBe(false);
+  });
+});

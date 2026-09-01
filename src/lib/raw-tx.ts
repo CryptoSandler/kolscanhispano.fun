@@ -94,7 +94,7 @@ async function insertRows(rows: PreparedRow[]): Promise<string[]> {
   const inserted = await query<{ signature_hmac: Buffer }>(
     `INSERT INTO raw_tx (signature_hmac, signature_enc, payload_enc, slot, block_time, source)
      VALUES ${placeholders.join(", ")}
-     ON CONFLICT (signature_hmac) DO NOTHING
+     ON CONFLICT (chain, signature_hmac) DO NOTHING
      RETURNING signature_hmac`,
     values,
   );

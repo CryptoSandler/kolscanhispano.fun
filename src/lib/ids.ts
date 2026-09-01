@@ -14,3 +14,21 @@ export function inventAddress(): string {
 export function inventSignature(): string {
   return bs58.encode(randomBytes(64));
 }
+
+/**
+ * A `0x`-prefixed 40-hex string shaped like an EVM address, generated fresh.
+ *
+ * The EVM siblings of the two above, for the same reason: `SECURITY.md`'s ban
+ * on real identifiers is about people, not about which chain they trade on.
+ * Returned lowercase, which is what {@link canonicalAddress} produces, so a
+ * fixture and a stored row compare equal without either side canonicalising.
+ * A test that specifically exercises EIP-55 casing upper-cases this itself.
+ */
+export function inventEvmAddress(): string {
+  return `0x${randomBytes(20).toString("hex")}`;
+}
+
+/** A `0x`-prefixed 64-hex string shaped like an EVM transaction hash. */
+export function inventEvmTxHash(): string {
+  return `0x${randomBytes(32).toString("hex")}`;
+}

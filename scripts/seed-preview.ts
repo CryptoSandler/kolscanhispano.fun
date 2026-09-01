@@ -693,7 +693,7 @@ export async function writeRoster(tx: TxQuery): Promise<RosterResult> {
     `INSERT INTO position (kol_id, mint, dirty)
      SELECT e.kol_id::uuid, e.mint, TRUE
        FROM unnest($1::text[], $2::text[]) AS e(kol_id, mint)
-     ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = TRUE`,
+     ON CONFLICT (kol_id, chain, mint) DO UPDATE SET dirty = TRUE`,
     [positions.map((row) => row.kolId), positions.map((row) => row.mint)],
   );
   counts.positions = positions.length;

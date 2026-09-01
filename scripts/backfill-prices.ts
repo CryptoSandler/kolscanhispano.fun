@@ -180,7 +180,7 @@ export async function backfillPrices(
 
       await tx(
         `INSERT INTO position (kol_id, mint, dirty) VALUES ($1, $2, TRUE)
-         ON CONFLICT (kol_id, mint) DO UPDATE SET dirty = TRUE`,
+         ON CONFLICT (kol_id, chain, mint) DO UPDATE SET dirty = TRUE`,
         [row.kol_id, row.mint],
       );
       return true;
