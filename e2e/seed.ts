@@ -16,7 +16,7 @@
 import { aadFor, blindIndex, encrypt } from "../src/lib/crypto";
 import { query } from "../src/lib/db";
 import { inventAddress, inventSignature } from "../src/lib/ids";
-import { addWallet } from "../src/lib/wallets";
+import { addWallet, setWalletVisibility } from "../src/lib/wallets";
 
 /** Twelve, so the top-ten cut is exercised rather than assumed. */
 const KOLS: ReadonlyArray<readonly [string, string, string | null]> = [
@@ -80,6 +80,13 @@ export async function seedLeaderboard(): Promise<void> {
       [kolId, slug, name, tag === null ? null : cabals.get(tag), index % 3 !== 0, slug],
     );
     const walletId = await addWallet(kolId, inventAddress());
+    // Publication is per wallet since migration 012. The seed's `index % 3`
+    // split was written when it was per KOL, and it is kept as-is -- the
+    // roster still carries both shapes -- but it now has to reach the row that
+    // actually decides. Without this every seeded wallet is private, and the
+    // half of `modal-kol.spec.ts` that checks a *published* signature would be
+    // asserting against a roster that publishes nothing.
+    if (index % 3 === 0) await setWalletVisibility(kolId, walletId, true);
 
     await query(
       `INSERT INTO pnl_daily (kol_id, day, realized_sol, realized_usd, wins, losses)

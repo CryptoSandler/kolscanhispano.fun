@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 /**
  * DESIGN.md's layout rules, as a regression guard.
@@ -223,23 +223,55 @@ for (const { name, viewport } of SIZES) {
      */
     test("keeps the open modal inside the viewport on both axes", async ({ page }) => {
       const dialog = await openFirstKol(page);
-
-      const fit = await dialog.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        return {
-          left: r.left,
-          top: r.top,
-          right: r.right,
-          bottom: r.bottom,
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-        };
-      });
+      const fit = await modalFit(dialog);
 
       expect(fit.left).toBeGreaterThanOrEqual(0);
       expect(fit.top).toBeGreaterThanOrEqual(0);
       expect(fit.right).toBeLessThanOrEqual(fit.innerWidth);
       expect(fit.bottom).toBeLessThanOrEqual(fit.innerHeight);
+    });
+
+    /**
+     * The case above, forced red.
+     *
+     * A guard that has never been shown to fail is decoration, and this one had
+     * a specific way of being decoration: it measured the `<dialog>` alone. A
+     * `<dialog>` is laid out by the browser and does not necessarily grow past
+     * the viewport when its *contents* do -- so a card hanging off the side of
+     * the screen, which is the defect a reader actually meets, could leave the
+     * dialog's own rect entirely within bounds and the assertion green.
+     *
+     * So {@link modalFit} measures the union of the dialog and its card, and
+     * this test proves the measurement reports the overflow: it makes the card
+     * far wider and taller than the viewport, measures with **the same
+     * function** the guard uses, and requires the numbers to come back out of
+     * bounds. Measuring with a second, hand-written expression here would prove
+     * only that this test can measure something.
+     *
+     * The style is injected and never committed to the stylesheet; the page is
+     * discarded with the test.
+     */
+    test("that guard reports an overflow when one is forced", async ({ page }) => {
+      const dialog = await openFirstKol(page);
+      expect(await modalFit(dialog)).toMatchObject({ left: expect.any(Number) });
+
+      await page.addStyleTag({
+        content: `.modal-kol .modal-card {
+          width: 4000px !important;
+          max-width: none !important;
+          height: 4000px !important;
+          max-height: none !important;
+        }`,
+      });
+      // The layout has to have settled before the rects are read, or this can
+      // measure the card at its old size and pass for the wrong reason.
+      await expect
+        .poll(async () => (await modalFit(dialog)).right)
+        .toBeGreaterThan((await modalFit(dialog)).innerWidth);
+
+      const forced = await modalFit(dialog);
+      expect(forced.right).toBeGreaterThan(forced.innerWidth);
+      expect(forced.bottom).toBeGreaterThan(forced.innerHeight);
     });
 
     /**
@@ -316,6 +348,31 @@ for (const { name, viewport } of SIZES) {
       ).toBeLessThanOrEqual(Math.round(reach.listRight));
       expect(Math.round(reach.cellLeft)).toBeGreaterThanOrEqual(Math.round(reach.listLeft));
     });
+  });
+}
+
+/**
+ * The box every visible part of the open modal must sit inside.
+ *
+ * The **union of the dialog and its card**, not the dialog alone. A `<dialog>`
+ * is positioned by the browser and can stay inside the viewport while the card
+ * it contains hangs off the side -- which is precisely the state a reader
+ * meets and the one a dialog-only measurement cannot see. Shared by the guard
+ * and by the test that forces the guard red, so the two cannot disagree about
+ * what "inside the viewport" means.
+ */
+async function modalFit(dialog: Locator) {
+  return dialog.evaluate((el) => {
+    const card = el.querySelector(".modal-card") ?? el;
+    const boxes = [el.getBoundingClientRect(), card.getBoundingClientRect()];
+    return {
+      left: Math.min(...boxes.map((b) => b.left)),
+      top: Math.min(...boxes.map((b) => b.top)),
+      right: Math.max(...boxes.map((b) => b.right)),
+      bottom: Math.max(...boxes.map((b) => b.bottom)),
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+    };
   });
 }
 
