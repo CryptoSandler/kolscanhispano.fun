@@ -154,7 +154,7 @@ export default function AdminPage() {
             autoComplete="off"
             value={token}
             onChange={(event) => setToken(event.target.value)}
-            placeholder="pegá el token"
+            placeholder="pega el token"
           />
         </label>
         <button type="button" className="cta" onClick={load} disabled={token === "" || busy}>
@@ -257,7 +257,7 @@ export default function AdminPage() {
           <h2 className="label">Padrón</h2>
         </div>
         {rows === null ? (
-          <p className="label">Pegá el token y pulsá «Ver el padrón».</p>
+          <p className="label">Pega el token y pulsa «Ver el padrón».</p>
         ) : rows.length === 0 ? (
           <p className="label">Todavía no hay ningún KOL.</p>
         ) : (

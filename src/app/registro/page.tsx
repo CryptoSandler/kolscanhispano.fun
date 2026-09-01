@@ -40,8 +40,8 @@ function provider(): Provider | null {
 }
 
 const MESSAGES: Record<string, string> = {
-  no_provider: "No encontramos una wallet en este navegador. Instalá una extensión y recargá.",
-  rejected: "Cancelaste la firma. Podés intentarlo otra vez.",
+  no_provider: "No encontramos una wallet en este navegador. Instala una extensión y recarga.",
+  rejected: "Cancelaste la firma. Puedes intentarlo otra vez.",
   chain_not_active: "Todavía no indexamos esa cadena.",
   bad_address: "Esa dirección no tiene la forma que esperábamos.",
   address_taken: "Esa wallet ya está en el padrón.",
@@ -56,7 +56,7 @@ export default function RegistroPage() {
   const [done, setDone] = useState<{ code: string; kolId: string } | null>(null);
 
   const fail = (reason: string) => {
-    setError(MESSAGES[reason] ?? "No se pudo completar el paso. Probá de nuevo.");
+    setError(MESSAGES[reason] ?? "No se pudo completar el paso. Prueba de nuevo.");
   };
 
   async function connect() {
@@ -146,9 +146,9 @@ export default function RegistroPage() {
       {wallets.length === 0 ? (
         <section className="onboarding">
           <header className="onboarding-head">
-            <h1 className="display-lg">Entrá al padrón</h1>
+            <h1 className="display-lg">Entra al padrón</h1>
             <p className="page-subtitle">
-              Conectá tu wallet y firmá un mensaje. No mueve fondos ni aprueba ninguna
+              Conecta tu wallet y firma un mensaje. No mueve fondos ni aprueba ninguna
               transacción.
             </p>
           </header>
@@ -205,9 +205,9 @@ function TweetStep({ kolId, code }: { kolId: string; code: string }) {
         code_missing: "Ese tweet no lleva tu código.",
         bad_url: "Eso no parece un enlace a un tweet.",
         not_found: "No pudimos leer ese tweet. ¿Está público?",
-        unreachable: "No pudimos consultar X ahora mismo. Probá de nuevo en un minuto.",
+        unreachable: "No pudimos consultar X ahora mismo. Prueba de nuevo en un minuto.",
         not_pending: "Ese registro ya no está pendiente.",
-      }[body.error ?? ""] ?? "No se pudo verificar. Probá de nuevo.",
+      }[body.error ?? ""] ?? "No se pudo verificar. Prueba de nuevo.",
     );
   }
 
@@ -216,7 +216,7 @@ function TweetStep({ kolId, code }: { kolId: string; code: string }) {
       <section className="onboarding">
         <header className="onboarding-head">
           <h1 className="display-lg">Último paso</h1>
-          <p className="page-subtitle">Publicá este tweet y pegá el enlace acá.</p>
+          <p className="page-subtitle">Publica este tweet y pega el enlace aquí.</p>
         </header>
 
         <section className="card">
