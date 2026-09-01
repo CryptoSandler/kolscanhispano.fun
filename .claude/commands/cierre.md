@@ -7,13 +7,19 @@ description: Close a batch — prove it works before it gets merged.
 A batch is not closed because the work feels finished. It is closed when every claim
 below has output sitting next to it.
 
-Two rules govern this whole file:
+Three rules govern this whole file:
 
 - **Paste real output.** Never summarise it, never retype it from memory, never describe
   it ("tests pass"). The output is the evidence; a description of the output is not.
 - **A step that cannot run is a blocked close, not a skipped step.** Say which step is
   blocked and why, and stop. Reporting a blocked close is a result. Reporting success
   without it is a lie.
+- **Evidence lands in `~/proyectos/evidencia/<repo>/<date>-<batch>/`, never in `/tmp` and
+  never in a per-session scratchpad.** A close cites its evidence, and a citation into a
+  directory the OS empties — or into a scratchpad addressable only by the session that is
+  already over — is a citation nobody can follow. One subdirectory per repository, with a
+  `README.md` naming what each artifact is. Build output and private keys are not evidence.
+  `~/.claude/GATES.md` has the incident.
 
 ## 1. What changed
 
