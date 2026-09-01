@@ -6,127 +6,166 @@ after the owner confirms, and then through `POST /api/admin/kol` like any other 
 
 ---
 
-## 1. The rules this list obeys
+## 1. Where a wallet is allowed to come from
 
-1. **A wallet appears only if the KOL published it themselves, on X.** Not a wallet found by
-   watching the chain, not one inferred from a trade, not one a third party attributed to
-   them. Spec §6 and `DECISIONES.md` make the roster opt-in; a list assembled by inference
-   would make it the opposite while looking identical from outside.
-2. **Every wallet carries its provenance**: the URL of the post, and the date of the post.
-   A wallet with no citable post is not a wallet, it is a guess.
-3. **No published wallet means the row is `solo handle`** — the candidate still belongs on the
-   list, because the handle is the thing the owner is judging. `/registro` is how that person
-   supplies a wallet later, over their own signature, which is the only path that produces one
-   we are entitled to index.
-4. **Ordered by followers**, descending, measured rather than remembered.
-5. **No real names.** The handle is the identity, per the no-doxx rule in `CLAUDE.md`. A
-   candidate's legal name does not go in this file even when it is public elsewhere.
+Two provenance standards exist, they are not the same thing, and a row says which one it
+rests on.
+
+**A — the KOL published it themselves on X.** Provenance is the post URL and its date. This
+is what `/registro` produces, over the person's own signature, and it is the stronger of the
+two: a signature over `solana:mainnet` cannot be forged, where a post can be deleted.
+
+**B — a public tracker publishes the wallet already labelled with that X handle.**
+Provenance is **the tracker URL where the pair appears, plus the date it was read**. The
+claim being recorded is *"this tracker says this wallet is this handle"*, which is a third
+party's attribution and not the person's own statement. Rows sourced this way are marked
+`tracker` so the difference stays visible when the owner reviews them.
+
+**Never C.** A wallet and a handle are never joined by anything this repository worked out
+for itself — not from a trade, not from a nickname that resembles a handle, not from
+timing. If the pair is not printed by the source, the row has no wallet and is `solo handle`.
+
+**No real names.** The handle is the identity, per the no-doxx rule in `CLAUDE.md`. That
+applies to this file's prose as well as to its table.
+
+**Ordered by followers**, descending, measured rather than remembered.
+
+### The wallet cannot be written into this file, and that is not an oversight
+
+`src/lib/hygiene.ts` fails the suite on any base58 run of 32 characters or more anywhere in
+the repository, tracked or not — which is every Solana address. So the candidate table
+carries the **tracker URL** where the pair is published and never the address itself. The
+address travels from that URL into `POST /api/admin/kol` by hand, and never through a file.
+This is the same rule that stops an address reaching a public surface, applied to the
+repository.
 
 ---
 
 ## 2. The list
 
-| # | Handle | Followers | Country | Wallet (Solana) | Provenance: post URL | Post date | Note |
+| # | Handle | Followers | Country | Source | Provenance URL | Read on | Note |
 |---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | *empty — see §3* |
+| — | — | — | — | — | — | — | *empty — see §3 and §5* |
 
-**The list is empty on purpose, and that is a finding rather than an omission.** §3 records
-what was measured and §4 records the procedure that fills it.
+## 2b. Discarded, with the reason
+
+Sources, not candidates: no source survived to produce a candidate. §3 is the evidence.
+
+| Source | Reachable | Publishes a full wallet | Publishes an X handle | Discarded because |
+|---|---|---|---|---|
+| `kolscan.io/leaderboard` | yes, `200` | yes — in every `/account/<address>` link | **no** | Zero `x.com/*` links on the page. It pairs a wallet with a *nickname*, and a nickname is not a handle. |
+| `kolscan.io/account/<address>` | yes, `200` | yes — the URL itself | **no** | Its whole link set is Solscan transaction links plus site nav. The X icon `docs/references.md` §1 describes is not in what a crawler receives. |
+| `kolscanbrasil.io` | yes, `200` | **no** | yes — ~170 real `x.com/<handle>` links | Wallets are `Wallets Ocultas` or truncated to six characters (`0x3719`, `6BwjER`). A truncated address is not an address. Brazilian by construction, so the language filter would empty it anyway. |
+| `gmgn.ai/trade/kol` | **no** | — | — | `ERR_ABORTED` — the page did not load. |
+| `gmgn.ai/?chain=sol` | yes, `200` | — | token creators' handles only | The wallet and KOL panels render **`You are not logged in to GMGN` / `Log in`**. The handles on this page belong to token socials, not to tracked wallets. |
+| `gmgn.ai/sol/address/<address>` | `200`, empty | — | — | The entire link set is `https://gmgn.ai/app`. The wallet page is client-rendered behind login. |
+| `app.cielo.finance/leaderboard` | **`404`** | — | — | *"The page you're trying to reach does not exist on this server."* No public leaderboard at that path. |
+| `solanatracker.io/kols` | **`404`** | — | — | No public KOL page. |
+| `data.solanatracker.io/v2/pnl/leaderboard/kols` | **`401`** | — | would carry `identity.twitter` | `{"error":"API key is required"}`. **Verified 2026-09-01: this environment holds no tracker API key of any kind** — `.env.local` carries `WALLET_ENC_KEY WALLET_HMAC_KEY HELIUS_WEBHOOK_SECRET DATABASE_URL TEST_DATABASE_URL HELIUS_API_KEY PREVIEW_DATABASE_URL VERCEL_TOKEN VERCEL_OIDC_TOKEN ADMIN_TOKEN` and nothing else. |
+
+**The two failures are different in kind and the table keeps them apart.** `gmgn.ai`,
+`cielo.finance` and `solanatracker` are *gated* — the data may well exist behind a login or
+a key. `kolscan.io` and `kolscanbrasil.io` are *fully readable and simply do not publish the
+pair*: one has wallets without handles, the other handles without wallets. A key would fix
+the first group. Nothing fixes the second, because the data is not there.
 
 ---
 
-## 3. Why the list is empty: discovery does not work from the open web
+## 3. The near-miss, recorded because it nearly shipped
 
-Measured 2026-09-01, from this machine. Per `CLAUDE.md`'s rule that an environment fact is
-verified with a command before it is written down, the queries are here beside the result.
+Asked for `displayName`, `walletAddress` and `xHandle` from `kolscan.io/leaderboard`, the
+structured extractor returned a confident, complete, well-formed answer for **fifty rows** —
+and every `xHandle` in it was the **first six characters of that row's wallet address**:
 
-| Instrument | Query shape | Result |
-|---|---|---|
-| WebSearch | `traders memecoins Solana español X twitter influencers cripto LATAM 2026` | English SEO listicles; zero Spanish-speaking trader handles |
-| WebSearch | `"memecoins" trader español twitter wallet Solana pública seguidores` | Copy-trading tool pages; zero handles |
-| WebSearch | `mejores influencers cripto España Twitter X handles lista 2026` | Global figures (Saylor, Buterin) + one Spanish lawyer |
-| WebSearch | `criptomonedas OR memecoins traders hispanohablantes X … ranking PnL` | Token listicles; explicitly "not covered in these sources" |
-| firecrawl_search | `memecoins solana … español`, `includeDomains: ["x.com"]` | **`web: []`** — zero results |
-| firecrawl_search | `… site:x.com trader memecoins español` | **`web: []`** — zero results |
-| firecrawl_search | `canal español memecoins solana …`, `includeDomains: ["youtube.com"]` | **`web: []`** — zero results |
-| firecrawl_scrape | `https://x.com/search?q=memecoins%20solana%20lang%3Aes&f=user` | **Refused**: *"we do not support this site"* |
+    <wallet beginning SAALE2…>   ->  xHandle: "SAALE2"
+    <wallet beginning AuPp4Y…>   ->  xHandle: "AuPp4Y"
+    <wallet beginning Hw5UKB…>   ->  xHandle: "Hw5UKB"
 
-Two independent search indexes, eight query shapes, and a direct attempt at X's own search.
-The Spanish-language memecoin trading scene lives inside X, and **X's search is the one surface
-neither instrument reaches.** A profile can be read; the graph cannot be walked.
+(The addresses themselves are elided here for the reason §1 gives: writing three real
+ones into this file to illustrate the rule would have broken it. The first draft of this
+paragraph did exactly that, and `hygiene.ts` is what would have caught it.)
 
-**The reference product does not discover them either.** `docs/references.md` §1 records
-kolscan.io's own answer to *"How do I get my wallet on the leaderboard?"*:
+That is the truncated-address chip the row displays, read as a handle. Taking it would have
+published a **fabricated wallet↔handle pairing for fifty real people**, each one internally
+consistent and none of them true.
+
+**The lesson is where the inference came from.** The rule against inferring a pair is easy
+to keep against one's own reasoning and easy to lose against a tool that answers the
+question it was asked. So the pair is now taken only from a **link the source actually
+emits** — `x.com/<handle>` in the page's link set — never from a field an extractor filled
+in. Requesting the links rather than a summary is what exposed it: `kolscan.io` emits no
+`x.com` link at all, which is the fact the extraction had papered over.
+
+---
+
+## 4. The hispanic filter, and what it can actually measure
+
+**The criterion.** A handle is Spanish-speaking when its **bio** and its **recent posts**
+are predominantly in Castilian Spanish. Portuguese is not Spanish, and a Brazilian roster is
+the obvious way to get that wrong. The tells, in order: Spanish function words (`que`, `de`,
+`para`, `con`, `esto`), `ñ`, and `¿ ¡`; against Portuguese `você`, `não`, `ção`, `ã`, `õ`.
+Bio and posts together, because a bio can be one emoji and a post stream can be all tickers.
+English-language trading slang (`entry`, `runner`, `bags`) is not evidence either way — the
+whole niche uses it in every language.
+
+**What the instrument returns, measured 2026-09-01.** `firecrawl_scrape` on an X profile
+gives the display name, bio, exact follower count, and recent posts with URL and date:
+
+    @CarrascosaCris_   60,503 followers, bio, 5 posts with URLs and dates
+    @criptoagiota          23 followers, verified, 1 post
+    @solana         4,158,480 followers
+
+**Two limits, and the first one contradicts the brief.** It returns **one to five recent
+posts, not twenty**. "Predominant language over the last 20 posts" cannot be executed at
+that depth today; what can be executed is "bio plus the three-to-five most recent posts",
+which is a weaker sample and is what a row would actually rest on. Say so per row rather
+than implying twenty were read.
+
+**And a tracker's roster contains handles that no longer resolve.** `@damicripto`, taken
+from `kolscanbrasil.io`'s live link set, comes back `@unknown` / `Followers: Unknown`. The
+instrument refuses rather than inventing a profile, which is what makes it safe to run over
+a list somebody else assembled — but it means a tracker row is not evidence that an account
+exists, and every handle is re-checked before it becomes a candidate.
+
+---
+
+## 5. What is still missing, and it is the seed
+
+Every tracker was tried before asking. Three are gated behind a login or an API key this
+environment does not have; two are fully readable and do not publish the pair at all. So
+there is no row to put in §2, and the honest position is the one `docs/references.md` §1
+already recorded about the category leader:
 
 > "We are looking for the top trenchers! If you have $100k+ PnL in recent months, DM us your
 > wallet for verification on X @kolscan."
 
-— and the teardown's own conclusion beside it: *"The last FAQ answer is the whole curation
-model: manual, DM-based, with a stated PnL bar."* The category leader curates **inbound**.
-That is what `/registro` already is here, and it is a better instrument than any list this
-document could have contained.
+— *"The last FAQ answer is the whole curation model: manual, DM-based, with a stated PnL
+bar."* Inbound curation is what `/registro` is, and it needs no seed.
 
-**What was not done, and why.** The remaining way to produce thirty handles was to write down
-names the model associates with the niche. Every such handle is either wrong or belongs to a
-real person who would then be proposed for a public roster on no evidence at all — the exact
-shape of mistake the no-doxx rule exists to prevent, and irreversible in the direction that
-matters. `docs/padron.md` §1 already settled the general form of this: *"Failure is refusal,
-never acceptance."* An empty list refuses. A plausible list would have accepted everybody.
+**For the tracker path, the missing input is a seed of handles, and it is human.** With a
+list of handles, §4's procedure runs over each one and produces followers, country and the
+language verdict mechanically; the wallet then comes from whichever tracker publishes it
+beside that handle, cited by URL and read-date per §1-B, and never from this repository's
+own inference.
 
-The one Spanish-language candidate that surfaced from an indexable source is recorded below
-rather than in §2, because it has not been verified on X and has no published wallet:
+Two things that would also unblock it, if the owner would rather not supply the list:
 
-- **YouTube `@AdrianSaenz`** — Spanish-language memecoin trading course, 198,534 views on
-  *"Cómo Ganar Dinero Con Trading De Meme Coins"*
-  (`https://www.youtube.com/watch?v=wy4onaf39RA`, published 2024-12-28). No X handle in the
-  video's metadata, and no published wallet. **Solo handle, and not yet even that** — an X
-  account has to be confirmed before this is a candidate at all.
-
-  Recorded by channel handle rather than by the creator's name, which the metadata also
-  carries: rule 5 above is a rule about this file, not only about the table in it.
+- **A Solana Tracker API key.** Its KOL leaderboard returns `identity.twitter` beside the
+  wallet, which is exactly a §1-B pair from a single source. It is the one gated source
+  whose shape is known to be right.
+- **A GMGN login.** Its KOL and wallet trackers are the panels that said `You are not logged
+  in`; whether they publish the pair is unknown until someone looks.
 
 ---
 
-## 4. The procedure that fills the list
-
-Discovery is blocked; **verification is not**, and it produces exactly the columns §2 wants.
-Given a handle, `firecrawl_scrape` on `https://x.com/<handle>` returns the bio, the exact
-follower count, and recent posts with their URL and date. Verified on two live handles
-2026-09-01: `@solana` → 4,158,480 followers; `@CarrascosaCris_` → 60,503 followers, five posts
-with URLs and RFC-1123 dates.
-
-It also **fails loudly on a handle that does not exist**: a made-up handle returned
-`# @unknown (@unknown)` / `Followers: Unknown` rather than an invented profile. So the
-instrument refuses rather than confabulates, which is what makes it safe to run over a list
-somebody else assembled.
-
-Per candidate handle:
-
-1. `firecrawl_scrape https://x.com/<handle>` → **followers** (column 3), and confirmation the
-   account exists. `Unknown` means drop the row, not guess it.
-2. Read the bio and recent posts → **country** (column 4) and whether they are a memecoin
-   trader rather than a general crypto account. Judged from what they post, not from the name.
-3. Search their own posts for a Solana address they published. If found: **wallet**, **post
-   URL** and **post date** (columns 5–7). If not found: `solo handle`, and columns 5–7 stay
-   empty. There is no third option.
-
-**The seed list is the missing input, and it is human.** The owner reads this scene daily; a
-pasted list of handles is the one thing that cannot be derived from here. Thirty handles in,
-this procedure produces the table in §2 mechanically.
-
-`/registro` is the other half, and it needs no seed: it makes the KOL supply the wallet over
-their own signature, which is a stronger provenance than any post URL in this file — a post
-can be deleted, and a signature over `solana:mainnet` cannot be forged.
-
----
-
-## 5. After the owner confirms
+## 6. After the owner confirms
 
 In order, and none of it before the confirmation:
 
 1. `POST /api/admin/kol` per confirmed candidate — handle plus any confirmed wallets, each
-   with `isPublic` set from what the owner decided per wallet, never per KOL.
+   with `isPublic` set from what the owner decided per wallet, never per KOL. The address is
+   typed into the request from its provenance URL; it never enters a file in this repo (§1).
 2. `scripts/requeue-untracked.ts` against the real roster, so history catches up with the
    people who were just added. `docs/padron.md` §3 has the bounds: it clears `parsed_at` on
-   rows that were *accepted and found nothing*, never on rows carrying a `parse_error`, and it
-   takes a limit so the operator decides how much to reprocess.
+   rows that were *accepted and found nothing*, never on rows carrying a `parse_error`, and
+   it takes a limit so the operator decides how much to reprocess.
