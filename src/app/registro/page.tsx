@@ -10,9 +10,14 @@ import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof
  *
  * **It asks for a signature over a message and nothing else.** No transaction is
  * built, offered or sent, and `src/lib/no-money-path.test.ts` is what keeps that
- * true rather than this comment: it refuses `@solana/wallet-adapter` and every
- * transaction-constructing API in the tracked source, which is why this talks to
- * the injected provider directly and uses only `signMessage`.
+ * true rather than this comment: it refuses every transaction-constructing API
+ * and both wallet libraries by name in tracked source, which is why this talks
+ * to the injected provider directly and uses only `signMessage`.
+ *
+ * That scan is literal, and it caught this file — an earlier draft of this
+ * paragraph spelled one of the refused package names out, and a comment naming
+ * it is one paste away from an import. The rule is the file's, not this one's,
+ * so the prose gave way.
  *
  * The flow is three steps and they are on one page, because each one is a
  * sentence: connect, decide what to publish and say who you are, then tweet a
