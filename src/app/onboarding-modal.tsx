@@ -59,9 +59,18 @@ function truncate(address: string): string {
  * in screenshots and in the memory of whoever saw it. Both words are on screen,
  * one of them is selected, and the selected one is the answer.
  *
- * The fieldset's legend names the wallet, so a screen reader announces which
- * wallet the two radios belong to rather than reading `Pública / Privada`
- * twice with nothing to attach it to.
+ * `role="group"` with an `aria-label` naming the wallet, rather than a
+ * `<fieldset>` and a `<legend>`. The semantics are what matter — a screen
+ * reader has to announce *which* wallet these two radios belong to, or it
+ * reads `Pública / Privada` twice with nothing to attach it to — and the
+ * fieldset delivered them at the cost of a layout that could not be fixed:
+ * a `<legend>` does not participate in its fieldset's flex formatting
+ * context, so the identity and the two options stacked instead of sitting on
+ * one line, at every width. Caught in the first screenshot of this screen.
+ *
+ * The radios keep their shared `name`, which is what actually makes them one
+ * group to the browser; `role="group"` is what makes them one group to a
+ * reader who cannot see the row.
  */
 function WalletRow({
   wallet,
@@ -73,13 +82,14 @@ function WalletRow({
   onChange: (isPublic: boolean) => void;
 }) {
   const name = `visibilidad-${wallet.id}`;
+  const label = `${CHAIN_LABEL[wallet.chain]} ${truncate(wallet.address)}`;
   return (
     <li className="row-wallet">
-      <fieldset className="wallet-visibility">
-        <legend className="wallet-identity">
+      <div className="wallet-visibility" role="group" aria-label={`Visibilidad de ${label}`}>
+        <span className="wallet-identity">
           <span className="chip-chain">{CHAIN_LABEL[wallet.chain]}</span>
           <span className="num wallet-address">{truncate(wallet.address)}</span>
-        </legend>
+        </span>
         <div className="visibility-group">
           <label className="visibility-option">
             <input
@@ -102,7 +112,7 @@ function WalletRow({
             Privada
           </label>
         </div>
-      </fieldset>
+      </div>
     </li>
   );
 }

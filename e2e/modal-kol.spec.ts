@@ -151,10 +151,26 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     await expect(dialog.locator(".modal-pnl")).toContainText("+18,42 SOL");
     await expect(rowAt(page, PUBLIC_ROW).locator(".num-lg")).toHaveText("+18,42 SOL");
 
-    // The four cards DESIGN.md lists, in order.
-    await expect(dialog.locator("section.card")).toHaveCount(4);
+    // The five cards DESIGN.md lists, in order. It listed four until
+    // `card-wallets` was added -- DECISIONES.md, 2026-08-31 moved the
+    // visibility decision from the KOL to the wallet, and the detail states
+    // how much of the operation is on show. This case is what caught the
+    // document and the screen disagreeing, so the count stays exact rather
+    // than becoming a `toBeGreaterThan`.
+    await expect(dialog.locator("section.card")).toHaveCount(5);
     await expect(dialog.getByText("PnL acumulado")).toBeVisible();
     await expect(dialog.getByText("PnL por cadena")).toBeVisible();
+    // Counts, never a list. The seed gives this KOL one published wallet, so
+    // the card carries the public half only -- the private half is omitted
+    // rather than printed as a zero, which is DESIGN.md's rule that absence is
+    // rendered as absence.
+    const wallets = dialog.locator("section.card-wallets");
+    await expect(wallets).toBeVisible();
+    await expect(wallets).toContainText("Públicas");
+    await expect(wallets).not.toContainText("Privadas");
+    // And it names neither an address nor anything base58: the whole card is
+    // two words and a number.
+    expect(findDisallowedBase58((await wallets.innerHTML()) ?? "")).toEqual([]);
     // One `pnl_daily` row per KOL, so the daily chart is `chart.ts`'s
     // single-point case: a marker and no line.
     await expect(dialog.locator(".chart circle")).toHaveCount(1);
@@ -397,6 +413,17 @@ test.describe("spec §7: no wallet address reaches the open modal", () => {
     // be the same defect.
     await expect(dialog.locator(".row-trade .privado")).toHaveCount(count);
     await expect(dialog.locator(".privado").first()).toContainText("PRIVADO");
+
+    // The card above the list says the same thing as a count, and its padlock
+    // is drawn rather than typed -- DESIGN.md's objection to an emoji medal
+    // applies to an emoji padlock for the same reason: it carries its own
+    // colour, so it can be neither tinted with the text nor kept out of the
+    // green and red reserved for money.
+    const wallets = dialog.locator("section.card-wallets");
+    await expect(wallets).toContainText("Privadas");
+    await expect(wallets).not.toContainText("Públicas");
+    await expect(wallets.locator("svg")).toHaveCount(1);
+    expect(await wallets.innerText()).not.toContain("🔒");
     // Drawn, not typed: an emoji padlock carries its own colour and could be
     // neither tinted with the text nor kept out of the green and red DESIGN.md
     // reserves for money.

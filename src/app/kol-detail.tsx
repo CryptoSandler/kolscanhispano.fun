@@ -107,17 +107,6 @@ export function KolDetail({
         </Stat>
       </section>
 
-      {/* `DECISIONES.md`, 2026-08-31: the visibility decision is per wallet, so
-          the detail says how much of this KOL's operation is on show — as a
-          **count and a padlock, never a list**. The number is the honest thing
-          to publish: it states the shape of what is hidden without naming any
-          of it. Publishing the public addresses would be a different decision
-          and is not this one. */}
-      <WalletVisibility
-        publicWallets={detail.publicWallets}
-        privateWallets={detail.privateWallets}
-      />
-
       {/* DESIGN.md `card-chain-pnl`: "one line, SOL, because that is every chain
           we index" — and the brief's gloss, "do not imply others". So: one row,
           no column of chains with one entry, no "otras cadenas" placeholder. */}
@@ -130,6 +119,23 @@ export function KolDetail({
           <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
         </div>
       </section>
+
+      {/* `DECISIONES.md`, 2026-08-31: the visibility decision is per wallet, so
+          the detail says how much of this KOL's operation is on show — as a
+          **count and a padlock, never a list**. The number is the honest thing
+          to publish: it states the shape of what is hidden without naming any
+          of it. Publishing the public addresses would be a different decision
+          and is not this one.
+
+          It sits **immediately above `list-defi-trades`** rather than among the
+          figures: it is an identity fact, not a measurement, and this is where
+          it explains the `PRIVADO` rows the reader is about to meet. Putting it
+          between `card-stats` and `card-chain-pnl` split two numeric cards with
+          a non-numeric one. */}
+      <WalletVisibility
+        publicWallets={detail.publicWallets}
+        privateWallets={detail.privateWallets}
+      />
 
       <section className="card">
         <div className="card-head">

@@ -216,7 +216,11 @@ Mensual` segments, and a time axis. **Not `1D / 7D / 30D`**, which the reference
 which would be false here: spec §4.9 makes every window calendar-aligned UTC and never
 rolling, so `Semanal` is the current ISO week — one day long on a Monday — and is not
 `7D`. The genre's label loses to the spec's arithmetic; **`card-stats`** — PnL total, trades, volume; **`card-chain-pnl`** — one
-line, SOL, because that is every chain we index; **`list-defi-trades`** — the KOL's trades,
+line, SOL, because that is every chain we index; **`card-wallets`** — how many of this
+KOL's wallets are published and how many are not, **as counts with a padlock and never as
+a list of addresses** (`DECISIONES.md`, 2026-08-31, which moved the visibility decision
+from the KOL to the wallet and is what this card exists to state; a KOL with no wallets
+renders no card, because absence is rendered as absence); **`list-defi-trades`** — the KOL's trades,
 each with verb, SOL amount by sign and its USD equivalent, and where the wallet is hidden
 the row reads `PRIVADO` with a padlock instead of a signature link.
 

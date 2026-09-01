@@ -1321,14 +1321,10 @@ a.row-moment:hover {
   padding-top: 8px;
 }
 
-/* A `<fieldset>` for the semantics -- the legend names which wallet the two
-   radios belong to -- with the UA's border and inline-start padding removed,
-   because those are the only reasons people reach for a `<div>` here and lose
-   the grouping a screen reader needs. */
+/* `role="group"` rather than a `<fieldset>`: see the note on `WalletRow`. A
+   `<legend>` does not take part in its fieldset's flex layout, so the identity
+   and the two options stacked at every width. */
 .wallet-visibility {
-  border: 0;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
