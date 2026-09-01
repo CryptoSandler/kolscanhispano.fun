@@ -89,7 +89,7 @@ for (const { name, viewport } of SIZES) {
       // No wallet extension exists in this browser, so this is the state a
       // first-time visitor sees. The steps behind it are photographed by the
       // onboarding captures above, which render the same component.
-      await expect(page.getByText("Entrá al padrón")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText("Entra al padrón")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible();
       await page.screenshot({ path: `${OUT}/registro-${name}.png`, fullPage: true });
     });
