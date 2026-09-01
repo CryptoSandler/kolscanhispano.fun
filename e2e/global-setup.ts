@@ -10,6 +10,12 @@
  * `playwright.config.ts` starts the app against the same URL.
  */
 export default async function globalSetup(): Promise<void> {
+  // Before anything else, and before the browser or the dev server exist: one
+  // Playwright run at a time on this machine. See `harness-lock.ts` for the
+  // measured failure this prevents.
+  const { acquireHarnessLock } = await import("./harness-lock");
+  await acquireHarnessLock();
+
   // `@types/node` types `NODE_ENV` as read-only. Writing it is the whole
   // point here — `db.ts` reads it once, at import time, to choose between
   // `DATABASE_URL` and `TEST_DATABASE_URL`.

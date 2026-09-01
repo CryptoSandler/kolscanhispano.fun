@@ -37,6 +37,24 @@ session thinks it is on is the branch every other session is also on.
 The suite lock in `vitest.globalSetup.ts` only guards the database. Nothing
 guards the files.
 
+## One Playwright run at a time, machine-wide
+
+`npm run test:e2e` takes an exclusive lockfile at `/tmp/claude-playwright-e2e.lock` before
+it starts, and releases it in `globalTeardown`. A refusal names the holder's pid, working
+directory and start time.
+
+This is a **machine-wide** rule shared with the other repositories here — see
+`~/.claude/GATES.md` — because the browsers and dev servers contend across projects that
+share no database. Measured here on 2026-08-31: a run took 24.6 minutes and failed two
+cases that never reproduced, while another project's Playwright server was alive. The cost
+was that the collision looked like a product bug.
+
+Implementation: `e2e/harness-lock.ts`. **Do not add a port check to `globalSetup`** —
+Playwright binds the port before `globalSetup` runs, so it fires on our own server; the
+busy-port case is already covered by `reuseExistingServer: false`.
+
+To clear a stuck lock, kill the pid it names. Never `pkill -f playwright`.
+
 ## Never run two suites of this repo at once
 
 `npm test` truncates shared tables in a single Neon database, so two runs
