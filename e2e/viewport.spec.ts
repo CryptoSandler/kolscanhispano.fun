@@ -25,8 +25,25 @@ import { expect, test } from "@playwright/test";
  *
  * The viewport is 1280×900: 1280 is the layout maximum DESIGN.md names, and 900
  * is a laptop, which is what the rows have to survive being read on.
+ *
+ * ## And 390×844, which nothing measured until now
+ *
+ * Three defects shipped because this file only ever ran one size. **DESIGN.md
+ * says nothing about narrow viewports** — it has no "responsive" section, no
+ * breakpoint, no media query, and the string "sideways" in the line above is
+ * this file's own gloss on *"1280px maximum, 16px gutters"*, not a sentence of
+ * that document. So {@link SIZES} is a judgement recorded here rather than a
+ * rule quoted: 390×844 is the iPhone 14/15/16 logical viewport, the narrowest
+ * mainstream size this audience reads on, and a page whose document is wider
+ * than its viewport has no right gutter at all — which is the one part of
+ * Layout that *is* written down.
  */
-test.use({ viewport: { width: 1280, height: 900 } });
+const SIZES = [
+  { name: "1280×900", viewport: { width: 1280, height: 900 } },
+  { name: "390×844", viewport: { width: 390, height: 844 } },
+] as const;
+
+test.use({ viewport: SIZES[0].viewport });
 
 test.describe("the home page at 1280×900", () => {
   /**
@@ -132,3 +149,193 @@ test.describe("the home page at 1280×900", () => {
     expect(await registro.evaluate((node) => node.hasAttribute("tabindex"))).toBe(false);
   });
 });
+
+/**
+ * The same page at both sizes, and the three defects that shipped because
+ * nothing here ever ran at the second one.
+ *
+ * `/leaderboard` rather than `/`: it carries the full table and the modal host,
+ * which is where all three defects lived. The home page keeps its own cases
+ * above.
+ *
+ * The first two assertions of each case are about the *document*, and the last
+ * two are about the modal — so every case here opens it, and the canary below
+ * is what makes that meaningful at all.
+ */
+for (const { name, viewport } of SIZES) {
+  test.describe(`the ranking at ${name}`, () => {
+    test.use({ viewport });
+
+    /**
+     * The canary, at this size too.
+     *
+     * `viewport.spec.ts`'s original canary runs on `/` and counts the two marks
+     * that page mounts. This one is on `/leaderboard`, which mounts one —
+     * `KolModalHost` — and it exists for the same reason: **every case below
+     * this line clicks something.** A mobile case against an unhydrated page
+     * would be the 403-on-every-chunk trap in a new size, and it would be just
+     * as invisible, because a dialog that never opens fails as "element not
+     * found" rather than as "the bundle did not load".
+     */
+    test("actually loads the client bundle", async ({ page }) => {
+      const blocked: string[] = [];
+      page.on("response", (r) => {
+        if (r.url().includes("/_next/static/") && !r.ok()) blocked.push(`${r.status()} ${r.url()}`);
+      });
+
+      await page.goto("/leaderboard");
+      await expect(page.locator("dialog.modal-kol[data-hydrated]")).toHaveCount(1);
+      expect(blocked, "static chunks the browser could not fetch").toEqual([]);
+    });
+
+    /**
+     * Nothing may push the *page* sideways, at either size.
+     *
+     * Wide content is allowed to scroll — the ranking table is 768px of fixed
+     * columns and cannot honour DESIGN.md's *"fixed column widths so a live
+     * update never reflows a table"* and fit 390px at the same time — but it
+     * scrolls **inside its own container**, and the document does not move.
+     *
+     * Measured as `documentElement.scrollWidth` rather than by looking for a
+     * scrollbar: at 390 the ranking's own columns made the document 581px wide
+     * on both `/` and `/leaderboard`, and a screenshot taken at scroll offset 0
+     * showed nothing at all. That is how this shipped.
+     */
+    for (const path of ["/", "/leaderboard"]) {
+      test(`never scrolls the document sideways on ${path}`, async ({ page }) => {
+        await page.goto(path);
+        // The rows have to be there for the measurement to mean anything.
+        await expect(page.locator(".row-leaderboard").first()).toBeVisible();
+
+        const box = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        }));
+
+        expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
+      });
+    }
+
+    /**
+     * DESIGN.md's `modal-kol` is *"opened from a row"* and is the surface a
+     * reader lands on from the ranking; a dialog whose card hangs off the side
+     * of the screen is unreadable there in a way it never is at 1280.
+     */
+    test("keeps the open modal inside the viewport on both axes", async ({ page }) => {
+      const dialog = await openFirstKol(page);
+
+      const fit = await dialog.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          left: r.left,
+          top: r.top,
+          right: r.right,
+          bottom: r.bottom,
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+        };
+      });
+
+      expect(fit.left).toBeGreaterThanOrEqual(0);
+      expect(fit.top).toBeGreaterThanOrEqual(0);
+      expect(fit.right).toBeLessThanOrEqual(fit.innerWidth);
+      expect(fit.bottom).toBeLessThanOrEqual(fit.innerHeight);
+    });
+
+    /**
+     * The trade row's timestamp, as text and as a box.
+     *
+     * **Both halves are needed and neither is sufficient.** `textContent` is
+     * the full `31/08 02:12 UTC` even when CSS has clipped the final glyph off
+     * the screen, so the text assertion alone would have been green over the
+     * defect it is here for — this repository's characteristic failure. And a
+     * box assertion alone would pass over a cell that rendered the wrong
+     * moment, or none.
+     *
+     * So the text is checked against **what the data says** — the ISO instant
+     * in the `<time datetime>` attribute, reformatted here rather than imported
+     * from `format.ts`, because asserting a formatter against itself proves
+     * only that it is deterministic — and the box is then checked for having
+     * actually shown it.
+     */
+    test("renders the trade timestamp in full, and does not clip it", async ({ page }) => {
+      const dialog = await openFirstKol(page);
+      const moment = dialog.locator(".row-moment").first();
+      await expect(moment).toBeVisible();
+
+      const iso = await moment.locator("time[datetime]").getAttribute("datetime");
+      expect(iso, "the trade row must carry the instant it is printing").not.toBeNull();
+
+      // `formatUtcMoment`'s contract, restated from the data: `DD/MM HH:MM UTC`.
+      const [date, time] = iso!.split("T");
+      const [, month, day] = date.split("-");
+      expect(await moment.textContent()).toBe(`${day}/${month} ${time.slice(0, 5)} UTC`);
+
+      // And the column actually holds it. `scrollWidth > clientWidth` is the
+      // overflow the screenshots caught as `31/08 02:12 UT(`.
+      const cell = await moment.evaluate((el) => ({
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      }));
+      expect(
+        cell.scrollWidth,
+        "the timestamp column is narrower than the timestamp it prints",
+      ).toBeLessThanOrEqual(cell.clientWidth);
+
+      /*
+        And the cell is *reachable*, which the two assertions above do not
+        cover and a first pass at this guard missed.
+
+        They are both about the cell in isolation: the text is right and the
+        column is wide enough for it. Neither says anything about where that
+        column ended up. At 390 the row's five columns come to 337px inside a
+        326px card, so the timestamp sat entirely past the row's right edge and
+        `overflow: hidden` erased it — with a correct `textContent` and a
+        column that fit its own text, so this case was green over the very
+        defect it exists for. That is this repository's characteristic failure
+        and it happened here, in this file, on the first attempt.
+
+        The invariant is therefore about the *container*: a trade list may
+        scroll, but it may not hide. Scrolled as far right as it goes, the
+        whole cell has to be inside the visible box.
+      */
+      const reach = await dialog.locator(".trade-list").evaluate((list) => {
+        list.scrollLeft = list.scrollWidth;
+        const box = list.getBoundingClientRect();
+        const cellBox = list.querySelector(".row-moment")!.getBoundingClientRect();
+        return {
+          listLeft: box.left,
+          listRight: box.right,
+          cellLeft: cellBox.left,
+          cellRight: cellBox.right,
+        };
+      });
+      expect(
+        Math.round(reach.cellRight),
+        "the timestamp is cut off by its row and cannot be scrolled into view",
+      ).toBeLessThanOrEqual(Math.round(reach.listRight));
+      expect(Math.round(reach.cellLeft)).toBeGreaterThanOrEqual(Math.round(reach.listLeft));
+    });
+  });
+}
+
+/**
+ * Opens the modal on the top-ranked KOL and hands back the dialog.
+ *
+ * Rank 1 is `cripto_ana`, whose wallets are public (`e2e/seed.ts` sets
+ * `hide_wallets = index % 3 !== 0`), so its trade row ends in a linked
+ * timestamp rather than the `PRIVADO` label — which is the cell these cases
+ * measure. The rank cell is the click target because the row's handler lets
+ * clicks on an `<a>` through to X, and the identity cell is full of one.
+ *
+ * The dev server compiles `/api/kol/[slug]` on first request, which outruns the
+ * default expect timeout on a cold Turbopack.
+ */
+async function openFirstKol(page: import("@playwright/test").Page) {
+  await page.goto("/leaderboard");
+  const dialog = page.locator("dialog.modal-kol");
+  await page.locator(".row-leaderboard").first().locator(".rank-cell").click();
+  await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
+  await expect(dialog.locator(".modal-head")).toBeVisible({ timeout: 30_000 });
+  return dialog;
+}
