@@ -23,7 +23,13 @@ describe("¡Casi listo!", () => {
   it("names itself and the CTA in neutral Spanish", () => {
     const html = render([solana]);
     expect(html).toContain("¡Casi listo!");
-    expect(html).toContain("Entrar al leaderboard");
+    // The button names its destination, and the destination is titled
+    // "Clasificación" (`src/app/leaderboard/page.tsx`). It said "Entrar al
+    // leaderboard" until reading test-results/capturas/onboarding-*.png put
+    // three names for one screen side by side: the nav's "Clasificación",
+    // this screen's own body copy ("no aparece en el ranking"), and an
+    // English noun in the one control that navigates there.
+    expect(html).toContain("Entrar a la clasificación");
     // Neutral, not Rioplatense (CLAUDE.md): `puedes`, never `podés`.
     expect(html).not.toContain("podés");
     expect(html).not.toContain("Podés");

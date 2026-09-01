@@ -306,7 +306,7 @@ export function OnboardingModal({
         disabled={handle === null}
         onClick={() => onSubmit?.({ handle: handle ?? "", publicWalletIds: [...publicIds] })}
       >
-        Entrar al leaderboard
+        Entrar a la clasificación
       </button>
     </section>
   );
