@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { activeChains, isEvm } from "@/lib/chain";
 import { inventAddress, inventEvmAddress } from "@/lib/ids";
 import { OnboardingModal, type OnboardingWallet } from "../../onboarding-modal";
 
@@ -42,12 +43,22 @@ export const metadata = {
  * every fixture uses.
  */
 function mockWallets(): OnboardingWallet[] {
-  return [
-    { id: "vista-1", chain: "solana", address: inventAddress() },
-    { id: "vista-2", chain: "solana", address: inventAddress() },
-    { id: "vista-3", chain: "ethereum", address: inventEvmAddress() },
-    { id: "vista-4", chain: "bnb", address: inventEvmAddress() },
-  ];
+  // Only chains with live ingestion, because that is the whole rule this
+  // screen enforces -- a preview showing four rows across three chains would
+  // be a picture of a screen the product does not offer. Two rows per chain, so
+  // the multi-row layout is still what gets looked at.
+  return activeChains().flatMap((chain, index) => [
+    {
+      id: `vista-${index}-a`,
+      chain,
+      address: isEvm(chain) ? inventEvmAddress() : inventAddress(),
+    },
+    {
+      id: `vista-${index}-b`,
+      chain,
+      address: isEvm(chain) ? inventEvmAddress() : inventAddress(),
+    },
+  ]);
 }
 
 export default function OnboardingPreviewPage() {

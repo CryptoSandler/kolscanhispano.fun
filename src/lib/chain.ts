@@ -2,10 +2,15 @@
  * The set of chains this project can hold rows for, and the one operation that
  * has to happen to an address *before* it is hashed.
  *
- * Nothing here activates a chain. `docs/multichain.md` §6 keeps every EVM chain
- * behind an env flag until its ingestion carries real data; this module is the
- * vocabulary that the schema keys and the signed payloads are written in, which
- * is why it lands in the seam batch rather than with the adapter.
+ * It is also where a chain is *switched on*. `docs/multichain.md` §6 keeps every
+ * EVM chain behind an env flag until its ingestion carries real data, and
+ * {@link activeChains} is that flag read in one place — so the registration
+ * screen, the profile and anything else that offers a chain cannot disagree
+ * about which ones exist yet.
+ *
+ * Everything else here is vocabulary: the names the schema keys and the signed
+ * payloads are written in, which is why this module landed in the seam batch
+ * rather than with the adapter.
  */
 
 /**
@@ -37,6 +42,59 @@ export const EVM_CHAIN_IDS: Record<EvmChain, number> = {
 
 export function isEvm(chain: Chain): chain is EvmChain {
   return chain !== "solana";
+}
+
+/**
+ * The env flag that turns each EVM chain's ingestion on.
+ *
+ * `docs/multichain.md` §6: *"Each chain stays behind an env flag and its public
+ * surface stays closed until its ingestion carries real data."* One flag per
+ * chain rather than one list, so activating a chain is a visible change to a
+ * named variable and a typo can only fail closed.
+ */
+/**
+ * Just the shape this module reads. Narrower than `NodeJS.ProcessEnv`, which
+ * requires `NODE_ENV` and would make every test hand over a variable that has
+ * nothing to do with what is being tested.
+ */
+export type ChainEnv = Record<string, string | undefined>;
+
+const INGESTION_FLAG: Record<EvmChain, string> = {
+  robinhood: "CHAIN_ROBINHOOD_INGESTION",
+  bnb: "CHAIN_BNB_INGESTION",
+  ethereum: "CHAIN_ETHEREUM_INGESTION",
+};
+
+/**
+ * The chains whose ingestion is live, and therefore the only ones a wallet may
+ * be connected on.
+ *
+ * **Why this gates the offer and not just the parser.** A wallet connected on a
+ * chain nothing indexes produces no trades, appears in no feed and moves no
+ * rank. Offering it would be `DESIGN.md`'s last Don't — *"Don't show a control
+ * that does not work"* — except worse than a dead button, because the person
+ * has signed a message and handed over an address for a service that cannot
+ * run yet, and has no way to tell that from a service that is merely quiet.
+ *
+ * **Solana is unconditional, and that is deliberate.** Its ingestion is the
+ * product, not a feature behind a flag: the Helius webhook has been live since
+ * batch 2. Flagging it too would be symmetric and would buy one thing — the
+ * ability to misconfigure the registration screen into offering *nothing*,
+ * which is a broken flow with no error anywhere. The floor is worth more than
+ * the symmetry.
+ *
+ * `env` is a parameter with a default so the tests can state each combination
+ * instead of mutating `process.env` and racing every other file in the suite.
+ */
+export function activeChains(env: ChainEnv = process.env): Chain[] {
+  return CHAINS.filter(
+    (chain) => !isEvm(chain) || env[INGESTION_FLAG[chain]]?.trim() === "on",
+  );
+}
+
+/** Whether a wallet may be connected on `chain` today. */
+export function isChainActive(chain: Chain, env: ChainEnv = process.env): boolean {
+  return activeChains(env).includes(chain);
 }
 
 export function isChain(value: string): value is Chain {

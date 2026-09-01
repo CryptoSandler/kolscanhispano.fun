@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { inventAddress, inventEvmAddress } from "@/lib/ids";
 import { findDisallowedBase58, findDisallowedEvm } from "@/lib/hygiene";
+import type { Chain } from "@/lib/chain";
 import { OnboardingModal, type OnboardingWallet } from "./onboarding-modal";
 
 /**
@@ -10,8 +11,8 @@ import { OnboardingModal, type OnboardingWallet } from "./onboarding-modal";
  * questions here are about what the screen states and what it defaults to, and
  * both are answerable from the emitted HTML.
  */
-function render(wallets: OnboardingWallet[]): string {
-  return renderToStaticMarkup(createElement(OnboardingModal, { wallets }));
+function render(wallets: OnboardingWallet[], available?: Chain[]): string {
+  return renderToStaticMarkup(createElement(OnboardingModal, { wallets, available }));
 }
 
 const solana: OnboardingWallet = { id: "w-1", chain: "solana", address: inventAddress() };
@@ -30,7 +31,7 @@ describe("¡Casi listo!", () => {
   });
 
   it("lists every connected wallet with its chain badge", () => {
-    const html = render([solana, ethereum, bnb]);
+    const html = render([solana, ethereum, bnb], ["solana", "ethereum", "bnb"]);
     expect(html.match(/class="row-wallet"/g)).toHaveLength(3);
     expect(html).toContain("Solana");
     expect(html).toContain("Ethereum");
@@ -120,6 +121,70 @@ describe("¡Casi listo!", () => {
     expect(findDisallowedEvm(html)).toEqual([]);
   });
 
+});
+
+/**
+ * `docs/multichain.md` §6, on this screen: a chain stays behind its ingestion
+ * flag until that flag is on, and the screen offers only what it can index.
+ */
+describe("only the chains with live ingestion", () => {
+  it("names Solana, and only Solana, on today's environment", () => {
+    // No ingestion flag is set anywhere in this repository, so this is what the
+    // screen actually says -- asserted against the real default rather than a
+    // list passed in.
+    const html = renderToStaticMarkup(createElement(OnboardingModal, { wallets: [solana] }));
+    expect(html).toContain("Por ahora indexamos Solana.");
+    expect(html).not.toContain("Ethereum");
+    expect(html).not.toContain("BNB Chain");
+  });
+
+  it("promises the profile rather than a second registration", () => {
+    // The sentence that keeps the limit from reading as a dead end: a chain
+    // that turns on is offered to the KOLs who already exist.
+    const html = render([solana]);
+    expect(html).toContain("te la ofrecemos desde tu perfil");
+    expect(html).toContain("no hace falta que vuelvas a registrarte");
+  });
+
+  it("names every active chain, in Spanish, when more than one is on", () => {
+    // `Intl.ListFormat`: Spanish puts no comma before the conjunction, and a
+    // hand-rolled join would have to learn that.
+    expect(render([solana], ["solana", "bnb"])).toContain("indexamos Solana y BNB Chain.");
+    expect(render([solana], ["solana", "bnb", "ethereum"])).toContain(
+      "indexamos Solana, BNB Chain y Ethereum.",
+    );
+  });
+
+  /**
+   * The defensive half. A wallet on a chain that is not indexed cannot be
+   * connected through this screen — but one could survive a chain being turned
+   * back off, and the wrong answer then is a switch that looks live.
+   *
+   * It is disabled rather than hidden: it is the person's own wallet, and
+   * removing it from the list would be the screen quietly losing something they
+   * connected.
+   */
+  it("disables the switch on a wallet whose chain is not indexed", () => {
+    const html = render([solana, ethereum], ["solana"]);
+    const radios = html.match(/<input[^>]*type="radio"[^>]*>/g) ?? [];
+    expect(radios).toHaveLength(4);
+
+    const disabled = radios.filter((tag) => tag.includes("disabled"));
+    expect(disabled).toHaveLength(2);
+    for (const tag of disabled) expect(tag).toContain("visibilidad-w-2");
+
+    // And the row is still there: the wallet is not hidden.
+    expect(html.match(/class="row-wallet"/g)).toHaveLength(2);
+  });
+
+  it("leaves every switch live when every wallet's chain is indexed", () => {
+    const html = render([solana, ethereum], ["solana", "ethereum"]);
+    const radios = html.match(/<input[^>]*type="radio"[^>]*>/g) ?? [];
+    expect(radios.filter((tag) => tag.includes("disabled"))).toHaveLength(0);
+  });
+});
+
+describe("¡Casi listo!, the rest", () => {
   it("renders nothing but the two sections when there are no wallets yet", () => {
     // Not an error state: a reader can reach this screen having proved nothing
     // if they backed out, and an empty list plus a disabled CTA says so.

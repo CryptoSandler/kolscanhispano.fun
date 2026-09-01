@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Chain } from "@/lib/chain";
+import { activeChains, type Chain } from "@/lib/chain";
 import { normalizeXHandle } from "@/lib/x-handle";
 
 /**
@@ -36,6 +36,20 @@ const CHAIN_LABEL: Record<Chain, string> = {
   bnb: "BNB Chain",
   robinhood: "Robinhood",
 };
+
+/**
+ * `Solana`, `Solana y BNB Chain`, `Solana, BNB Chain y Ethereum`.
+ *
+ * `Intl.ListFormat` rather than a join with a hand-written `y`: Spanish puts
+ * no comma before the conjunction, and the rule is already in the platform. It
+ * also gets `e` before a word starting in `i`- right, which a hand-rolled join
+ * would not until somebody noticed.
+ */
+function listChains(chains: Chain[]): string {
+  return new Intl.ListFormat("es", { style: "long", type: "conjunction" }).format(
+    chains.map((chain) => CHAIN_LABEL[chain]),
+  );
+}
 
 /**
  * `AbCdEf…XyZw`. Six leading characters, four trailing.
@@ -75,10 +89,13 @@ function truncate(address: string): string {
 function WalletRow({
   wallet,
   isPublic,
+  indexed,
   onChange,
 }: {
   wallet: OnboardingWallet;
   isPublic: boolean;
+  /** Whether this wallet's chain has live ingestion. See {@link activeChains}. */
+  indexed: boolean;
   onChange: (isPublic: boolean) => void;
 }) {
   const name = `visibilidad-${wallet.id}`;
@@ -97,6 +114,7 @@ function WalletRow({
               name={name}
               value="publica"
               checked={isPublic}
+              disabled={!indexed}
               onChange={() => onChange(true)}
             />
             Pública
@@ -107,6 +125,7 @@ function WalletRow({
               name={name}
               value="privada"
               checked={!isPublic}
+              disabled={!indexed}
               onChange={() => onChange(false)}
             />
             Privada
@@ -127,9 +146,18 @@ function WalletRow({
  */
 export function OnboardingModal({
   wallets,
+  available = activeChains(),
   onSubmit,
 }: {
   wallets: OnboardingWallet[];
+  /**
+   * The chains a wallet may be connected on today — {@link activeChains}, which
+   * reads the per-chain ingestion flags `docs/multichain.md` §6 defines.
+   *
+   * A parameter with a default rather than a call inside the component, so a
+   * test can state each combination without touching `process.env`.
+   */
+  available?: Chain[];
   onSubmit?: (result: { handle: string; publicWalletIds: string[] }) => void;
 }) {
   /**
@@ -180,6 +208,7 @@ export function OnboardingModal({
               key={wallet.id}
               wallet={wallet}
               isPublic={publicIds.has(wallet.id)}
+              indexed={available.includes(wallet.chain)}
               onChange={(isPublic) => setWallet(wallet.id, isPublic)}
             />
           ))}
@@ -198,6 +227,23 @@ export function OnboardingModal({
           dirección y el enlace a cada operación; tu PnL en el ranking suma todas tus
           wallets, públicas y privadas. Puedes cambiarlo cuando quieras, pero una
           dirección ya publicada no se puede despublicar.
+        </p>
+        {/*
+          `docs/multichain.md` §6: a chain stays behind its ingestion flag until
+          that ingestion carries real data. So the screen names what it can
+          actually index today rather than listing every chain the schema knows
+          about — a wallet connected on a chain nothing reads produces no
+          trades, moves no rank and appears nowhere, and the person who
+          connected it has no way to tell that from a service that is quiet.
+
+          The second sentence is the one that keeps this from reading as a
+          limitation: nobody has to come back and register again. A chain that
+          turns on is offered to the KOLs who already exist, from their profile.
+        */}
+        <p className="label onboarding-note">
+          Por ahora indexamos {listChains(available)}. Cuando activemos una cadena
+          nueva te la ofrecemos desde tu perfil: no hace falta que vuelvas a
+          registrarte.
         </p>
       </section>
 
