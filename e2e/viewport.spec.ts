@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
+import { E2E_ADMIN_TOKEN } from "../playwright.config";
 
 /**
  * DESIGN.md's layout rules, as a regression guard.
@@ -221,6 +222,39 @@ for (const { name, viewport } of SIZES) {
         expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
       });
     }
+
+    /**
+     * `/admin`, which the loop above did not cover, and which broke the rule.
+     *
+     * It is not in that list because its table only exists after a token is
+     * typed — so the measurement needs the roster on screen, and a `goto` alone
+     * would photograph the empty state and pass. It gets its own case rather
+     * than a conditional inside the loop.
+     *
+     * **This shipped.** `.admin-table` carries `.leaderboard`'s `min-width:
+     * 768px` and was not wrapped in `.table-scroll`, so at 390 the *document*
+     * measured 784px. Nothing failed: this guard covered two paths, and
+     * `capturas.spec.ts` photographed it happily — the PNG came out 784px wide
+     * while every other mobile capture came out 390, which is what reading the
+     * captures (GATES.md, `/cierre` §3) is for and what an assertion nobody
+     * wrote is not.
+     */
+    test("never scrolls the document sideways on /admin", async ({ page }) => {
+      await page.goto("/admin");
+      await page.locator('input[type="password"]').fill(E2E_ADMIN_TOKEN);
+      await page.getByRole("button", { name: "Ver el padrón" }).click();
+      // The table is the wide thing; measuring before it renders measures nothing.
+      await expect(page.locator(".admin-table .row-leaderboard").first()).toBeVisible({
+        timeout: 30_000,
+      });
+
+      const box = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+      }));
+
+      expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
+    });
 
     /**
      * DESIGN.md's `modal-kol` is *"opened from a row"* and is the surface a

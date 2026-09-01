@@ -38,6 +38,32 @@ const CHAIN_LABEL: Record<Chain, string> = {
   robinhood: "Robinhood",
 };
 
+/**
+ * `kol.status` is an English enum in the database; this is what the screen says.
+ *
+ * All four values of migration 001's `CHECK (status IN (...))`, because the
+ * screen rendered `row.status` raw and every value but `pending` reached the
+ * page in English — caught by reading `test-results/capturas/admin-*.png`
+ * rather than by a test, since `copy.test.ts` scans for voseo and an English
+ * word is not voseo.
+ *
+ * **No status carries a colour.** `DESIGN.md`: *"Green and red are direction of
+ * money and nothing else. No status pill, no chart series, no validation
+ * message may use them."* The previous `status === "pending" ? … : "gain"` put
+ * `semantic-gain` on every other value — so a **rejected** KOL rendered in the
+ * green that means profit. `pendiente` stays distinguishable without a tint:
+ * it is the only row that carries an `Aprobar` button, and pending rows sort
+ * first. `semantic-stale` is not reused here either — `DESIGN.md` spends it on
+ * `sin precio`, and a second meaning for it is the owner's call, not this
+ * file's.
+ */
+export const STATUS_LABEL: Record<string, string> = {
+  pending: "pendiente",
+  approved: "aprobado",
+  rejected: "rechazado",
+  suspended: "suspendido",
+};
+
 /** Reason codes are what the API answers; this is the Spanish for each. */
 const REASONS: Record<string, string> = {
   unauthorized: "Token incorrecto.",
@@ -261,58 +287,70 @@ export default function AdminPage() {
         ) : rows.length === 0 ? (
           <p className="label">Todavía no hay ningún KOL.</p>
         ) : (
-          <table className="leaderboard admin-table">
-            <thead>
-              <tr>
-                <th scope="col" className="label">Usuario</th>
-                <th scope="col" className="label">Estado</th>
-                <th scope="col" className="label">Tweet</th>
-                <th scope="col" className="label num-head">Wallets</th>
-                <th scope="col" className="label" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="row-leaderboard">
-                  <td>@{row.handle}</td>
-                  <td>
-                    <span className={row.status === "pending" ? "state-unpriced" : "gain"}>
-                      {row.status === "pending" ? "pendiente" : row.status}
-                    </span>
-                  </td>
-                  <td>
-                    {row.tweetUrl === null ? (
-                      <span className="label">—</span>
-                    ) : (
-                      <a
-                        className="handle"
-                        href={row.tweetUrl}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                      >
-                        {row.tweetVerified ? "verificado" : "sin verificar"}
-                      </a>
-                    )}
-                  </td>
-                  <td className="num">
-                    {row.wallets} ({row.publicWallets} públicas)
-                  </td>
-                  <td>
-                    {row.status === "pending" && (
-                      <button
-                        type="button"
-                        className="segment"
-                        onClick={() => approve(row.id)}
-                        disabled={busy}
-                      >
-                        Aprobar
-                      </button>
-                    )}
-                  </td>
+          <div className="table-scroll">
+            {/*
+              The same container the ranking uses. `.leaderboard` carries
+              `min-width: 768px`, so without this wrapper the table made the
+              *document* 784px wide inside a 390px viewport — DESIGN.md: "The
+              page never scrolls horizontally, at either size... Wide content
+              scrolls inside its own container, never by moving the body."
+              Caught by measuring test-results/capturas/admin-movil-390.png,
+              which came out 784px wide while every other mobile capture came
+              out 390.
+            */}
+            <table className="leaderboard admin-table">
+              <thead>
+                <tr>
+                  <th scope="col" className="label">Usuario</th>
+                  <th scope="col" className="label">Estado</th>
+                  <th scope="col" className="label">Tweet</th>
+                  <th scope="col" className="label num-head">Wallets</th>
+                  <th scope="col" className="label" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id} className="row-leaderboard">
+                    <td>@{row.handle}</td>
+                    <td>
+                      <span className="label">
+                        {STATUS_LABEL[row.status] ?? row.status}
+                      </span>
+                    </td>
+                    <td>
+                      {row.tweetUrl === null ? (
+                        <span className="label">—</span>
+                      ) : (
+                        <a
+                          className="handle"
+                          href={row.tweetUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                        >
+                          {row.tweetVerified ? "verificado" : "sin verificar"}
+                        </a>
+                      )}
+                    </td>
+                    <td className="num">
+                      {row.wallets} ({row.publicWallets} públicas)
+                    </td>
+                    <td>
+                      {row.status === "pending" && (
+                        <button
+                          type="button"
+                          className="segment"
+                          onClick={() => approve(row.id)}
+                          disabled={busy}
+                        >
+                          Aprobar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </main>

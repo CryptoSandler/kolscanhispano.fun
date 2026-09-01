@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { STATUS_LABEL } from "./admin/page";
 
 /**
  * `CLAUDE.md`: *"Site UI copy: neutral Spanish (not Rioplatense)."*
@@ -114,5 +115,44 @@ describe("the UI speaks neutral Spanish", () => {
 
   it("scans a meaningful number of files, so an empty glob cannot pass it", () => {
     expect(uiFiles().length).toBeGreaterThan(8);
+  });
+});
+
+/**
+ * The other way English reaches a Spanish screen: not a word somebody typed,
+ * but a database enum rendered straight into the page.
+ *
+ * `/admin` printed `row.status` raw, so `approved`, `rejected` and `suspended`
+ * all shipped in English while only `pending` had been translated. The voseo
+ * scan above cannot see it — an English word is not voseo — and it was caught
+ * by reading `test-results/capturas/admin-desktop-1280.png`, which is what
+ * `~/.claude/GATES.md` and `/cierre` §3 now require of every capture.
+ *
+ * The guard is driven off migration 001's own `CHECK` list rather than a
+ * second copy of it, so a fifth status added to the schema fails here instead
+ * of appearing on the screen in English.
+ */
+describe("a status enum never reaches the screen untranslated", () => {
+  /** The values migration 001 allows for `kol.status`, read from the migration. */
+  function schemaStatuses(): string[] {
+    const sql = readFileSync(join(process.cwd(), "migrations", "001_core.sql"), "utf8");
+    const match = sql.match(/status\s+TEXT NOT NULL DEFAULT 'pending'\s*CHECK \(status IN \(([^)]*)\)\)/);
+    if (!match) throw new Error("could not find kol.status CHECK in migrations/001_core.sql");
+    return [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  }
+
+  it("reads the four the schema actually declares", () => {
+    expect(schemaStatuses()).toEqual(["pending", "approved", "rejected", "suspended"]);
+  });
+
+  it("has Spanish for every status the schema allows", () => {
+    const missing = schemaStatuses().filter((status) => !(status in STATUS_LABEL));
+    expect(missing, "every kol.status needs a STATUS_LABEL entry").toEqual([]);
+  });
+
+  it("translates them, rather than passing the English through", () => {
+    for (const status of schemaStatuses()) {
+      expect(STATUS_LABEL[status]).not.toBe(status);
+    }
   });
 });
