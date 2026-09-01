@@ -1060,6 +1060,13 @@ a.row-age:hover {
   gap: 12px;
   padding: 0 40px var(--stack) 0;
   border-bottom: 1px solid var(--hairline);
+  /* The PnL drops to its own line before the identity has to give anything up.
+     DESIGN.md sets no breakpoint ("between them the layout is fluid"), so this
+     is a flex basis rather than a media query: below roughly 180px of room for
+     the name and handle, `.modal-pnl` wraps instead of squeezing them. At 390
+     that turned `@cripto_ana` into `@cr…` and the name into `A…` — trading one
+     clipping for another, when the document already says clipping is a bug. */
+  flex-wrap: wrap;
 }
 
 .modal-identity {
@@ -1067,7 +1074,30 @@ a.row-age:hover {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  flex: 1 1 auto;
+  /* 180px is the basis that makes the wrap above happen at the right moment:
+     wide enough for a name and a full 15-character handle, narrow enough that
+     1280 keeps everything on one row. */
+  flex: 1 1 180px;
+}
+
+/* In the modal header, the *name* is what gives way — never the handle.
+   `DESIGN.md`'s `modal-kol` carries "the `@handle` (always...)", and the
+   handle is the identity key the reader recognises; the display name beside
+   it is not. Unconstrained, `.headline` wrapped to two lines at 390 and the
+   cabal chip landed on top of it, while `.identity-second > .handle`'s
+   ellipsis — right for a 56px ranking row — cut `@cripto_ana` down to `@cr…`.
+   Read off test-results/capturas/detalle-movil-390.png; DESIGN.md, Responsive:
+   "Clipping is not a compact layout, it is a bug." */
+.modal-identity .headline {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-identity .identity-second > .handle {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  flex: none;
 }
 
 .modal-pnl {
@@ -1076,6 +1106,10 @@ a.row-age:hover {
   align-items: flex-end;
   gap: 2px;
   flex: none;
+  /* Pushed to the row's end on one line, and to its own full-width line once
+     `.modal-head` wraps -- `auto` collapses to nothing there, so the figure
+     stays right-aligned in both arrangements without a second rule. */
+  margin-left: auto;
 }
 
 /* The cards are separated by hairlines inside one panel rather than being four
