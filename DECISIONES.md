@@ -307,3 +307,43 @@ redirect, para que el path sea indistinguible de uno que nunca se ruteó.
 
 **Se borra en la tanda que construya `/registro` de verdad.** Anotado acá y no recordado,
 para que no se convierta en una segunda entrada permanente.
+
+---
+
+## 2026-09-01 — Cómo se verificó la migración 011/012/013 en producción
+
+Dos pruebas independientes, porque *"la DDL corrió"* no es *"la restricción muerde"*.
+
+**Espejo.** El esquema de producción, objeto por objeto —constraints, índices y las columnas
+`chain` e `is_public`— contra la base de la rama sobre la que corrieron los 977 tests, que a
+su vez se cortó de producción **antes** de las migraciones. 87 objetos contra 90, idénticos
+salvo tres: `test_database_marker` y sus dos índices. Esa diferencia es la correcta y es una
+segunda confirmación por sí sola — producción no lleva el centinela, así que ninguna corrida
+de la suite puede truncarla.
+
+**Comportamiento, dentro de una transacción que siempre hace ROLLBACK.** Cada clave nueva se
+ejercita con una escritura real, y cada rechazo se verifica **por SQLSTATE**, no por "algo
+tiró": si el `INSERT` de prueba hubiera dejado `side` en NULL, la violación de not-null
+habría pasado como violación de FK y el caso quedaba verde por la razón equivocada. Eso pasó
+en el primer intento y se corrigió antes de correrlo.
+
+    PASS  una address es dos wallets distintas en dos chains
+    PASS  la misma address dos veces en UNA chain sigue rechazada (23505)
+    PASS  un trade cuya chain no coincide con su wallet lo rechaza la FK (23503)
+    PASS  el par wallet/chain que sí coincide se acepta
+    PASS  un hash de firma sobrevive en dos chains
+    PASS  dos chains conservan dos filas en un día en pnl_daily
+    PASS  kol_wallet.is_public arranca en FALSE
+    PASS  el segundo reclamo sobre un nonce no obtiene nada
+    PASS  el rollback no dejó nada atrás
+
+El cuarto caso existe para que el tercero no pueda pasar por "todo insert falla".
+
+**Orden de la ventana.** Se migró **antes** de desplegar, no después. El código nuevo contra
+el esquema viejo tira *cada página* (el feed joinea `kol_wallet`); el esquema nuevo contra el
+código viejo solo rompe escrituras —el webhook y los crons— que reintentan. La ventana fue el
+tiempo de un deploy.
+
+**Los scripts de verificación no se commitearon.** Escriben en producción, aunque sea dentro
+de un rollback, y una herramienta así en el repositorio es una que alguien usa mal más
+adelante. El método está acá; reproducirlo son treinta líneas.
