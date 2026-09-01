@@ -258,7 +258,7 @@ function TweetStep({ kolId, code }: { kolId: string; code: string }) {
           {state === "ok" && (
             <p className="label onboarding-note">
               Tu tweet quedó verificado. Un administrador tiene que aprobarte para que
-              aparezcas en el ranking; hasta entonces tu perfil no es visible.
+              aparezcas en la clasificación; hasta entonces tu perfil no es visible.
             </p>
           )}
         </section>

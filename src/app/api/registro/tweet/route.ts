@@ -63,6 +63,6 @@ export async function POST(request: Request): Promise<Response> {
     tweetVerified: true,
     // Said plainly, because the person has just done the last thing they can do
     // and the screen has to explain why nothing appears yet.
-    message: "Tu tweet quedó verificado. Un administrador tiene que aprobarte para que aparezcas en el ranking.",
+    message: "Tu tweet quedó verificado. Un administrador tiene que aprobarte para que aparezcas en la clasificación.",
   });
 }

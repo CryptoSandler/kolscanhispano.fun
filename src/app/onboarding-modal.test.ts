@@ -97,7 +97,7 @@ describe("¡Casi listo!", () => {
     // loosening the gate.
     const html = render([solana]);
     expect(html).toContain("código de verificación");
-    expect(html).toContain("no aparece en el ranking");
+    expect(html).toContain("no aparece en la clasificación");
   });
 
   it("names the three forms the handle field accepts", () => {

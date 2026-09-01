@@ -65,7 +65,7 @@ no logo, no face, no string.
 
 The wordmark is the domain in Inter 700, with **`.fun` in the accent** — the dot alone is
 invisible at 20px, measured rather than assumed. Subtitle:
-**"Ranking de traders hispanos"**. No logo, no mascot, no illustration.
+**"Clasificación de traders hispanos"**. No logo, no mascot, no illustration.
 
 **The accent stays cyan `#22d3ee`** and neither reference uses it. It marks the wordmark,
 focus rings, the selected tab, and the live indicator. **It never touches a figure.**
@@ -125,6 +125,15 @@ ages, ranks. A column of figures aligns on the decimal for its whole height.
   apart from a real identifier by style, and so do we.
 
 Spanish `es-ES` numerals throughout: `+18,42 SOL`, `1.802,4`, `68,4 %`.
+
+**The ranked list is called `Clasificación`, everywhere a reader can see.** Nav label,
+page title, `<title>`, meta description, the wordmark subtitle, body copy and every CTA
+that points at it. It had three names at once — the nav said `Clasificación`, the body
+said *"el ranking"*, and the onboarding CTA said *"leaderboard"* — which reads as three
+screens rather than one. `ranking` and `leaderboard` survive only where a reader never
+meets them: identifiers, CSS class names, and the `/leaderboard` route, which stays
+because changing a published URL costs more than the inconsistency it removes.
+`copy.test.ts` scans for it.
 
 **One documented exception: the avatar monogram is set in `system-ui`.** The fallback avatar
 is an SVG served from `/api/avatar/<kol_id>` and consumed inside an `<img>`, which is an
@@ -235,7 +244,7 @@ from a stalled indexer, which reads as fifty traders who all broke exactly even.
 
 | Surface | Populated | Empty |
 |---|---|---|
-| `leaderboard` | ranked rows, PnL by sign | `Todavía no hay operaciones cerradas.` / `Aquí va el ranking por PnL realizado del período, en cuanto los KOL del padrón cierren su primera posición.` |
+| `leaderboard` | ranked rows, PnL by sign | `Todavía no hay operaciones cerradas.` / `Aquí va la clasificación por PnL realizado del período, en cuanto los KOL del padrón cierren su primera posición.` |
 | `feed` | rows arriving at the top | `El feed está esperando la primera operación.` / `Cada compra y cada venta de los KOL del padrón aparece aquí, en cuanto la cadena la confirma.` |
 | `modal-kol` chart | line with points | `Sin operaciones cerradas en este período.` |
 | row, no closed episodes | win rate | `sin cierres` — never `0 %` |

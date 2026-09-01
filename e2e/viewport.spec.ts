@@ -141,7 +141,7 @@ test.describe("the home page at 1280×900", () => {
   test("the wallet slot is a real link now that the page behind it exists", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByText("Ranking de traders hispanos")).toBeVisible();
+    await expect(page.getByText("Clasificación de traders hispanos")).toBeVisible();
     const registro = page.locator(".registro");
     // It held a muted, unfocusable label while `/registro` did not exist --
     // DESIGN.md's "don't show a control that does not work". The page exists,

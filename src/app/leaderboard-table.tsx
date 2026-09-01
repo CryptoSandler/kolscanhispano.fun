@@ -79,8 +79,8 @@ export function LeaderboardTable({
       <div className="state-empty">
         <p className="state-empty-lead">Todavía no hay operaciones cerradas.</p>
         <p className="state-empty-note">
-          Aquí va el ranking por PnL realizado del período, en cuanto los KOL del padrón cierren su
-          primera posición.
+          Aquí va la clasificación por PnL realizado del período, en cuanto los KOL del
+          padrón cierren su primera posición.
         </p>
       </div>
     );

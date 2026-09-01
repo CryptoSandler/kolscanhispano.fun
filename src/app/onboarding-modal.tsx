@@ -224,7 +224,7 @@ export function OnboardingModal({
         */}
         <p className="label onboarding-note">
           Privada es la opción por defecto. Hacer pública una wallet solo muestra su
-          dirección y el enlace a cada operación; tu PnL en el ranking suma todas tus
+          dirección y el enlace a cada operación; tu PnL en la clasificación suma todas tus
           wallets, públicas y privadas. Puedes cambiarlo cuando quieras, pero una
           dirección ya publicada no se puede despublicar.
         </p>
@@ -297,7 +297,7 @@ export function OnboardingModal({
       */}
       <p className="label onboarding-note">
         El último paso es publicar un tweet con tu código de verificación. Hasta que lo
-        aprobemos, tu perfil no aparece en el ranking.
+        aprobemos, tu perfil no aparece en la clasificación.
       </p>
 
       <button

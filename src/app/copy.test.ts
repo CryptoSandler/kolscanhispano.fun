@@ -156,3 +156,93 @@ describe("a status enum never reaches the screen untranslated", () => {
     }
   });
 });
+
+/**
+ * One screen, one name.
+ *
+ * `DESIGN.md`: *"The ranked list is called `Clasificación`, everywhere a reader
+ * can see."* It had three names at once — the nav said `Clasificación`, the
+ * onboarding CTA said `leaderboard`, and five sentences of body copy said *"el
+ * ranking"* — which reads as three screens rather than one.
+ *
+ * **It looks for the words in Spanish prose, not for the words.** Subtracting
+ * identifiers was tried first and does not converge: `row-leaderboard` is a
+ * class, `/leaderboard` is a route, `readLeaderboard` is an import, and
+ * `const leaderboard = await readLeaderboard(...)` is a local variable spelled
+ * exactly like the English noun. Excluding each shape needs a rule per shape,
+ * and the next shape ships unguarded.
+ *
+ * So the pattern names what it is looking for, the same way `VOSEO` above does
+ * after an endings-based heuristic failed for the same reason: an article or a
+ * preposition in front of the word, or the word heading a phrase with `de`
+ * after it. That is what copy looks like and what an identifier never does.
+ * Comments are stripped first, so `DECISIONES.md`'s quoted *"el ranking suma
+ * todas las wallets"* in a developer note does not fail the check.
+ *
+ * `ranking` and `leaderboard` survive untouched wherever a reader never meets
+ * them — identifiers, class names, and the `/leaderboard` route, which stays
+ * because a published URL costs more to change than the inconsistency it removes.
+ */
+describe("the ranked list has one name in the UI", () => {
+  /** Everything under `src/app` a reader's words can come out of, `.ts` included. */
+  function copyFiles(): string[] {
+    const root = join(import.meta.dirname, "..", "..");
+    return execFileSync("git", ["ls-files", "src/app"], { cwd: root, encoding: "utf8" })
+      .split("\n")
+      .filter((file) => (file.endsWith(".tsx") || file.endsWith(".ts")) && !file.endsWith(".test.ts"))
+      .map((file) => join(root, file));
+  }
+
+  /** The Spanish function words that mark the next noun as copy. */
+  const ARTICLE = "el|la|los|las|un|una|del|al|de|en|tu|su|mi|nuestro";
+
+  /** The two words, where they sit in Spanish prose rather than in code. */
+  function bannedNames(source: string): string[] {
+    const prose = source
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1 ");
+    const inPhrase = new RegExp(`\\b(?:${ARTICLE})\\s+(ranking|leaderboard)\\b`, "gi");
+    const headsPhrase = /\b(ranking|leaderboard)\s+de\s+\p{L}/giu;
+    return [
+      ...[...prose.matchAll(inPhrase)].map((m) => m[1]),
+      ...[...prose.matchAll(headsPhrase)].map((m) => m[1]),
+    ];
+  }
+
+  it("says Clasificación and never ranking or leaderboard, in any page, component or route", () => {
+    const offenders: string[] = [];
+    for (const file of copyFiles()) {
+      for (const word of bannedNames(readFileSync(file, "utf8"))) {
+        offenders.push(`${file.split("/src/").pop()}: ${word}`);
+      }
+    }
+    expect(offenders, "DESIGN.md: the ranked list is called Clasificación everywhere a reader can see").toEqual([]);
+  });
+
+  it("catches the three names that actually shipped together", () => {
+    expect(bannedNames('<p>tu perfil no aparece en el ranking.</p>')).toEqual(["ranking"]);
+    expect(bannedNames("<button>Entrar al leaderboard</button>")).toEqual(["leaderboard"]);
+    expect(bannedNames('<p className="brand-subtitle">Ranking de traders hispanos</p>')).toEqual(["Ranking"]);
+  });
+
+  it("leaves the identifiers, the class names and the route alone", () => {
+    // Every shape that made the subtract-the-identifiers version unworkable.
+    expect(bannedNames('import { readLeaderboard, LEADERBOARD_TOP } from "@/lib/leaderboard";')).toEqual([]);
+    expect(bannedNames('<table className="leaderboard admin-table">')).toEqual([]);
+    expect(bannedNames('<tr className={`row-leaderboard is-podium-${n}`}>')).toEqual([]);
+    expect(bannedNames('<Link href="/leaderboard">Clasificación</Link>')).toEqual([]);
+    expect(bannedNames('{ href: "/leaderboard", label: "Clasificación" }')).toEqual([]);
+    expect(bannedNames("const leaderboard = await readLeaderboard({ window, unit });")).toEqual([]);
+    expect(bannedNames("<LeaderboardTable entries={leaderboard.entries} unit={unit} />")).toEqual([]);
+    expect(bannedNames("`/leaderboard?window=${w}&unit=${u}`")).toEqual([]);
+  });
+
+  it("does not read a developer comment as UI copy", () => {
+    expect(bannedNames("// the ranking reorders every window\nconst a = 1;")).toEqual([]);
+    expect(bannedNames("/* DECISIONES.md: el ranking suma todas las wallets */")).toEqual([]);
+  });
+
+  it("scans a meaningful number of files, so an empty glob cannot pass it", () => {
+    expect(copyFiles().length).toBeGreaterThan(20);
+  });
+});

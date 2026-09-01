@@ -90,7 +90,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link className="wordmark" href="/">
                 kolscanhispano<span className="wordmark-accent">.fun</span>
               </Link>
-              <p className="brand-subtitle">Ranking de traders hispanos</p>
+              <p className="brand-subtitle">Clasificación de traders hispanos</p>
             </div>
 
             <SiteNav />
