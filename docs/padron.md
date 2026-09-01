@@ -151,5 +151,12 @@ at.
 | 14 | Every route | rate-limited, and the limiter is reached before the work |
 
 The mutation that matters for §1: make the oEmbed check compare `author_name` instead of
-`author_url` and confirm test 9 dies. A check that compares display names is the one this
-document exists to prevent.
+`author_url` and confirm **test 9b** dies. A check that compares display names is the one
+this document exists to prevent.
+
+It says 9b and not 9 because the mutation was run and 9 survived it. Case 9 submits a link
+whose *path* is somebody else's, which the URL check refuses before a request is spent — so
+it never reaches the comparison at all. The case that reaches it is the one where the path
+says the right handle and X says a different one, which is also the realistic attack: a path
+is whatever the caller typed, and an impostor submits
+`x.com/<target>/status/<their own tweet id>`.

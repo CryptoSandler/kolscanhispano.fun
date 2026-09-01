@@ -146,6 +146,24 @@ export const PUBLIC_LIMITS = {
   "kol-detail": 60,
   avatar: 600,
   page: 120,
+  /**
+   * `/registro`'s three endpoints, and the tightest numbers here by a wide
+   * margin, because these are the only public surfaces that **write**.
+   *
+   * - **`registro-nonce` — 20.** A nonce per wallet, and nobody connects twenty
+   *   wallets a minute. It is a row in `wallet_proof_nonce` per call, so the
+   *   limit is also what bounds that table between prunes.
+   * - **`registro` — 6.** The submit. It verifies a signature per wallet —
+   *   curve arithmetic, which is the one CPU-bound thing this app does — and
+   *   writes a KOL. Six is a person retrying a failed submit five times.
+   * - **`registro-tweet` — 10.** Each call makes an outbound request to
+   *   `publish.twitter.com`, so this is the number that bounds what this app
+   *   can be made to send *somebody else*. Ten a minute per address is a person
+   *   pasting a link and fixing it, and nothing like a useful amplifier.
+   */
+  "registro-nonce": 20,
+  registro: 6,
+  "registro-tweet": 10,
 } as const;
 
 export type PublicBucket = keyof typeof PUBLIC_LIMITS;
