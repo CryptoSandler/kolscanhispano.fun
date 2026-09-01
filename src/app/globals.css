@@ -83,6 +83,23 @@
      does not have to equal it. */
   --stack: 12px;
 
+  /* The trade row's last column, shared by `.row-moment` and `.privado` so the
+     two line up whether a row ends in a link or in the label that stands where
+     one would.
+
+     It is derived from the *format*, not from any row's content, which is what
+     keeps it a fixed width under DESIGN.md's Do — "fix column widths so a live
+     update never reflows a table". `formatUtcMoment` emits exactly fifteen
+     characters (`DD/MM HH:MM UTC`) and `.num` sets JetBrains Mono with tabular
+     figures, so every timestamp this column will ever hold is the same width:
+     measured 117px at 13px in Chrome on 2026-08-31. 124px is that plus headroom
+     for the `ui-monospace` fallback stack, and `viewport.spec.ts` asserts the
+     cell does not clip, so a wider face fails a test rather than a screenshot.
+
+     It was 112px, which cut the final `C` off `UTC` on every row, at every
+     viewport, in production. */
+  --trade-moment: 124px;
+
   --radius-sm: 3px;
   --radius-md: 6px;
   --radius-lg: 10px;
@@ -1128,18 +1145,37 @@ a.row-age:hover {
   margin: 0;
   padding: 0;
   max-height: calc(5 * 36px);
-  overflow-y: auto;
+  /* Both axes, for the same reason: the five rows that fit vertically scroll,
+     and at a viewport too narrow for the row's fixed columns the row scrolls
+     too. See `.row-trade`. */
+  overflow: auto;
   overscroll-behavior: contain;
 }
 
+/* **`overflow: hidden` used to live here, and it was destroying content.**
+   The row's columns come to 337px before the token symbol has any width; the
+   modal card is 326px wide at a 390px viewport, so the last column — the
+   timestamp — ran 15px past the row's right edge and was cut off with no way
+   to see it. `$SP3ND` had already been squeezed to zero width by then.
+
+   `min-width: max-content` makes the row as wide as its own columns rather
+   than as wide as whatever holds it, and `.trade-list` above scrolls to reach
+   the rest. That is DESIGN.md's Do — "fix column widths so a live update never
+   reflows a table" — carried through to the size where it stops fitting: the
+   widths do not move and nothing is dropped, so the reader gets every field of
+   every trade and scrolls for the ones past the edge.
+
+   Above ~340px of card the row is wider than its content, `.symbol` takes the
+   slack through its `flex: 1 1 auto`, and nothing scrolls — 1280px is
+   unchanged. */
 .row-trade {
   display: flex;
   align-items: center;
   gap: 8px;
   height: 36px;
+  min-width: max-content;
   border-bottom: 1px solid var(--hairline);
   white-space: nowrap;
-  overflow: hidden;
 }
 
 .row-trade .symbol {
@@ -1154,10 +1190,11 @@ a.row-age:hover {
 }
 
 /* Fixed width, shared with `.privado`, so the last column lines up whether a
-   row ends in a link or in the label that stands where one would. */
+   row ends in a link or in the label that stands where one would. See
+   `--trade-moment` for why it is the width it is. */
 .row-moment {
   flex: none;
-  width: 112px;
+  width: var(--trade-moment);
   text-align: right;
   color: var(--ink-subtle);
 }
@@ -1173,7 +1210,7 @@ a.row-moment:hover {
    `ink-subtle`, so it reads as native rather than as something withheld. */
 .privado {
   flex: none;
-  width: 112px;
+  width: var(--trade-moment);
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
