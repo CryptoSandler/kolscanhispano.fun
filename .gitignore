@@ -1,4 +1,9 @@
 .env*.local
+# `.env*.local` only matches names *ending* in `.local`, so a hand-made backup
+# -- `.env.local.bak`, `.env.local.2026-09-01` -- was not ignored and sat in a
+# public repo's working tree holding every secret the real file holds. This
+# line covers anything prefixed by the real file's name.
+.env.local*
 node_modules
 .next
 next-env.d.ts
