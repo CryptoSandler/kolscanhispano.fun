@@ -129,9 +129,35 @@ export async function syncHeliusWebhook(
   const hash = addressSetHash(addresses);
   const state = await readWebhookState();
 
-  // Spec §5.4: "If unchanged: no API call, zero credits."
-  if (state !== null && state.hash === hash) {
+  /*
+    Spec §5.4 reads *"If unchanged: no API call, zero credits."* **It costs one
+    call now, and this is why.**
+
+    The hash guards the address *set*. It says nothing about the webhook still
+    being there — and on 2026-09-02, two hours after this one was created,
+    `GET /v0/webhooks` answered `[]` for a webhook that `GET /v0/webhooks/<id>`
+    returned `200` for, with all three addresses. The list is not merely a
+    summary, it is inconsistent. A webhook deleted from a dashboard, or
+    auto-disabled by Helius on the free plan (spec §5.1), would leave this
+    function reporting "unchanged" forever while nothing was being watched:
+    exactly the silence this module exists to end.
+
+    So existence is established first, by id, and the four combinations fall out
+    of it: known and current is the only no-op; known and stale is an edit;
+    unknown — never synced, or synced to a webhook that is gone — is a create.
+    An edit against an id Helius has forgotten would answer 404 for ever.
+
+    The credit is spent on roster mutations, a handful a week, and not on a
+    schedule.
+  */
+  const exists =
+    state !== null && (await confirmAddressCount(fetcher, apiKey, state.webhookId)) !== null;
+
+  if (state !== null && exists && state.hash === hash) {
     return { ok: true, changed: false, addresses: addresses.length, reason: "unchanged" };
+  }
+  if (state !== null && !exists) {
+    console.warn("syncHeliusWebhook: the stored webhook is gone; recreating");
   }
 
   const body = JSON.stringify({
@@ -146,10 +172,10 @@ export async function syncHeliusWebhook(
   // the same endpoint would double every delivery — harmless, because
   // `storeRawTxBatch` is keyed on the signature, and still two credits' worth
   // of the same event and two rows in somebody's dashboard.
-  const created = state === null;
+  const created = !exists;
   const endpoint = created
     ? `${HELIUS_API}?api-key=${encodeURIComponent(apiKey)}`
-    : `${HELIUS_API}/${encodeURIComponent(state.webhookId)}?api-key=${encodeURIComponent(apiKey)}`;
+    : `${HELIUS_API}/${encodeURIComponent(state!.webhookId)}?api-key=${encodeURIComponent(apiKey)}`;
 
   let webhookId: string;
   try {

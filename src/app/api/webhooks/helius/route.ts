@@ -1,8 +1,35 @@
 import { timingSafeEqual } from "node:crypto";
+import { after } from "next/server";
+import { withLock } from "@/lib/lock";
+import { parsePending } from "@/lib/parse-swap";
 import { storeRawTxBatch, type RawTxInput } from "@/lib/raw-tx";
 import { clientIp, hitLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+
+/**
+ * The response is sent inside Helius's one-second budget; this is the ceiling
+ * on the drain that runs **after** it, and it has to be a ceiling the platform
+ * will actually give us.
+ *
+ * A drain that is killed mid-way costs nothing: `parsePending` marks each row
+ * as it finishes it, so partial progress persists, and `withLock` holds its
+ * advisory lock on a dedicated connection that the platform closes when it
+ * kills the function — which releases the lock. The next delivery, or the
+ * cron, picks up where this stopped.
+ */
+export const maxDuration = 60;
+
+/**
+ * How many rows one delivery drains.
+ *
+ * Measured 2026-08-31: ~1.8 s a row in CI and ~3.7 s locally. Ten is a batch
+ * that fits comfortably inside {@link maxDuration} at either rate, and ingest
+ * on 2026-09-02 ran 30–60 rows an hour — so a delivery that drains ten keeps
+ * the queue at zero on any ordinary hour, and a burst is absorbed by the next
+ * delivery rather than by one long function.
+ */
+const DELIVERY_DRAIN_BATCH = 10;
 
 function authorized(header: string | null): boolean {
   const expected = process.env.HELIUS_WEBHOOK_SECRET;
@@ -134,7 +161,51 @@ export async function POST(request: Request): Promise<Response> {
 
   if (inputs.length > 0) {
     await storeRawTxBatch(inputs);
+    drainAfterResponse();
   }
 
   return new Response("ok", { status: 200 });
+}
+
+/**
+ * Parses a small batch **after** this response has been sent.
+ *
+ * `docs/operations.md`: the trade→row latency was hours, because the parse cron
+ * is scheduled every five minutes and GitHub actually ran it about every three
+ * hours (13:36, 09:04, 04:37, 00:09 on 2026-09-02). For a live tracker the
+ * expectation is minutes, and the delivery itself is the only event that
+ * happens at the right moment.
+ *
+ * **It cannot run before the response.** Spec §5.1: Helius allows one second
+ * end to end and retries three times before losing the event permanently, so
+ * anything on the request path is a dropped trade. `after` is Next's own
+ * primitive for exactly this — the response is finished, then the callback
+ * runs, inside the route's `maxDuration`.
+ *
+ * **The lock is the cron's, not a new one.** A delivery that arrives while the
+ * cron is parsing, or while another delivery is, finds the lock held and does
+ * nothing — which is the correct answer, because the holder is already draining
+ * the same queue. The cron stays exactly as it is and becomes the net: it
+ * catches whatever a killed function, a quiet hour or a Helius outage left.
+ *
+ * Nothing here can fail the delivery. It runs after the `200`, and every error
+ * is swallowed into a log line without a payload in it.
+ */
+function drainAfterResponse(): void {
+  try {
+    after(async () => {
+      try {
+        const parsed = await withLock("parse-pending", () => parsePending(DELIVERY_DRAIN_BATCH));
+        if (parsed === null) return; // another run holds it; it is draining the same queue
+        if (parsed > 0) console.log(`webhook drain: parsed ${parsed} row(s)`);
+      } catch {
+        // Never the thrown message: it can carry a payload fragment.
+        console.warn("webhook drain: failed");
+      }
+    });
+  } catch {
+    // `after` throws outside a request scope — a unit test calling `POST`
+    // directly, for instance. The delivery is already stored and the cron is
+    // the net, so this is a no-op rather than a failure.
+  }
 }

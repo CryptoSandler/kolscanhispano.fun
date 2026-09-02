@@ -370,7 +370,17 @@ the two things the first real run taught.
 
 A cron computes the desired address set from the database, hashes it, and compares it with
 `setting['helius_webhook_address_hash']`. If unchanged: no API call, zero credits. If changed: one
-edit call (100 credits), then the hash is updated. Approving, suspending, withdrawing a wallet or
+edit call (100 credits), then the hash is updated.
+
+**Amended 2026-09-02: an unchanged set still costs one read.** The hash guards the address set
+and says nothing about the webhook still existing. Two hours after the first webhook was
+created, `GET /v0/webhooks` answered `[]` for a webhook that `GET /v0/webhooks/<id>` returned
+`200` for with all three addresses — the list endpoint is not merely a summary, it is
+inconsistent. A webhook deleted from a dashboard, or auto-disabled by Helius on the free plan
+(§5.1), would otherwise leave the reconciler reporting "unchanged" for ever while nothing was
+watched. So existence is confirmed by id first, and a webhook that is gone is **created**
+rather than edited. The credit is spent on roster mutations, a handful a week, not on a
+schedule. Approving, suspending, withdrawing a wallet or
 adding one all flow through this single path, so the database stays the source of truth and the
 webhook is only ever repaired, never manually curated.
 

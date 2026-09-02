@@ -37,14 +37,16 @@ type Call = { url: string; method: string; body: Record<string, unknown> };
  */
 function fakeHelius(
   calls: Call[],
-  options: { status?: number; holds?: number | null } = {},
+  options: { status?: number; holds?: number | null; gone?: boolean } = {},
 ): typeof globalThis.fetch {
   const status = options.status ?? 200;
   let lastSent = 0;
   return (async (url: string, init: RequestInit = {}) => {
     const method = init.method ?? "GET";
     if (method === "GET") {
-      const held = options.holds === undefined ? lastSent : options.holds;
+      // `gone` stages a webhook Helius has forgotten: every read of it 404s,
+      // which is what a deletion from the dashboard looks like from here.
+      const held = options.gone === true ? null : options.holds === undefined ? lastSent : options.holds;
       return {
         ok: held !== null,
         status: held === null ? 404 : 200,
@@ -53,6 +55,7 @@ function fakeHelius(
     }
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     lastSent = (body.accountAddresses as string[]).length;
+    options.gone = false; // a write brings it back into existence
     calls.push({ url, method, body });
     return {
       ok: status >= 200 && status < 300,
@@ -194,6 +197,9 @@ describe("syncHeliusWebhook", () => {
     const result = await syncHeliusWebhook(fakeHelius(calls));
 
     expect(result).toMatchObject({ ok: true, changed: false, reason: "unchanged" });
+    // `calls` records writes only. An unchanged set costs one read — spec §5.4
+    // says "no API call" and this is the line that departs from it, for the
+    // reason the module states — and no write at all.
     expect(calls).toEqual([]);
   });
 
@@ -289,6 +295,32 @@ describe("syncHeliusWebhook", () => {
       reason: "helius_failed",
     });
     expect(await readWebhookState()).toBeNull();
+  });
+
+  /**
+   * The hole the address hash does not cover.
+   *
+   * Measured 2026-09-02: two hours after this webhook was created,
+   * `GET /v0/webhooks` answered `[]` for a webhook that `GET /v0/webhooks/<id>`
+   * returned `200` for. The list is not just a summary, it is inconsistent —
+   * and a webhook that really is deleted, or auto-disabled by Helius on the
+   * free plan, leaves a stored hash that still describes the set perfectly
+   * while nothing at all is being watched.
+   *
+   * So an unchanged set still asks whether the webhook is there, and a webhook
+   * that is gone is **created**, never edited: a `PUT` against an id Helius has
+   * forgotten answers 404 for ever.
+   */
+  it("recreates a webhook that vanished, even though the set did not change", async () => {
+    await approvedKolWithWallet("uno");
+    await syncHeliusWebhook(fakeHelius([]));
+
+    const calls: Call[] = [];
+    const result = await syncHeliusWebhook(fakeHelius(calls, { gone: true }));
+
+    expect(result).toMatchObject({ ok: true, changed: true, created: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST");
   });
 
   it("refuses to sync without the key or the secret, and calls nothing", async () => {

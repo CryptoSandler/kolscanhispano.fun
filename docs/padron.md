@@ -171,6 +171,27 @@ stored hash was falsified by hand in production, the sync noticed, edited the ex
 webhook (it did not create a second), read back three addresses and restored the hash. A
 following run made no call at all.
 
+### It worked, and the first trade is dated
+
+The webhook was registered at **16:05:28Z**. The first transaction it delivered that
+attributed to a KOL on this roster has a block time of **16:06:29Z** — sixty-one seconds
+later. By 17:53Z: **17 trades**, `@k4yeSol` 9 and `@Stigman__` 8, seven positions, and the
+public ranking showing all three approved KOLs — the two who traded and `@mambatrades_` at
+zero, which is spec §2's roster and the reason an inactive approved KOL stays in the list.
+
+**What the delay is made of, because it is not the webhook.** A trade becomes a row on the
+ranking through three hops: the delivery, the parse cron, and the recompute cron. The parse
+is scheduled `*/5` and **GitHub actually ran it at 13:36, 09:04, 04:37 and 00:09** that day —
+roughly every three hours, which is the throttling `DEFAULT_BUDGET_MS`'s comment already
+budgets for. So the honest expectation for a fresh trade is *hours, not minutes*, and the
+17 above were attributed in one run that cleared a queue of 102.
+
+That queue is the thing to watch. Ingest measured 2026-08-31 was ~19 rows an hour; on
+2026-09-02 it ran 30–60, because the foreign webhook is delivering into the same endpoint.
+At four runs a day of ~200 rows the margin is thin, and **deleting the foreign webhook
+roughly halves the arrivals** — which is the second reason to do it, after the first one
+being that nobody here can manage it.
+
 ---
 
 ## 4. What the admin route is, and what it is not
