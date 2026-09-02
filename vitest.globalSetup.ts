@@ -1,6 +1,7 @@
 import { Client } from "pg";
 import { loadEnvLocal } from "./src/lib/env";
 import { lockKey } from "./src/lib/lock-key";
+import { takeSuiteLock, type SuiteLock } from "./suite-lock";
 
 /**
  * Serializes whole suite runs against the shared test database.
@@ -48,8 +49,22 @@ function directEndpoint(url: string): string {
 }
 
 let client: Client | undefined;
+let suiteLock: SuiteLock | undefined;
 
 export async function setup(): Promise<void> {
+  /*
+    THE MACHINE-WIDE SUITE LOCK, before anything else this file does.
+
+    Every repository on this machine takes the same lock, so a second suite
+    QUEUES instead of competing for the cores. Measured in `milliondollarpage`
+    on 2026-09-02: three runs of one commit took 1269s green, then 2883s with
+    three failures, then 6249s with nine — every failure a dropped Postgres
+    connection, from workers that waited for CPU longer than the database's idle
+    timeout. `suite-lock.ts` carries the whole argument, and it is the same file
+    in all six repositories on purpose.
+  */
+  suiteLock = await takeSuiteLock();
+
   loadEnvLocal();
   const url = process.env.TEST_DATABASE_URL?.trim();
   // Never interpolate the value into the message: this string reaches logs.
@@ -92,4 +107,8 @@ export async function teardown(): Promise<void> {
   // which is also what frees it when a run is killed rather than exiting.
   await client?.end().catch(() => {});
   client = undefined;
+  // Same property one layer out: closing the descriptor releases the machine
+  // lock, and so does this process dying.
+  suiteLock?.release();
+  suiteLock = undefined;
 }
