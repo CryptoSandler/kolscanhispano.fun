@@ -1,5 +1,5 @@
-import { config } from "dotenv";
 import { Pool } from "pg";
+import { loadEnvLocal } from "../src/lib/env";
 
 /**
  * What version of the schema each database is actually at.
@@ -20,7 +20,13 @@ import { Pool } from "pg";
  * migration. Run it by hand any time: `npx tsx scripts/schema-versions.mts`.
  */
 
-config({ path: ".env.local" });
+// `loadEnvLocal`, not `dotenv`: this repository does not depend on dotenv and does
+// not need to -- `src/lib/env.ts` is the twelve lines that read `.env.local`, and it
+// is what every other script in this directory calls. The first version of this file
+// imported dotenv and broke `npm run build` on a type error, which is the shape
+// CLAUDE.md's ladder asks about before adding a dependency: does the repo already
+// have it? It did.
+loadEnvLocal();
 
 /**
  * Every database this repository knows how to migrate, in the order a close
