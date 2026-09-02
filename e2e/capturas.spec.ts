@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { activeChains } from "../src/lib/chain";
 import { E2E_ADMIN_TOKEN } from "../playwright.config";
+import { installWallets } from "./fake-wallet";
 
 /**
  * The preview route mocks two wallets per chain with live ingestion, so the
@@ -102,6 +103,29 @@ for (const { name, viewport } of SIZES) {
       await expect(page.getByText("Entra al padrón")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible();
       await page.screenshot({ path: `${OUT}/registro-${name}.png`, fullPage: true });
+    });
+
+    /**
+     * The wallet chooser, with wallets registered from the page.
+     *
+     * The shot the owner asked for cannot be taken literally: it wanted the
+     * chooser with Rabby installed, and Rabby declares 63 chains, all EVM
+     * (`rabby.io`, read 2026-09-01). It cannot register as a Solana wallet, so
+     * no chooser can show it. What this photographs instead is the rule that
+     * decides the question — a registered Solana wallet present, a registered
+     * EVM-only wallet absent — which is the same reason Rabby is absent.
+     */
+    test("el selector de wallet, con una wallet de Solana registrada", async ({ page }) => {
+      await installWallets(page);
+      await page.goto("/registro");
+      await page.getByRole("button", { name: "Conectar wallet" }).click();
+
+      const dialog = page.locator("dialog.modal-wallets");
+      await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
+      // Waits for the row, so the shot is never of an empty dialog.
+      await expect(dialog.getByText("Prueba Solana")).toBeVisible();
+
+      await page.screenshot({ path: `${OUT}/wallet-picker-${name}.png`, fullPage: true });
     });
 
     test("detalle del KOL", async ({ page }) => {

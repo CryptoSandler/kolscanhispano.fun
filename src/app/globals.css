@@ -1022,6 +1022,87 @@ a.row-age:hover {
    surface step and ink rather than a filled accent button. `--on-accent` is
    therefore still consumed by nothing but the token table — see the batch
    report. */
+/* The wallet chooser on /registro. Same card and scrim as `modal-kol`; the list
+   is the only new part, and it is sized by its content because how many rows it
+   has is the reader's browser's answer, not ours. */
+.modal-wallets {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  /* The surface lives on the dialog, exactly as `.modal-kol` puts it there.
+     An earlier version left this transparent and reused `.modal-card`, whose
+     background is on the dialog and not on the card -- so the panel painted
+     nothing and the page behind it read straight through the wallet list. The
+     capture is what showed it; nothing failed. */
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  color: var(--ink);
+  overflow: hidden;
+}
+.wallet-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack);
+  padding: var(--panel-padding);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.modal-wallets::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+.wallet-choices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wallet-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--hover);
+}
+.wallet-choice:hover {
+  background: var(--surface-3);
+}
+.wallet-choice-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  flex: none;
+  object-fit: contain;
+}
+/* The fallback when a wallet ships no icon: its initial, the same shape the
+   avatar monogram takes, and set in the same `system-ui` for the same reason. */
+.wallet-choice-icon.is-monogram {
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  font-family: system-ui, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.wallet-choice-name {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .modal-close {
   position: absolute;
   top: 12px;

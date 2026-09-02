@@ -3,7 +3,15 @@
 import bs58 from "bs58";
 import { useState } from "react";
 import { OnboardingModal, type OnboardingWallet } from "../onboarding-modal";
+import { WalletPicker } from "../wallet-picker";
 import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof";
+import {
+  connect as connectWallet,
+  discoverWallets,
+  signMessage,
+  solanaWallets,
+  type StandardWallet,
+} from "@/lib/wallet-standard";
 
 /**
  * `/registro` — spec §6, the only page in the product that connects a wallet.
@@ -11,13 +19,20 @@ import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof
  * **It asks for a signature over a message and nothing else.** No transaction is
  * built, offered or sent, and `src/lib/no-money-path.test.ts` is what keeps that
  * true rather than this comment: it refuses every transaction-constructing API
- * and both wallet libraries by name in tracked source, which is why this talks
- * to the injected provider directly and uses only `signMessage`.
+ * and both wallet libraries by name in tracked source, which is why the
+ * handshake in `wallet-standard.ts` is written out here rather than imported,
+ * and why the only wallet feature this page ever reaches for is message signing.
  *
  * That scan is literal, and it caught this file — an earlier draft of this
  * paragraph spelled one of the refused package names out, and a comment naming
  * it is one paste away from an import. The rule is the file's, not this one's,
  * so the prose gave way.
+ *
+ * **Which wallets appear is not decided here.** `wallet-standard.ts` asks the
+ * browser and shows whatever answers, so the list is open by construction and
+ * this file names no wallet. It used to read `window.solana` — one global, one
+ * slot, awarded to whichever extension overwrote it last, which is a list of one
+ * chosen by load order rather than by the reader.
  *
  * The flow is three steps and they are on one page, because each one is a
  * sentence: connect, decide what to publish and say who you are, then tweet a
@@ -26,48 +41,55 @@ import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof
  * were proven between requests.
  */
 
-type Provider = {
-  connect: () => Promise<{ publicKey: { toString: () => string } }>;
-  signMessage: (message: Uint8Array, encoding?: string) => Promise<{ signature: Uint8Array }>;
-};
-
 type Proven = OnboardingWallet & { signature: string; nonce: string; expiresAt: string };
 
-function provider(): Provider | null {
-  if (typeof window === "undefined") return null;
-  const injected = (window as unknown as { solana?: Provider & { isPhantom?: boolean } }).solana;
-  return injected && typeof injected.signMessage === "function" ? injected : null;
-}
-
 const MESSAGES: Record<string, string> = {
-  no_provider: "No encontramos una wallet en este navegador. Instala una extensión y recarga.",
+  no_provider:
+    "No encontramos ninguna wallet de Solana en este navegador. Instala una extensión que " +
+    "firme mensajes en Solana, ábrela una vez y recarga.",
   rejected: "Cancelaste la firma. Puedes intentarlo otra vez.",
   chain_not_active: "Todavía no indexamos esa cadena.",
   bad_address: "Esa dirección no tiene la forma que esperábamos.",
   address_taken: "Esa wallet ya está en el padrón.",
   handle_taken: "Ese usuario de X ya está en el padrón.",
   already_added: "Esa wallet ya está en la lista.",
+  wallet_no_account: "Esa wallet se conectó pero no compartió ninguna cuenta.",
+  wallet_account_gone: "La cuenta cambió durante la firma. Prueba otra vez.",
+  wallet_no_signature: "Esa wallet no devolvió una firma.",
 };
 
 export default function RegistroPage() {
   const [wallets, setWallets] = useState<Proven[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [choices, setChoices] = useState<StandardWallet[] | null>(null);
   const [done, setDone] = useState<{ code: string; kolId: string } | null>(null);
 
   const fail = (reason: string) => {
     setError(MESSAGES[reason] ?? "No se pudo completar el paso. Prueba de nuevo.");
   };
 
-  async function connect() {
+  /**
+   * Step one: ask the browser which wallets are there, and let the reader pick.
+   *
+   * Discovery runs on the click rather than on mount, so a wallet the reader
+   * installs or unlocks while the page is open is found on the next attempt
+   * without a reload -- which is most of what the old copy's "recarga" was for.
+   */
+  function openPicker() {
     setError(null);
-    const wallet = provider();
-    if (!wallet) return fail("no_provider");
+    const found = solanaWallets(discoverWallets());
+    if (found.length === 0) return fail("no_provider");
+    setChoices(found);
+  }
 
+  /** Step two: the wallet the reader chose signs the proof. */
+  async function connect(wallet: StandardWallet) {
+    setChoices(null);
+    setError(null);
     setBusy(true);
     try {
-      const { publicKey } = await wallet.connect();
-      const address = publicKey.toString();
+      const address = await connectWallet(wallet);
       if (wallets.some((w) => w.address === address)) return fail("already_added");
 
       const issued = await fetch("/api/registro/nonce", {
@@ -88,9 +110,10 @@ export default function RegistroPage() {
         nonce,
         expiresAt,
       };
-      const signed = await wallet.signMessage(
+      const signature = await signMessage(
+        wallet,
+        address,
         new TextEncoder().encode(proofMessage(fields)),
-        "utf8",
       );
 
       setWallets((current) => [
@@ -102,11 +125,14 @@ export default function RegistroPage() {
           // correctly flagged as a base58 run -- and which was reimplementing
           // an installed dependency, the first thing CLAUDE.md's ladder asks
           // about.
-          signature: bs58.encode(signed.signature), nonce, expiresAt },
+          signature: bs58.encode(signature), nonce, expiresAt },
       ]);
-    } catch {
-      // Never the caught error: a provider's rejection can carry the address.
-      fail("rejected");
+    } catch (error) {
+      // The message is only ever one of this module's own reason codes, never
+      // the wallet's text: a provider's rejection can carry the address, and
+      // MESSAGES falls back to a generic line for anything it does not know.
+      const reason = error instanceof Error ? error.message : "";
+      fail(reason in MESSAGES ? reason : "rejected");
     } finally {
       setBusy(false);
     }
@@ -143,6 +169,9 @@ export default function RegistroPage() {
 
   return (
     <main className="page">
+      {choices && (
+        <WalletPicker wallets={choices} onPick={connect} onCancel={() => setChoices(null)} />
+      )}
       {wallets.length === 0 ? (
         <section className="onboarding">
           <header className="onboarding-head">
@@ -157,7 +186,7 @@ export default function RegistroPage() {
               {error}
             </p>
           )}
-          <button type="button" className="cta" onClick={connect} disabled={busy}>
+          <button type="button" className="cta" onClick={openPicker} disabled={busy}>
             Conectar wallet
           </button>
         </section>
@@ -169,7 +198,7 @@ export default function RegistroPage() {
             </p>
           )}
           <OnboardingModal wallets={wallets} onSubmit={submit} />
-          <button type="button" className="segment" onClick={connect} disabled={busy}>
+          <button type="button" className="segment" onClick={openPicker} disabled={busy}>
             + conectar otra wallet
           </button>
         </>
