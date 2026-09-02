@@ -70,16 +70,27 @@ export default function RegistroPage() {
   };
 
   /**
-   * Step one: ask the browser which wallets are there, and let the reader pick.
+   * Step one: ask the browser which wallets are there.
    *
    * Discovery runs on the click rather than on mount, so a wallet the reader
    * installs or unlocks while the page is open is found on the next attempt
    * without a reload -- which is most of what the old copy's "recarga" was for.
+   *
+   * **One wallet connects straight through; two or more open the chooser.** A
+   * chooser with a single row asks a question that has one answer, which
+   * `DESIGN.md`'s last Don't calls a control that does not work -- and it is a
+   * click every reader pays so that the minority with two wallets can choose.
+   * The list is no less open for it: what decides is how many registered, not
+   * anything this file knows about them.
    */
   function openPicker() {
     setError(null);
     const found = solanaWallets(discoverWallets());
     if (found.length === 0) return fail("no_provider");
+    if (found.length === 1) {
+      void connect(found[0]);
+      return;
+    }
     setChoices(found);
   }
 

@@ -13,16 +13,16 @@ import { inventAddress } from "../src/lib/ids";
  * third party, and it should break if the app starts expecting something the
  * standard does not promise.
  */
-export async function installWallets(page: Page) {
+export async function installWallets(page: Page, solanaCount = 1) {
   // Generated on the Node side and passed in, never written down: `hygiene.ts`
   // fails the suite on any base58 run of 32+ anywhere in the repository, and an
   // address literal in a fixture is exactly what that rule is for. It caught the
   // first draft of this file.
-  await page.addInitScript((address: string) => {
+  await page.addInitScript(({ address, count }: { address: string; count: number }) => {
     const account = { address, publicKey: new Uint8Array(32) };
 
-    const solanaWallet = {
-      name: "Prueba Solana",
+    const solanaWallet = (n: number) => ({
+      name: count === 1 ? "Prueba Solana" : `Prueba Solana ${n}`,
       // A data URI, like every real wallet icon, so the chooser's image path is
       // exercised without a network request. Deliberately an unencoded SVG and
       // not base64: a base64 payload contains long base58-shaped runs, and the
@@ -36,7 +36,7 @@ export async function installWallets(page: Page) {
           signMessage: async () => [{ signature: new Uint8Array(64).fill(7) }],
         },
       },
-    };
+    });
 
     // The Rabby case: a wallet that registers itself properly and does no
     // Solana. It must not appear in a Solana chooser, and it must not appear
@@ -48,11 +48,14 @@ export async function installWallets(page: Page) {
       features: { "standard:connect": { connect: async () => ({ accounts: [] }) } },
     };
 
-    const wallets = [solanaWallet, evmOnlyWallet];
+    const wallets = [
+      ...Array.from({ length: count }, (_, i) => solanaWallet(i + 1)),
+      evmOnlyWallet,
+    ];
     const announce = (api: { register: (...w: unknown[]) => unknown }) => api.register(...wallets);
 
     window.addEventListener("wallet-standard:app-ready", (event) => {
       announce((event as CustomEvent<{ register: (...w: unknown[]) => unknown }>).detail);
     });
-  }, inventAddress());
+  }, { address: inventAddress(), count: solanaCount });
 }

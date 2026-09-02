@@ -18,17 +18,53 @@ import { installWallets } from "./fake-wallet";
  */
 
 test.describe("the wallet chooser on /registro", () => {
-  test("lists a registered Solana wallet and leaves an EVM-only one out", async ({ page }) => {
-    await installWallets(page);
+  /**
+   * The one-wallet branch. A chooser with a single row asks a question that has
+   * one answer, so there is no chooser: the click connects.
+   */
+  test("connects straight through when exactly one wallet is registered", async ({ page }) => {
+    await installWallets(page, 1);
+    await page.goto("/registro");
+
+    await page.getByRole("button", { name: "Conectar wallet" }).click();
+
+    await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
+    await expect(page.getByText("¡Casi listo!")).toBeVisible({ timeout: 30_000 });
+  });
+
+  /**
+   * The other branch, and the reason the chooser exists at all: with two Solana
+   * wallets installed the reader picks, which is precisely what `window.solana`
+   * could not represent.
+   */
+  test("opens the chooser when two or more are registered", async ({ page }) => {
+    await installWallets(page, 2);
     await page.goto("/registro");
 
     await page.getByRole("button", { name: "Conectar wallet" }).click();
 
     const dialog = page.locator("dialog.modal-wallets");
     await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
-    await expect(dialog.getByText("Prueba Solana")).toBeVisible();
-    // The whole point: it is absent because it declares no Solana chain.
+    await expect(dialog.getByText("Prueba Solana 1")).toBeVisible();
+    await expect(dialog.getByText("Prueba Solana 2")).toBeVisible();
+    // Nothing was connected by merely opening it.
+    await expect(page.getByText("¡Casi listo!")).toHaveCount(0);
+  });
+
+  /**
+   * The Rabby case. The EVM-only wallet registers itself properly and is absent
+   * because it declares no Solana chain -- not because anything here knows its
+   * name. Asserted on the two-wallet branch, where the list is visible.
+   */
+  test("leaves an EVM-only wallet out of the chooser", async ({ page }) => {
+    await installWallets(page, 2);
+    await page.goto("/registro");
+    await page.getByRole("button", { name: "Conectar wallet" }).click();
+
+    const dialog = page.locator("dialog.modal-wallets");
+    await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
     await expect(dialog.getByText("Prueba Solo EVM")).toHaveCount(0);
+    await expect(dialog.locator(".wallet-choice")).toHaveCount(2);
   });
 
   test("says so, and opens nothing, when no wallet is installed", async ({ page }) => {
@@ -45,7 +81,7 @@ test.describe("the wallet chooser on /registro", () => {
   });
 
   test("Esc closes the chooser without connecting anything", async ({ page }) => {
-    await installWallets(page);
+    await installWallets(page, 2);
     await page.goto("/registro");
     await page.getByRole("button", { name: "Conectar wallet" }).click();
     await expect(page.locator("dialog.modal-wallets")).toHaveAttribute("open", "");
@@ -61,15 +97,13 @@ test.describe("the wallet chooser on /registro", () => {
    * Picking a wallet runs the real flow as far as the browser can take it: the
    * page asks the server for a nonce, builds the proof text, and hands it to the
    * wallet's `signMessage`. The wallet returns a fixed signature, so the server
-   * will refuse the proof later — which is correct and is not what this asserts.
-   * What it asserts is that choosing a wallet leaves the first step, which no
-   * unit test can show.
+   * will refuse the proof later -- which is correct and is not what this asserts.
    */
-  test("picking a wallet carries the flow past the connect step", async ({ page }) => {
-    await installWallets(page);
+  test("picking from the chooser carries the flow past the connect step", async ({ page }) => {
+    await installWallets(page, 2);
     await page.goto("/registro");
     await page.getByRole("button", { name: "Conectar wallet" }).click();
-    await page.getByRole("button", { name: "Prueba Solana" }).click();
+    await page.getByRole("button", { name: "Prueba Solana 2" }).click();
 
     await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
     await expect(page.getByText("¡Casi listo!")).toBeVisible({ timeout: 30_000 });

@@ -106,7 +106,8 @@ for (const { name, viewport } of SIZES) {
     });
 
     /**
-     * The wallet chooser, with wallets registered from the page.
+     * The wallet chooser, with two Solana wallets registered from the page --
+     * two because one connects straight through and opens no chooser.
      *
      * The shot the owner asked for cannot be taken literally: it wanted the
      * chooser with Rabby installed, and Rabby declares 63 chains, all EVM
@@ -116,14 +117,14 @@ for (const { name, viewport } of SIZES) {
      * EVM-only wallet absent — which is the same reason Rabby is absent.
      */
     test("el selector de wallet, con una wallet de Solana registrada", async ({ page }) => {
-      await installWallets(page);
+      await installWallets(page, 2);
       await page.goto("/registro");
       await page.getByRole("button", { name: "Conectar wallet" }).click();
 
       const dialog = page.locator("dialog.modal-wallets");
       await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
       // Waits for the row, so the shot is never of an empty dialog.
-      await expect(dialog.getByText("Prueba Solana")).toBeVisible();
+      await expect(dialog.getByText("Prueba Solana 1")).toBeVisible();
 
       await page.screenshot({ path: `${OUT}/wallet-picker-${name}.png`, fullPage: true });
     });
