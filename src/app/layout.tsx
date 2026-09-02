@@ -80,6 +80,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           */}
           <header className="topbar">
             <div className="brand">
+              {/* **A mark tile beside the wordmark**, which the mould has and we
+                  did not (`docs/parecido-2026-09-02.md` §1). Theirs is a 🇧🇷
+                  flag; ours cannot be — this site serves Spain and Latin
+                  America, so no single flag is honest here, and exception (c)
+                  forbids their file anyway. So: the two letters of the domain,
+                  drawn in the accent on `surface-2`, which is a mark and not a
+                  claim about a country. */}
+              <span className="brand-mark" aria-hidden="true">
+                kh
+              </span>
               {/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700,
                   with **`.fun` in the accent** — the dot alone is invisible at
                   20px, measured rather than assumed." Corrected in `b0f2a43`;
@@ -104,8 +114,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 not work." A label saying `próximamente` over a page that works
                 is the same Don't read backwards.
               */}
+              {/* The bordered pill with a chain glyph, as on the mould. It goes
+                  to `/registro`, never to a transaction — exception (b), which
+                  is what `no-money-path.test.ts` keeps true. The glyph is
+                  U+1F517, Unicode and nobody's asset. */}
               <a className="registro" href="/registro">
-                Entrar al padrón
+                <span aria-hidden="true">🔗</span> Entrar al padrón
               </a>
               {/*
                 Spec §1.9: the affiliate slot is configurable from the admin and
@@ -118,8 +132,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </header>
           <main>{children}</main>
           <p className="footnote">
-            Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados
-            pasados no garantizan nada.
+            Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados pasados no
+            garantizan nada.
           </p>
         </div>
       </body>

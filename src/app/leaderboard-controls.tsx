@@ -100,19 +100,9 @@ export function LeaderboardControls({
 
   return (
     <div className="controls">
-      <div className="segmented" role="group" aria-label="Ventana">
-        {windows.map((option) => (
-          <Link
-            key={option}
-            className={option === window ? "segment is-selected" : "segment"}
-            aria-current={option === window ? "true" : undefined}
-            href={href({ window: option })}
-          >
-            {WINDOW_LABELS[option as keyof typeof WINDOW_LABELS] ?? option}
-          </Link>
-        ))}
-      </div>
-
+      {/* **Currency first, then the window** — the mould's order
+          (`docs/parecido-2026-09-02.md` §2), which puts the smaller group
+          nearer the title. */}
       {fiats.length > 0 && (
         <div className="segmented" role="group" aria-label="Moneda">
           {fiats.map((option) => (
@@ -127,6 +117,19 @@ export function LeaderboardControls({
           ))}
         </div>
       )}
+
+      <div className="segmented is-windows" role="group" aria-label="Ventana">
+        {windows.map((option) => (
+          <Link
+            key={option}
+            className={option === window ? "segment is-selected" : "segment"}
+            aria-current={option === window ? "true" : undefined}
+            href={href({ window: option })}
+          >
+            {WINDOW_LABELS[option as keyof typeof WINDOW_LABELS] ?? option}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

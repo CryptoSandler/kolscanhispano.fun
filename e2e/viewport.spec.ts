@@ -19,8 +19,9 @@ import { E2E_ADMIN_TOKEN } from "../playwright.config";
  * What DESIGN.md still states, and what this file therefore still measures:
  *
  * - *"1280px maximum, 16px gutters."* — so nothing may push the page sideways.
- * - *"**Rows are 56px**"* and *"fixed column widths so a live update never
- *   reflows a table"*.
+ * - *"**Rows are 68px**"* — 56 until 2026-09-02, when the identity merged onto
+ *   one line and the row took the mould's density — and the rule that a column
+ *   of figures has a fixed width.
  * - the two sentences that qualify the figures, on the page rather than behind
  *   a hover.
  *
@@ -96,7 +97,7 @@ test.describe("the home page at 1280×900", () => {
     expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
   });
 
-  test("puts the feed above the ranking, and every row at DESIGN.md's 56px", async ({ page }) => {
+  test("puts the feed above the ranking, and every row at DESIGN.md's 68px", async ({ page }) => {
     await page.goto("/");
 
     // One panel, two hairline-divided sections: the feed, then the ranking.
@@ -112,7 +113,7 @@ test.describe("the home page at 1280×900", () => {
     const heights = await page.locator(".row-leaderboard").evaluateAll((rows) =>
       rows.map((row) => Math.round(row.getBoundingClientRect().height)),
     );
-    expect(new Set(heights)).toEqual(new Set([56]));
+    expect(new Set(heights)).toEqual(new Set([68]));
   });
 
   /**

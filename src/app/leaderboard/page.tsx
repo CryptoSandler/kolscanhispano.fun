@@ -1,7 +1,7 @@
 import { LEADERBOARD_FIATS, parseFiat, readLeaderboard } from "@/lib/leaderboard";
 import { ARS_SOURCE_LABELS, readArsRate } from "@/lib/fx";
 import { formatArsRate, formatUtcMoment } from "@/lib/format";
-import { LEADERBOARD_WINDOWS, WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { LEADERBOARD_WINDOWS, parseWindow } from "@/lib/windows";
 import { LeaderboardControls } from "../leaderboard-controls";
 import { KolModalHost } from "../kol-modal-host";
 import { ARS_CAVEAT, LeaderboardTable, USD_CAVEAT } from "../leaderboard-table";
@@ -68,12 +68,12 @@ export default async function LeaderboardPage({
           way `KOL Leaderboard` and its two pill groups do on the mould. They
           were in the site header until 2026-09-02. */}
       <div className="page-head is-row">
-        <div>
-          <h1 className="display-lg">Clasificación</h1>
-          {/* The ranked figure is SOL whatever the toggle says — the toggle
-              chooses the currency in parentheses, not the sort. */}
-          <p className="page-subtitle">PnL realizado · {WINDOW_LABELS[window]} · SOL</p>
-        </div>
+        {/* **The title alone**, the way `KOL Leaderboard` sits on the mould's
+            controls row (`docs/parecido-2026-09-02.md` §2). The subtitle said
+            `PnL realizado · <ventana> · SOL`: the window is on the toggle two
+            centimetres to its right, and SOL stopped varying when the toggle
+            became a currency. It was naming things that name themselves. */}
+        <h1 className="display-lg">Clasificación</h1>
         <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS} />
       </div>
 

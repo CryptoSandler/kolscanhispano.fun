@@ -90,10 +90,16 @@ export function KolDetail({
       <section className="card">
         <div className="card-head">
           <h3 className="label">Calendario de PnL</h3>
-          {segments}
         </div>
         <PnlCalendar from={detail.from} to={detail.to} series={detail.series} />
       </section>
+
+      {/* **The window control sits below the calendar card, right-aligned**,
+          which is where the mould puts it (`docs/parecido-2026-09-02.md` §3).
+          It was in the card's head. Below the card it reads as governing
+          everything under it, which it does: the stats, the chain line and the
+          trade list all move with it. */}
+      <div className="window-row">{segments}</div>
 
       {/*
         Two columns below the calendar (`docs/clone-map.md` §5): the figures on
@@ -131,6 +137,10 @@ export function KolDetail({
               <h3 className="label">PnL por cadena</h3>
             </div>
             <div className="chain-line">
+              {/* The coloured dot the mould puts before a chain's name. It is
+                  not a figure, so the accent is free to mark it; green and red
+                  stay direction of money. */}
+              <span className="chain-dot" aria-hidden="true" />
               <span className="symbol">SOL</span>
               <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
             </div>

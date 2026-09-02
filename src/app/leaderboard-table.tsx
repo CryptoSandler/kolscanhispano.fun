@@ -225,7 +225,7 @@ function Row({
         )}
       </span>
       <span className="identity">
-        <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={36} />
+        <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={40} />
         {/*
           **One line, not two**, since 2026-09-02: name, handle, the hidden
           marker and the cabal chip, in that order — the mould's arrangement

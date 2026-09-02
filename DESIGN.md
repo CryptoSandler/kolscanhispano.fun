@@ -39,7 +39,7 @@ typography:
   numeric:    { fontFamily: "JetBrains Mono", fontSize: 13px, fontWeight: 500, fontVariantNumeric: "tabular-nums" }
   numeric-lg: { fontFamily: "JetBrains Mono", fontSize: 16px, fontWeight: 600, fontVariantNumeric: "tabular-nums" }
 rounded: { sm: 3px, md: 6px, lg: 10px, pill: 999px }
-spacing: { row-height: 56px, gutter: 16px, panel-padding: 16px }
+spacing: { row-height: 68px, gutter: 16px, panel-padding: 16px }
 motion:  { data-in: "140ms ease-out", hover: "90ms linear", reduced: "none" }
 ---
 
@@ -169,9 +169,15 @@ oversight; it applies only to that glyph, and never to a figure.
 
 ## Layout
 
-1280px maximum, 16px gutters. **Rows are 56px** — enough for a 36px circular avatar, the
-bold name, and the handle or `Wallets ocultas` beneath it — except `list-defi-trades` inside
-the modal, which is 36px: a one-line trade row has neither.
+**992px, and 1280 is the ceiling rather than the target** — the mould centres its ranking in
+about 992px, and at 1280 a row of four figures is mostly the space between them
+(`docs/parecido-2026-09-02.md` §2). 16px gutters.
+
+**Rows are 68px** — enough for a 40px circular avatar and one line of identity beside it. They
+were 56px with a two-line identity block; the line merged on 2026-09-02 and the height went up
+rather than down, because the mould's rows are ~84px and the density it buys is the point. The
+exception is `list-defi-trades` inside the modal, which stays 36px: a one-line trade row needs
+neither the avatar nor the room.
 
 **The ranking is a list of cards, not a table**, with a gap between them and `radius-md`
 corners, the way theirs is. The figure columns are fixed **grid tracks**, so a figure
@@ -236,9 +242,9 @@ its own container is scrolled — never merely that the text exists.
 
 ## Components
 
-**`row-leaderboard`** — a card: 56px minimum, `radius-md`, a hairline border, `surface-2` on
+**`row-leaderboard`** — a card: 68px minimum, `radius-md`, a hairline border, `surface-2` on
 hover, whole card clickable and focusable (it opens the modal). Left to right: the rank —
-🏆 🥈 🥉 on the podium, a **plain** `numeric` numeral in `ink-subtle` below it; 36px circular
+🏆 🥈 🥉 on the podium, a **plain** `numeric` numeral in `ink-subtle` below it; 40px circular
 avatar from `/api/avatar/<kol_id>`; **one line of identity** — `name`, then the
 **`@handle`, always**, linked to X, then `Wallets ocultas` in `hidden` where that KOL's
 wallets are hidden, then the cabal chip; then right-aligned, the SOL figure in `numeric-lg`

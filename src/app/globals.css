@@ -75,7 +75,7 @@
 
   /* DESIGN.md: "**Rows are 56px** — enough for a 36px circular avatar, the
      bold name, and the handle or `Wallets ocultas` beneath it." */
-  --row-height: 56px;
+  --row-height: 68px;
   --gutter: 16px;
   --panel-padding: 16px;
   /* Vertical rhythm between stacked blocks. DESIGN.md's `gutter` is the
@@ -205,29 +205,69 @@ a {
 
 /* ---------- layout ---------- */
 
+/* **992px, not 1280.** DESIGN.md's Layout says "1280px maximum", and a maximum
+   is a ceiling rather than a target: the mould centres its ranking in about
+   992px and the difference is legible — at 1280 a row of four figures is mostly
+   the space between them (`docs/parecido-2026-09-02.md` §2). The document's
+   ceiling is unchanged and still true. */
 .shell {
-  max-width: 1280px;
+  max-width: 992px;
   margin: 0 auto;
   padding: 0 var(--gutter) 16px;
 }
 
 /* DESIGN.md, Layout: "Header: wordmark and subtitle left, nav centre, unit and
    window controls plus the wallet action right." */
+/* The nav sits with the wallet action on the right, not in the centre — the
+   mould's arrangement, and DESIGN.md's Layout paragraph moved with it on
+   2026-09-02. ~84px of header against the 76 it had: the padding is what
+   carries the difference, and the mark tile sets the floor. */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--gutter);
-  padding: 14px 0;
+  padding: 18px 0;
   border-bottom: 1px solid var(--hairline);
   flex-wrap: wrap;
 }
 
 .brand {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "mark  wordmark"
+    "mark  subtitle";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
   min-width: 0;
+}
+
+/* The mark tile the mould has and this site did not. Theirs is a flag; ours
+   cannot be one — no single country's flag is honest for a site that serves
+   Spain and Latin America — so it is the domain's two letters, in the accent,
+   on the chip's own ground. It is a mark, not a claim. */
+.brand-mark {
+  grid-area: mark;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.5px;
+}
+
+.wordmark {
+  grid-area: wordmark;
+}
+
+.brand-subtitle {
+  grid-area: subtitle;
 }
 
 /* DESIGN.md, Identity: "The wordmark is the domain in Inter 700, with **`.fun`
@@ -257,10 +297,14 @@ a {
   line-height: 1.2;
 }
 
+/* Right, beside the wallet action, as on the mould. `margin-left: auto` in a
+   `space-between` row pushes the nav and everything after it to the end, which
+   is the whole change — DESIGN.md's Layout paragraph moved with it. */
 .nav {
   display: flex;
   align-items: center;
   gap: 18px;
+  margin-left: auto;
 }
 
 /* Cyan marks the wordmark, the focus ring, the selected segment and the live
@@ -281,7 +325,7 @@ a {
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 18px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -292,15 +336,27 @@ a {
    does not work." So: muted, no hover, no pointer, not focusable. */
 /* A link since `/registro` shipped. It was `cursor: default` and unselectable
    while it was a label standing in for a page that did not exist. */
+/* A bordered pill with a chain glyph, as on the mould. It was a plain muted
+   link; the pill is what makes it read as the one action in the header. */
 .registro {
-  color: var(--ink-muted);
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  font-size: 13px;
   white-space: nowrap;
   text-decoration: none;
+  transition:
+    border-color var(--hover),
+    background var(--hover);
 }
 
 .registro:hover {
-  color: var(--ink);
+  border-color: var(--accent);
+  background: var(--surface-2);
 }
 
 .registro:focus-visible {
@@ -465,16 +521,17 @@ a {
    rendered, and it lets the segment be the `surface-2` track it sits on rather
    than a third surface the palette does not name. Recorded in the report as a
    gap in the document. */
+/* Normal case, not `label`'s uppercase: the mould writes `Diário Semanal
+   Mensal`, and a toggle is a word a reader picks rather than a heading over
+   something (`docs/parecido-2026-09-02.md` §2). */
 .segment {
   appearance: none;
   background: transparent;
   border: 0;
   font: inherit;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   text-decoration: none;
   padding: 5px 12px;
@@ -486,6 +543,33 @@ a {
 
 .segment:hover {
   color: var(--ink);
+}
+
+/* **Narrow overrides go after the rule they override, never before it.**
+   At equal specificity the later declaration wins, and this file has now had
+   three separate media queries do nothing at all because they were written
+   above their base: the cabals podium, the feed row, and this control group.
+   The symptom is always the same — the change works nowhere and looks like a
+   broken selector.
+
+   The mould gives the window group a full-width row of three equal segments at
+   390, which is what makes them thumb-sized; the currency pair stays compact
+   above it. */
+@media (max-width: 640px) {
+  .controls {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .segmented.is-windows {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .segmented.is-windows .segment {
+    text-align: center;
+  }
 }
 
 .segment.is-selected {
@@ -1248,7 +1332,11 @@ a.row-age:hover {
      scroll — legal by DESIGN.md's Responsive rule and still a row that reads as
      cut. 860 gives the right column 483px, which is the row plus room, and it
      is inside Layout's 1280px maximum with the gutters. */
-  width: min(860px, calc(100vw - 32px));
+  /* 745px, the mould's measure. It was 860 to fit the trade row's fixed
+     columns beside the figures; the row's own container scrolls, and the wider
+     card was buying that at the cost of a modal noticeably larger than theirs
+     (`docs/parecido-2026-09-02.md` §3). */
+  width: min(745px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   padding: 0;
   border: 1px solid var(--hairline);
@@ -1457,6 +1545,22 @@ a.row-age:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* **The modal's second line, and the rule that went missing.**
+
+   `.identity-second` used to be shared with the ranking card, which carried its
+   `display: flex` and its `gap`. The card went to one line on 2026-09-02 and
+   took those declarations with it — leaving the modal's handle and
+   `Wallets ocultas` as two inline spans with nothing between them:
+   `@k4yeSolWallets ocultas`, shipped, and found by reading a capture beside the
+   mould rather than by any test. The class has one user now, so its own rule
+   lives here. */
+.modal-identity .identity-second {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 .modal-identity .identity-second > .handle {
   overflow: visible;
   text-overflow: clip;
@@ -1561,6 +1665,25 @@ a.row-age:hover {
   place-items: center;
   min-height: 96px;
   text-align: center;
+}
+
+/* The window control under the calendar card, right-aligned — the mould's
+   placement. It is its own row rather than a corner of the card because what it
+   governs is everything below it, not the calendar alone. */
+.window-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: calc(var(--stack) * -0.5);
+}
+
+/* The chain's dot. Cyan: it marks a row the way the live indicator marks the
+   feed, and it is not a figure. */
+.chain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
 }
 
 /* `docs/clone-map.md` §5: two columns below the calendar — the figures left,
