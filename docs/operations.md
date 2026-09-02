@@ -78,86 +78,84 @@ whether ingestion is outrunning the parse, and `parse-pending` already writes it
 A queue that grows across several readings with the delivery drain live means either a burst of
 real activity or something wrong with the drain, and it is worth looking at either way.
 
-## 3. The Helius webhooks, and which account owns what
+## 3. Helius: one project, and what its API will and will not tell you
 
-There are **two** webhooks delivering to `https://kolscanhispano.fun/api/webhooks/helius`.
+There is **one** Helius project. `HELIUS_API_KEY` in `.env.local` is the `kolscanhispano-server`
+key and always was; it is loaded into Vercel Production as `HELIUS_API_KEY`, Sensitive, since
+2026-09-02.
 
-### Ours
+**Two identifiers for one project, and they do not match.** The API returns
+`project: 8185e8ee-e5db-4b4c-b4ef-68dee3c5ade6` on a webhook object; the dashboard shows a
+different identifier for the same project. Neither is wrong — they are different names for the
+same thing, and reading one as evidence about the other is what caused the incident below.
+
+**The webhook list is not reliable, in either surface.** `GET /v0/webhooks` has returned `[]`
+for a webhook that existed, and the dashboard's list fails the same way. **Existence is checked
+by id and only by id:**
+
+    GET https://api.helius.xyz/v0/webhooks/<id>?api-key=<key>
+
+`syncHeliusWebhook` does exactly this before it concludes anything, which is why §4 exists.
+
+### The webhook
 
     webhookID   b5739db9-5039-49e8-aae6-4d69f467b4ba
-    project     8185e8ee-e5db-4b4c-b4ef-68dee3c5ade6
-    wallet      8185e8ee-e5db-4b4c-b4ef-68dee3c5ade6
+    project     8185e8ee-e5db-4b4c-b4ef-68dee3c5ade6   (the API's id for it)
     enhanced, ["SWAP"], authHeader set, 3 addresses — all three on the roster
 
-Created 2026-09-02 16:05:28Z by `scripts/sync-helius-webhook.ts` with this environment's
-`HELIUS_API_KEY`. The first trade it delivered has a block time of **16:06:29Z**, sixty-one
-seconds later.
+Created 2026-09-02 16:05:28Z by `scripts/sync-helius-webhook.ts`. The first trade it delivered
+has a block time of 16:06:29Z, sixty-one seconds later.
 
-**The key is not the one Cowork holds.** Cowork reports that the Helius project named
-`kolscanhispano`, across its four keys, contains only `440aecce` — the 27 August smoke test,
-already retired — and that `b5739db9` is not there. That is consistent with what the API says:
-the webhook object carries `project` and `wallet`, both
-`8185e8ee-e5db-4b4c-b4ef-68dee3c5ade6`, which is a different project from the one Cowork is
-looking at.
+There is also a second webhook delivering to the same endpoint with the correct secret, since
+27 August: 5,128 rows by the time it was found, still arriving, and **not one of them touches a
+wallet on this roster** — verified by scanning every stored payload, 99,817 distinct addresses,
+zero matches. `raw_tx`'s primary key is `(chain, signature_hmac)` — read from production's own
+`pg_constraint`, not from the migration file — and `storeRawTxBatch` inserts
+`ON CONFLICT ... DO NOTHING`, so a transaction delivered by both is one row. What doubles is
+deliveries, not data. Deleting it is a dashboard action and nothing here depends on it.
 
-**The key itself, by fingerprint** — 36 characters, begins `ce8b`, ends `1fc8` — so it can be
-matched against a list of keys without being written down anywhere. Helius exposes nothing else
-about a key's owner: `/v0/account`, `/v0/usage` and `/v0/me` all answer *"Method not found"*.
-The `project` id above is the only identifier the API gives, and it comes from the webhook
-object rather than from the key.
+### The false alarm of 2026-09-02, and its cause
 
-**Decided by the owner on 2026-09-02: migrate it to the `kolscanhispano` project.** The
-migration is **blocked on one thing and only one thing — the `kolscanhispano-server` key is not
-in this environment.** It is not in `.env.local`, which holds exactly one `HELIUS_API_KEY` (the
-`ce8b…1fc8` one above), and it is not in Vercel either. Nothing else about the migration is
-open.
+For part of that day this document said there were two Helius projects and that a migration was
+needed. **There are not, and it was not.** The cause was a chain of three unreliable signals
+read as one story:
 
-**The order matters and it is the owner's, not a preference.** Create first, prove it delivers,
-delete second — a delete-then-create leaves a window with no webhook at all, and every swap in
-that window is lost for good (spec §5.1: Helius retries three times and drops the event).
+1. `GET /v0/webhooks` answered `[]` — the list is unreliable, as above.
+2. The dashboard listed a different set, and showed a project identifier that does not match the
+   API's, so the two looked like different projects.
+3. A `HELIUS_API_KEY_SERVER` was added to `.env.local` as "the other key" and was byte-identical
+   to `HELIUS_API_KEY` — same 36 characters, same `ce8b…1fc8` fingerprint, same SHA-256. It was
+   the same key because there was only ever one.
 
-    1. HELIUS_API_KEY=<kolscanhispano-server>  npx tsx scripts/sync-helius-webhook.ts
-       The stored state names b5739db9, which that key cannot read, so the sync sees a webhook
-       that is gone and CREATES a new one with the three wallets. That behaviour is not
-       incidental — it is the vanished-webhook case of §4, and it is what makes this migration
-       one command instead of a hand-edited setting row.
-    2. Confirm it delivers: a real trade from one of the three, or watch `raw_tx` for a row
-       whose delivery the new webhook can be shown to have caused.
-    3. Only then delete b5739db9, with the OLD key.
-    4. Then the old key leaves `.env.local`, and this section keeps one project.
+**No migration was run, and that was the right call for the wrong reason.** The check that
+stopped it — with the intended key, `GET /v0/webhooks/<stored id>` must answer `404`, and it
+answered `200` — was reading the one endpoint that does **not** enforce project scoping (see the
+defect below). It stopped a destructive sequence, and the reasoning under it was wrong.
 
-**Two webhooks live at once is safe for exactly as long as it takes.** `raw_tx`'s primary key is
-`(chain, signature_hmac)` and `storeRawTxBatch` inserts `ON CONFLICT ... DO NOTHING` — verified
-against production's own `pg_constraint` on 2026-09-02, not against the migration file — so the
-same transaction delivered by both is one row. What doubles is the delivery count, not the data.
+`HELIUS_API_KEY_SERVER` has been removed from `.env.local`. There is one key and one project.
 
-### The sync does not run in production, and that is the more urgent half
+### Open defect: the address set is frozen
 
-**Vercel's production environment has no `HELIUS_API_KEY` at all** — checked 2026-09-02:
-`ADMIN_TOKEN`, `HELIUS_WEBHOOK_SECRET`, `WALLET_HMAC_KEY`, `WALLET_ENC_KEY` and `DATABASE_URL`,
-and nothing else. So `syncHeliusWebhook` returns `no_api_key` on every approval and every
-create made through the deployed admin: **the address set is reconciled only when somebody runs
-the script from a machine that holds a key.**
+**`PUT /v0/webhooks/<id>` answers `404 "Webhook not found for this project"` for a webhook that
+`GET /v0/webhooks/<id>` returns `200` for.** Measured 2026-09-02 at 21:34 from the deployed
+admin and reproduced by hand immediately after, with the same key that **created** that webhook
+at 16:05 and successfully edited it at 16:08.
 
-Approving a KOL in production today therefore does *not* start watching their wallets. Nothing
-warns; the approval succeeds and the log line goes to a serverless log nobody reads.
+So the two verbs disagree: the read does not scope to the key's project and the write does.
+Whatever changed between 16:08 and 21:34 — a key moved between projects, a project renamed —
+the consequence is exact and it is live:
 
-Adding `kolscanhispano-server` to Vercel closes this and the migration at once, and it is the
-one action that should happen before the next approval.
+**Any change to the roster now fails to reach Helius.** Approving, suspending or adding a wallet
+recomputes the set, tries the edit, gets a 404, and `syncHeliusWebhook` refuses to store the
+hash — which is the behaviour it was written for, so nothing is silently wrong, but the webhook
+stays at the three addresses it has. It was seen exactly this way: a fourth wallet approved
+through the deployed admin left the database at four and Helius at three, with
+`not synced — helius_failed` in the log.
 
-### The other one
-
-    webhookID   not visible from this environment
-    URL         https://kolscanhispano.fun/api/webhooks/helius
-    which one   the one pointing at that URL that is NOT b5739db9-…
-
-It holds the correct `HELIUS_WEBHOOK_SECRET` and has been delivering since 27 August: 5,128 rows
-by the time it was found, still arriving. **Not one of them touches a wallet on this roster** —
-verified by scanning every stored payload, 99,817 distinct addresses, zero matches. The parser
-discards them exactly as it always has, and that costs only the queue.
-
-Deleting it is Cowork's, from the dashboard of whichever account owns it. **Nothing here depends
-on it and nothing here can reach it.**
+The escape is the one the create path already offers: **`POST` still works** — it is how
+`b5739db9` came to exist — so deleting the stored `setting` row makes the next sync create a
+webhook the key can edit, after which the old one is deleted from the dashboard. That is a
+destructive-ish sequence with a window in it, and it is the owner's call, not this document's.
 
 ## 4. The webhook can vanish, and the hash will not notice
 
