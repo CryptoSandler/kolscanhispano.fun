@@ -111,6 +111,39 @@ to the rest.
 **What it must not do:** touch rows with a `parse_error`. Those are the roadmap's problem
 and mixing the two would make one script that nobody can reason about.
 
+### The premise this rests on failed the first time it was tested, 2026-09-02
+
+The requeue's whole argument is *"every wallet added to the roster makes some of them
+attributable"*. On 2026-09-02 the first three wallets were added — the three tracker
+crossings of `docs/padron-candidatos.md`, created `pending` with their provenance and then
+approved — and the argument did not hold. Measured, in this order:
+
+- 25 rows requeued, 75 parsed (the 25 plus the 50 already queued), `parse_error` 0, **trades
+  0**.
+- Every stored payload then scanned rather than sampled: **5,128 of 5,128 readable, 99,817
+  distinct base58 addresses in them, and not one of the three roster wallets in any.** The
+  scan is deliberately coarser than the parser's own `candidateAddresses` — every base58 run
+  in the payload, not just the accounts it would consider — so a wallet the parser *would*
+  have matched cannot be missing from it.
+- `GET https://api.helius.xyz/v0/webhooks` with this environment's `HELIUS_API_KEY`: `200`
+  and `[]`. **This key owns no webhook**, while `raw_tx.source` is `webhook` for all 5,128
+  rows and the newest arrived while the query was running.
+
+So the ingestion is alive, healthy and watching **somebody else's addresses**, through a
+webhook registered under a key this environment does not hold. Two consequences, and neither
+is a code defect:
+
+1. **Requeueing the remaining backlog would attribute nothing.** It is ~5,000 payloads of
+   decrypt-and-parse against transactions that provably do not touch the roster. The limit
+   that corresponds is none.
+2. **New transactions of the three approved KOLs will not arrive either**, because nothing
+   has told that webhook to watch their wallets. Spec §327 puts `accountAddresses` = every
+   active wallet of every approved KOL and tracks it in
+   `setting['helius_webhook_address_hash']`; that sync is **unbuilt** — no code references
+   that key, and the row does not exist in production. It is the next thing that has to be
+   built for an approved roster to mean anything, and it needs the key that owns the live
+   webhook.
+
 ---
 
 ## 4. What the admin route is, and what it is not

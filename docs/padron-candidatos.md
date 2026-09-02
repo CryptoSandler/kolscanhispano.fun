@@ -8,6 +8,11 @@ approved through `POST /api/admin/kol/<id>/approve`. Every other row in this fil
 touched nothing — no `kol`, no `kol_wallet`, no admin call — and the alta of any of them
 happens only after the owner confirms.
 
+**And they show nothing yet, for a reason that is not about them.** The live Helius webhook
+watches addresses none of these three own, under an API key this environment does not hold,
+so no transaction of theirs has ever reached `raw_tx` — verified against all 5,128 stored
+payloads. `docs/padron.md` §3 has the measurement and what it implies.
+
 ---
 
 ## 1. Where a wallet is allowed to come from
