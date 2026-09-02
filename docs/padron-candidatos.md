@@ -43,33 +43,62 @@ repository.
 
 ## 2. The list
 
-| # | Handle | Followers | Country | Source | Provenance URL | Read on | Note |
-|---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | *empty — see §3 and §5* |
+Alphabetical, and without a follower column: reading followers costs a paid profile fetch per
+handle, and the owner strikes rows by who the person is rather than by a number this file
+would have to keep fresh.
+
+Seeded by the owner, one lot at a time. Existence is X's own oEmbed; the cross is against
+every row of the Solana Tracker KOL leaderboard that carried `identity.twitter`
+(`https://data.solanatracker.io/v2/pnl/leaderboard/kols`, 621 rows over 7 requests, 507 with a
+handle, read 2026-09-01). **Zero Firecrawl.**
+
+| Handle | Status | Tracker wallets | Provenance | Note |
+|---|---|---|---|---|
+| `@_zeldr1ss` | solo handle | — | — | exists; not in the tracker |
+| `@ConorrCrypto` | solo handle | — | — | exists; not in the tracker |
+| `@das000000000` | solo handle | — | — | exists; not in the tracker |
+| `@DomiTrader` | solo handle | — | — | exists; not in the tracker |
+| `@eguito0` | solo handle | — | — | exists; not in the tracker |
+| `@gigac312` | solo handle | — | — | exists; not in the tracker |
+| `@k4yeSol` | **crosses** | 1 | Solana Tracker KOL leaderboard, read 2026-09-01 | staged **pending** through the admin |
+| `@KairosHolder` | solo handle | — | — | exists; not in the tracker |
+| `@mambatrades_` | **crosses** | 1 | Solana Tracker KOL leaderboard, read 2026-09-01 | staged **pending** through the admin |
+| `@ochouso` | solo handle | — | — | exists; not in the tracker |
+| `@Penguzxbt` | solo handle | — | — | exists; not in the tracker |
+| `@Stigman__` | **crosses** | 1 | Solana Tracker KOL leaderboard, read 2026-09-01 | staged **pending** through the admin |
+| `@victordegods` | solo handle | — | — | exists; not in the tracker |
+| `@Von_Draken` | solo handle | — | — | exists; not in the tracker |
+| `@zl4sh1x` | solo handle | — | — | exists; not in the tracker |
+
+**Lot 1 (2026-09-02): five handles, five alive, one crossing. Lot 2 (2026-09-02): ten
+handles, ten alive, two crossing.** Fifteen so far, none dead — no handle has answered `404`,
+so the variant retry has not been exercised against a real miss yet. `docs/references.md` §2.1 is why a crossing row is staged rather than
+approved: the tracker's attribution is a third party's claim, and nobody has vouched for
+these people or asked to be here.
+
+**A `solo handle` row is not a rejection.** It is a person the tracker does not carry a
+wallet for, which is most people. `/registro` is how they supply one over their own
+signature — a stronger provenance than any tracker URL, because a signature over
+`solana:mainnet` cannot be forged and an attribution can simply be wrong.
 
 ## 2b. Discarded, with the reason
 
-Sources, not candidates: no source survived to produce a candidate. §3 is the evidence.
+No handle from the seed has been discarded yet: none answered `404`, and none produced an
+oEmbed status other than `200`.
+
+The sources tried before the seed existed, and why none of them could produce the list on
+its own, are below.
 
 | Source | Reachable | Publishes a full wallet | Publishes an X handle | Discarded because |
 |---|---|---|---|---|
 | `kolscan.io/leaderboard` | yes, `200` | yes — in every `/account/<address>` link | **no** | Zero `x.com/*` links on the page. It pairs a wallet with a *nickname*, and a nickname is not a handle. |
-| `kolscan.io/account/<address>` | yes, `200` | yes — the URL itself | **no** | Its whole link set is Solscan transaction links plus site nav. The X icon `docs/references.md` §1 describes is not in what a crawler receives. |
-| `kolscanbrasil.io` | yes, `200` | **no** | yes — ~170 real `x.com/<handle>` links | Wallets are `Wallets Ocultas` or truncated to six characters (`0x3719`, `6BwjER`). A truncated address is not an address. Brazilian by construction, so the language filter would empty it anyway. |
+| `kolscan.io/account/<address>` | yes, `200` | yes — the URL itself | **no** | Its whole link set is Solscan transaction links plus site nav. |
+| `kolscanbrasil.io` | yes, `200` | **no** | yes — ~170 real `x.com/<handle>` links | Wallets are `Wallets Ocultas` or truncated to six characters. Brazilian by construction. |
 | `gmgn.ai/trade/kol` | **no** | — | — | `ERR_ABORTED` — the page did not load. |
-| `gmgn.ai/?chain=sol` | yes, `200` | — | token creators' handles only | The wallet and KOL panels render **`You are not logged in to GMGN` / `Log in`**. The handles on this page belong to token socials, not to tracked wallets. |
-| `gmgn.ai/sol/address/<address>` | `200`, empty | — | — | The entire link set is `https://gmgn.ai/app`. The wallet page is client-rendered behind login. |
-| `app.cielo.finance/leaderboard` | **`404`** | — | — | *"The page you're trying to reach does not exist on this server."* No public leaderboard at that path. |
+| `gmgn.ai/?chain=sol` | yes, `200` | — | token creators' handles only | The wallet and KOL panels render **`You are not logged in to GMGN`**. |
+| `app.cielo.finance/leaderboard` | **`404`** | — | — | No public leaderboard at that path. |
 | `solanatracker.io/kols` | **`404`** | — | — | No public KOL page. |
-| `data.solanatracker.io/v2/pnl/leaderboard/kols` | **`401`** | — | would carry `identity.twitter` | `{"error":"API key is required"}`. **Verified 2026-09-01: this environment holds no tracker API key of any kind** — `.env.local` carries `WALLET_ENC_KEY WALLET_HMAC_KEY HELIUS_WEBHOOK_SECRET DATABASE_URL TEST_DATABASE_URL HELIUS_API_KEY PREVIEW_DATABASE_URL VERCEL_TOKEN VERCEL_OIDC_TOKEN ADMIN_TOKEN` and nothing else. |
-
-**The two failures are different in kind and the table keeps them apart.** `gmgn.ai`,
-`cielo.finance` and `solanatracker` are *gated* — the data may well exist behind a login or
-a key. `kolscan.io` and `kolscanbrasil.io` are *fully readable and simply do not publish the
-pair*: one has wallets without handles, the other handles without wallets. A key would fix
-the first group. Nothing fixes the second, because the data is not there.
-
----
+| `data.solanatracker.io/v2/pnl/leaderboard/kols` | **`200` with a key** | yes | yes, on 507 of 621 rows | **This is the one that works**, and it is what §2 crosses against. |
 
 ## 3. The near-miss, recorded because it nearly shipped
 
