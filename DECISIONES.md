@@ -347,3 +347,41 @@ tiempo de un deploy.
 **Los scripts de verificación no se commitearon.** Escriben en producción, aunque sea dentro
 de un rollback, y una herramienta así en el repositorio es una que alguien usa mal más
 adelante. El método está acá; reproducirlo son treinta líneas.
+
+## 2026-09-02 — El selector de wallet es de Solana; el EVM entra con la ingesta, por EIP-6963
+
+`/registro` descubre wallets por el handshake de Wallet Standard y muestra las que declaran
+cadena Solana, `standard:connect` y `solana:signMessage`. No nombra ninguna wallet: la lista
+es abierta por construcción.
+
+**Rabby no aparece, y no es porque una lista la excluya.** Verificado en `rabby.io` el
+2026-09-02: publica 63 cadenas, todas EVM, y se titula *"Your Go-to Wallet for Ethereum and
+EVM"*. No registra cadena Solana, así que ningún selector de Solana puede mostrarla. Es una
+ausencia que decide la wallet, no nosotros.
+
+**Cuando se abra la ingesta de una chain EVM, `/registro` suma conexión EVM.** No antes:
+`activeChains()` ya sostiene que una wallet en una cadena que nada indexa es un control que
+no funciona, y una wallet EVM conectada hoy produciría una fila que ninguna ingesta lee.
+Ese día Rabby aparece sola, otra vez sin que nada la nombre.
+
+**La forma está decidida y es la de `nftraffle`**, que ya la tiene en producción:
+
+- **descubrimiento por EIP-6963** — escuchar `eip6963:announceProvider` **antes** de
+  despachar `eip6963:requestProvider`, que es lo que evita perderse la wallet que se anunció
+  durante el render que montó el listener;
+- **prueba por `personal_sign`**, sobre el mismo texto que `wallet-proof.ts` ya construye,
+  con la cadena dentro del payload firmado y no tomada de la red en la que esté la wallet;
+- **la lógica pura separada del `window`**: en `nftraffle` son `lib/wallet/evm-discovery.ts`
+  y `lib/wallet/evm-binding.ts`, testeados en Node, contra un único archivo que toca el
+  navegador. Acá vale lo mismo, y `wallet-standard.ts` ya está escrito así.
+
+**Lo que no se copia, y es la mitad del motivo de escribir esto.** `nftraffle` le pide a la
+wallet tres cosas, y la tercera es pagar. Acá esa tercera está prohibida: la prohíbe
+`no-money-path.test.ts`, que es lo que hace de "esta página no puede mover fondos" una
+propiedad del repositorio y no una promesa en un comentario. Del enfoque de `nftraffle` se
+toman el descubrimiento y la firma; el envío no cruza.
+
+**El selector se abre con dos o más wallets; con una sola, conecta directo.** Un selector de
+una fila hace una pregunta con una única respuesta —el último Don't de `DESIGN.md`— y le
+cobra un click a cada lector para que la minoría con dos pueda elegir. Lo que decide es
+cuántas se registraron, no nada que el código sepa de ellas.

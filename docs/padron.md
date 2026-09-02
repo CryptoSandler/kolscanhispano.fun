@@ -160,3 +160,43 @@ it never reaches the comparison at all. The case that reaches it is the one wher
 says the right handle and X says a different one, which is also the realistic attack: a path
 is whatever the caller typed, and an impostor submits
 `x.com/<target>/status/<their own tweet id>`.
+
+---
+
+## 6. What `/registro` connects, and what it will connect
+
+The page discovers wallets over the **Wallet Standard** handshake (`src/lib/wallet-standard.ts`)
+and shows the ones that declare a Solana chain, `standard:connect` and `solana:signMessage`.
+It names no wallet, and a test reads the module's own source to keep it that way.
+
+**One wallet connects straight through; two or more open the chooser.** A chooser with a
+single row asks a question with one answer, which `DESIGN.md`'s last Don't calls a control
+that does not work. Both branches have an e2e case.
+
+### Rabby, and every other EVM-only wallet
+
+Absent, and not by a list. `rabby.io`, read 2026-09-02, publishes 63 chains — all EVM — and
+titles itself *"Your Go-to Wallet for Ethereum and EVM"*. It registers no Solana chain, so no
+Solana chooser can show it. `e2e/registro-wallets.spec.ts` registers an EVM-only wallet
+alongside Solana ones and asserts it does not appear, which is that rule exercised rather
+than described.
+
+### The EVM half, when a chain opens
+
+**Not before.** `activeChains()` already holds that a wallet on a chain nothing indexes is a
+control that does not work; an EVM wallet connected today would produce a row no ingestion
+reads. The day one opens, `/registro` gains an EVM connection and Rabby appears on its own —
+again without anything naming it.
+
+The shape is decided, and it is `nftraffle`'s, which already runs it:
+
+| Piece | How |
+|---|---|
+| Discovery | **EIP-6963**: listen for `eip6963:announceProvider` **before** dispatching `eip6963:requestProvider`, which is what avoids missing a wallet that announced during the render that attached the listener |
+| Proof | **`personal_sign`** over the text `wallet-proof.ts` already builds, with the chain inside the signed payload rather than taken from whatever network the wallet is on |
+| Structure | Pure logic apart from `window` — `nftraffle` splits `lib/wallet/evm-discovery.ts` and `lib/wallet/evm-binding.ts`, both tested in Node, against one file that touches the browser. `wallet-standard.ts` is already written that way |
+
+**What does not come across.** `nftraffle` asks a wallet for three things and the third is
+payment. That third one is forbidden here — `no-money-path.test.ts` refuses it, and that scan
+is what makes "this page cannot move funds" a property of the repository rather than a claim
+in a comment. Take the discovery and the signature; leave the send.
