@@ -386,7 +386,7 @@ beforeAll(async () => {
 
   const [feed, leaderboard] = await Promise.all([
     readFeedPage(),
-    readLeaderboard({ window: "diario", unit: "sol" }),
+    readLeaderboard({ window: "diario" }),
   ]);
   // Both modals, opened. `readKolDetail` is what the route calls, so this is
   // the payload the browser receives and `KolDetail` is what it renders from it.

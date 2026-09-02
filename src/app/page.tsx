@@ -17,8 +17,10 @@ import { LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
  * this page carries both.
  *
  * The feed comes first because that is what spec §2 says this page is. The
- * top ten below it is the daily window in SOL — the same defaults the header's
- * controls show off `/leaderboard`, so the control and this panel agree.
+ * top ten below it is the daily window with the USD total — the same defaults
+ * the header's controls show off `/leaderboard`, so the control and this panel
+ * agree. Being fixed at USD is also what keeps this page's render free of the
+ * peso rate: nothing here reads `setting`.
  *
  * Both reads are issued together. They touch different tables and neither
  * needs the other's result, so waiting for them in sequence would add a Neon
@@ -29,7 +31,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const [feed, leaderboard] = await Promise.all([
     readFeedPage(),
-    readLeaderboard({ window: "diario", unit: "sol", limit: LEADERBOARD_TOP }),
+    readLeaderboard({ window: "diario", limit: LEADERBOARD_TOP }),
   ]);
 
   return (
@@ -56,22 +58,18 @@ export default async function HomePage() {
         </div>
 
         {/*
-          No header row: `/leaderboard` is where a reader goes to compare
-          columns, and the caption `LeaderboardTable` writes beneath itself
-          names both count columns for the summary.
-
           `KolModalHost` is the provider task A left the seam for: DESIGN.md
           `row-leaderboard` says the "whole row [is] clickable and focusable (it
           opens the modal)", and the row's affordance is switched on by the
-          presence of a provider rather than by a flag. The table stays a server
-          component -- a client component may wrap server-rendered children --
-          so every figure below is still formatted on the server.
+          presence of a provider rather than by a flag. The ranking stays a
+          server component -- a client component may wrap server-rendered
+          children -- so every figure below is still formatted on the server.
 
           The window is this panel's own, `diario`, so the PnL in a modal's
           header is the same figure as the row that opened it.
         */}
         <KolModalHost window="diario">
-          <LeaderboardTable entries={leaderboard.entries} unit="sol" showHeader={false} />
+          <LeaderboardTable entries={leaderboard.entries} fiat="usd" rate={null} />
         </KolModalHost>
       </section>
     </div>

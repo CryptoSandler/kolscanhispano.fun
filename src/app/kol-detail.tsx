@@ -1,5 +1,5 @@
 import { cabalChipClass } from "@/lib/cabal";
-import { chartGeometry } from "@/lib/chart";
+import { calendarGrid } from "@/lib/calendar";
 import {
   amountDirection,
   formatSignedSol,
@@ -17,7 +17,7 @@ import { Avatar } from "./avatar";
  * *"Header: 64px avatar, `name`, cabal chip, `@handle` or `Wallets ocultas`,
  * and the period's total PnL in `numeric-lg` by sign. **Where the reference
  * prints a truncated address, we print nothing.** Then, in order:
- * `card-pnl-evolution` ... `card-stats` ... `card-chain-pnl` ...
+ * `card-calendario-pnl` ... `card-stats` ... `card-chain-pnl` ...
  * `list-defi-trades`."*
  *
  * **It holds no state, reads no context and mounts nothing**, which is what
@@ -84,43 +84,59 @@ export function KolDetail({
         </span>
       </header>
 
+      {/* DESIGN.md `card-calendario-pnl`, and `docs/clone-map.md` §5's first
+          block: their calendar heatmap, with our data in it. Full width, above
+          the two columns, exactly as on the mould. */}
       <section className="card">
         <div className="card-head">
-          <h3 className="label">PnL acumulado</h3>
+          <h3 className="label">Calendario de PnL</h3>
           {segments}
         </div>
-        <PnlEvolution series={detail.series} direction={direction} />
+        <PnlCalendar from={detail.from} to={detail.to} series={detail.series} />
       </section>
 
-      {/* DESIGN.md `card-stats`: "PnL total, trades, volume." */}
-      <section className="card card-stats">
-        <Stat label="PnL total">
-          <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
-        </Stat>
-        <Stat label="Operaciones">
-          <span className="num">{detail.tradeCount}</span>
-        </Stat>
-        <Stat label="Volumen">
-          {/* Turnover: the SOL both sides of every trade moved, which is not a
+      {/*
+        Two columns below the calendar (`docs/clone-map.md` §5): the figures on
+        the left, the trade list on the right. It was one column until
+        2026-09-02.
+
+        The wallet counts stay with the figures rather than moving to the right
+        column, even though they explain the `PRIVADO` rows over there: they are
+        a fact about the KOL, and the right column is a log. At 640px the two
+        columns become one and the original order is restored, which puts them
+        back above the list they explain.
+      */}
+      <div className="modal-columns">
+        <div className="modal-column">
+          {/* DESIGN.md `card-stats`: "PnL total, trades, volume." */}
+          <section className="card card-stats">
+            <Stat label="PnL total">
+              <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
+            </Stat>
+            <Stat label="Operaciones">
+              <span className="num">{detail.tradeCount}</span>
+            </Stat>
+            <Stat label="Volumen">
+              {/* Turnover: the SOL both sides of every trade moved, which is not a
               net and is not the PnL beside it. `kol.ts` defines it. */}
-          <span className="num">{formatSol(detail.volumeSol)} SOL</span>
-        </Stat>
-      </section>
+              <span className="num">{formatSol(detail.volumeSol)} SOL</span>
+            </Stat>
+          </section>
 
-      {/* DESIGN.md `card-chain-pnl`: "one line, SOL, because that is every chain
+          {/* DESIGN.md `card-chain-pnl`: "one line, SOL, because that is every chain
           we index" — and the brief's gloss, "do not imply others". So: one row,
           no column of chains with one entry, no "otras cadenas" placeholder. */}
-      <section className="card">
-        <div className="card-head">
-          <h3 className="label">PnL por cadena</h3>
-        </div>
-        <div className="chain-line">
-          <span className="symbol">SOL</span>
-          <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
-        </div>
-      </section>
+          <section className="card">
+            <div className="card-head">
+              <h3 className="label">PnL por cadena</h3>
+            </div>
+            <div className="chain-line">
+              <span className="symbol">SOL</span>
+              <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
+            </div>
+          </section>
 
-      {/* `DECISIONES.md`, 2026-08-31: the visibility decision is per wallet, so
+          {/* `DECISIONES.md`, 2026-08-31: the visibility decision is per wallet, so
           the detail says how much of this KOL's operation is on show — as a
           **count and a padlock, never a list**. The number is the honest thing
           to publish: it states the shape of what is hidden without naming any
@@ -132,17 +148,21 @@ export function KolDetail({
           it explains the `PRIVADO` rows the reader is about to meet. Putting it
           between `card-stats` and `card-chain-pnl` split two numeric cards with
           a non-numeric one. */}
-      <WalletVisibility
-        publicWallets={detail.publicWallets}
-        privateWallets={detail.privateWallets}
-      />
-
-      <section className="card">
-        <div className="card-head">
-          <h3 className="label">Operaciones del período</h3>
+          <WalletVisibility
+            publicWallets={detail.publicWallets}
+            privateWallets={detail.privateWallets}
+          />
         </div>
-        <TradeList trades={detail.trades} hideWallets={detail.kol.hideWallets} />
-      </section>
+
+        <div className="modal-column">
+          <section className="card">
+            <div className="card-head">
+              <h3 className="label">Operaciones del período</h3>
+            </div>
+            <TradeList trades={detail.trades} hideWallets={detail.kol.hideWallets} />
+          </section>
+        </div>
+      </div>
     </>
   );
 }
@@ -212,100 +232,94 @@ function Stat({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-/** The drawing box, in the SVG's own units. It scales with the card through `viewBox`. */
-const CHART = { width: 640, height: 160, pad: 10 };
-
-/** Marker radius. It is what `CHART.pad` has to clear so nothing is clipped. */
-const MARKER = 3;
-
 /**
- * DESIGN.md `card-pnl-evolution`: *"a line chart in `semantic-gain` (or
- * `semantic-loss` when the period is negative) with point markers ... and a
- * time axis."*
+ * DESIGN.md `card-calendario-pnl`: the mould's calendar heatmap, one cell per
+ * UTC day of the window, painted green or red by that day's realized figure and
+ * shaded by its size against the window's own biggest day.
  *
- * Inline SVG, no dependency: the geometry is `chart.ts`, which is where the one
- * point / two points / all-equal / empty cases are pinned. `currentColor`
- * carries the sign colour, so the class on the `<svg>` is the only place the
- * direction is stated.
+ * The grid is `calendar.ts` — every date decision lives there, dateless of the
+ * runner's clock. This function is layout and words.
  *
- * `aria-hidden` on the drawing with the figures already on `card-stats` beside
- * it: a polyline read aloud is noise, and the numbers it draws are all in text
- * a few lines down.
+ * **A day with no row is an empty cell, not a zero.** DESIGN.md: *"Absence is
+ * rendered as absence"*; `kol.ts` writes no `pnl_daily` row for a day that
+ * closed nothing, and a grey square is what that looks like.
+ *
+ * The weekday header is `aria-hidden` and so are the empty cells: a screen
+ * reader that announced seven letters and then twenty blanks would bury the
+ * four days that carry a figure. Each painted cell is a `<time>` labelled with
+ * its date and its amount, which is the whole content of this card in text.
  */
-function PnlEvolution({
+function PnlCalendar({
+  from,
+  to,
   series,
-  direction,
 }: {
+  from: string;
+  to: string;
   series: PublicKolDetail["series"];
-  direction: "gain" | "loss" | "";
 }) {
   if (series.length === 0) {
-    // DESIGN.md, "Every surface has two states": `| modal-kol chart | line with
-    // points | Sin operaciones cerradas en este período. |`. Verbatim, and it
-    // sits in the space the chart would occupy rather than collapsing the card.
+    // DESIGN.md, "Every surface has two states": `| modal-kol calendar | a cell
+    // per day of the window | Sin operaciones cerradas en este período. |`.
+    // Verbatim, and it sits in the space the grid would occupy rather than
+    // collapsing the card.
     return (
-      <div className="state-empty chart-empty">
+      <div className="state-empty calendar-empty">
         <p className="state-empty-lead">Sin operaciones cerradas en este período.</p>
       </div>
     );
   }
 
-  const { points, polyline } = chartGeometry(
-    series.map((point) => point.cumulativeSol),
-    CHART,
-  );
+  const { cells, leading } = calendarGrid(from, to, series);
 
   return (
-    <>
-      {/* No `preserveAspectRatio="none"`: a non-uniform scale would draw every
-          circular marker as an ellipse and thin the line horizontally. The
-          stylesheet gives the element the viewBox's own 4:1 ratio instead, so
-          the drawing scales with the card without being distorted by it. */}
-      <svg
-        className={`chart ${direction}`}
-        viewBox={`0 0 ${CHART.width} ${CHART.height}`}
-        role="presentation"
-        aria-hidden="true"
-      >
-        {/* A single point has no line to draw, and a `<polyline>` with one
-            vertex renders nothing anyway — the marker below is the whole
-            chart in that case. */}
-        {points.length > 1 && <polyline className="chart-line" points={polyline} />}
-        {points.map((point, index) => (
-          <circle key={series[index].day} cx={point.x} cy={point.y} r={MARKER} />
-        ))}
-      </svg>
+    <div className="calendar">
+      {/* Monday first: `windows.ts` computes `Semanal` as the ISO week, so a
+          calendar that started on Sunday would put that window's first day in
+          the second column of its own grid. */}
+      {WEEKDAYS.map((letter, index) => (
+        <span key={index} className="calendar-weekday label" aria-hidden="true">
+          {letter}
+        </span>
+      ))}
+      {cells.map((cell, index) => {
+        const className = `calendar-cell${cell.level === 0 ? "" : ` ${cell.direction} level-${cell.level}`}`;
+        // Only the first cell needs placing; the rest follow it across the
+        // seven columns on their own.
+        const style = index === 0 && leading > 0 ? { gridColumnStart: leading + 1 } : undefined;
 
-      {/* The time axis. The first and last day the series actually carries, in
-          the `label` role — not a tick per point, which at thirty days would be
-          thirty overlapping dates in a 640-unit box. A one-point series names
-          its single day once rather than printing it twice. */}
-      <div className="chart-axis label">
-        <span>{series[0].day}</span>
-        {series.length > 1 && <span>{series[series.length - 1].day}</span>}
-      </div>
-    </>
+        if (cell.dailySol === null) {
+          return <span key={cell.day} className={className} style={style} aria-hidden="true" />;
+        }
+        return (
+          <time
+            key={cell.day}
+            className={className}
+            style={style}
+            dateTime={cell.day}
+            aria-label={`${formatUtcDay(cell.day)}: ${formatSignedSol(cell.dailySol)}`}
+          />
+        );
+      })}
+    </div>
   );
 }
 
-/**
- * DESIGN.md `list-defi-trades`: *"the KOL's trades, each with verb, SOL amount
- * by sign and its USD equivalent, and where the wallet is hidden the row reads
- * `PRIVADO` with a padlock instead of a signature link."*
- *
- * *"by sign"* is read the way the same document reads it everywhere else — *"the
- * period's total PnL in `numeric-lg` **by sign**"*, *"in `semantic-gain` or
- * `semantic-loss` **by the period's sign**"* — as *coloured* by direction. A
- * trade's direction is its side, and the feed row already colours a buy green
- * and a sell red; two surfaces in one product must not disagree about that, so
- * the amount is printed unsigned and coloured, exactly as the feed prints it.
- */
+/** `es-ES` weekday initials, Monday first. `X` for miércoles, as Spain writes it. */
+const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"] as const;
+
+/** `2026-08-25` as `25/08`, to label a cell the way a trade row labels a row. */
+function formatUtcDay(day: string): string {
+  const [, month, date] = day.split("-");
+  return `${date}/${month}`;
+}
+
 function TradeList({ trades, hideWallets }: { trades: PublicTrade[]; hideWallets: boolean }) {
   if (trades.length === 0) {
     // **DESIGN.md specifies no empty state for this list.** Its two-states table
-    // covers the leaderboard, the feed, the chart, the win rate and an unpriced
+    // covers the leaderboard, the feed, the calendar, the win rate and an unpriced
     // figure, and stops there. This line is derived from the one the same table
-    // gives the chart — `Sin operaciones cerradas en este período.` — with
+    // gives the calendar — `Sin operaciones cerradas en este período.` — with
     // `cerradas` dropped, because this list is every trade rather than only the
     // closes. Recorded in the batch report as a gap in the document rather than
     // presented as a rule it states.

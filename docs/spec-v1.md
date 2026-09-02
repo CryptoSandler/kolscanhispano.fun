@@ -45,7 +45,7 @@ outside `/registro`. Accounts, sessions, payments. WebSockets.
 | `/` | Live trade feed, newest first. Wordmark, nav, affiliate slot. |
 | `/kol/<slug>` | Profile, realized and unrealized PnL, win rate, open positions, trade log. |
 | `/token/<mint>` | Token metadata, price, and the list of KOLs that bought or sold, with timestamps. |
-| `/leaderboard` | Ranked realized PnL. Toggles: `Diario / Semanal / Mensual` and `SOL / USD`. |
+| `/leaderboard` | Ranked realized PnL, always sorted by SOL. Toggles: `Diario / Semanal / Mensual` and `USD / ARS` — **superseded 2026-09-02**, this row read `SOL / USD` and the second toggle chose the ranked figure; the owner's clone decision made it choose the currency in parentheses instead (`docs/clone-map.md` §2, `docs/round-ars.md`). |
 | `/registro` | Self-registration. The only page that connects a wallet. |
 | `/como-calculamos-el-pnl` | Plain-language explanation of the PnL model. |
 | `/terminos`, `/privacidad` | Legal. |

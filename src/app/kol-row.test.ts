@@ -26,14 +26,14 @@ import { describe, expect, it } from "vitest";
 import { GoneKolsContext, KolModalContext } from "./kol-modal";
 import { KolRow } from "./kol-row";
 
-/** A row, wrapped in the table markup React expects a `<tr>` to live in. */
+/** A card, wrapped in the list React expects a `<li>` to live in. */
 function render(open?: (slug: string) => void, gone?: ReadonlySet<string>): string {
   const row = createElement(
     KolRow,
     { name: "KOL Uno", slug: "kol-uno", podium: 1 as const },
-    createElement("td", null, "celda"),
+    createElement("span", null, "celda"),
   );
-  let tree: ReactElement = createElement("table", null, createElement("tbody", null, row));
+  let tree: ReactElement = createElement("ul", { className: "board" }, row);
   if (open !== undefined) {
     tree = createElement(KolModalContext.Provider, { value: open }, tree);
   }
@@ -63,9 +63,12 @@ describe("KolRow once a modal is provided", () => {
     expect(html).toContain('aria-label="Ver el detalle de KOL Uno"');
   });
 
-  it("keeps the row semantics a screen reader reads the table with", () => {
-    // `role="button"` on a `<tr>` would replace those semantics, so the
-    // keyboard reach is bought with `tabindex` and an accessible name instead.
+  it("keeps the list semantics a screen reader navigates the ranking by", () => {
+    // `role="button"` on the `<li>` would replace them — a ranking read as
+    // twelve buttons announces their count and nothing about their order — so
+    // the keyboard reach is bought with `tabindex` and an accessible name
+    // instead. It also keeps the `@handle` link on the card legal, which it
+    // would not be inside a button.
     expect(render(() => {})).not.toContain("role=");
   });
 
@@ -92,7 +95,7 @@ describe("KolRow when its KOL is gone", () => {
   it("renders nothing at all, rather than a row that cannot be opened", () => {
     const html = render(() => {}, new Set(["kol-uno"]));
 
-    expect(html).toBe("<table><tbody></tbody></table>");
+    expect(html).toBe('<ul class="board"></ul>');
     // Not disabled, not greyed, not `aria-disabled` — DESIGN.md's last Don't is
     // about the control existing at all.
     expect(html).not.toContain("row-leaderboard");
@@ -105,7 +108,7 @@ describe("KolRow when its KOL is gone", () => {
     expect(render(() => {}, new Set(["otro-kol"]))).toBe(render(() => {}));
   });
 
-  it("is a no-op with no provider, so the plain table is unaffected", () => {
+  it("is a no-op with no provider, so the plain list is unaffected", () => {
     expect(render()).toContain("row-leaderboard");
   });
 });

@@ -10,18 +10,23 @@ import { WINDOW_LABELS } from "@/lib/windows";
  * controls live in the site header, not on the leaderboard page — one place,
  * every route.
  *
- * DESIGN.md `segmented`: *"`Diario · Semanal · Mensual` and `SOL · USD` as pill
+ * DESIGN.md `segmented`: *"`Diario · Semanal · Mensual` and `USD · ARS` as pill
  * segments; selected segment `surface-3` with cyan text. **All three windows
  * are real aggregations; none is a disabled stub.**"* `LEADERBOARD_WINDOWS` is
  * `["diario","semanal","mensual"]` and `readLeaderboard` aggregates each of
  * them, so all three are links to a page that answers.
  *
- * **`SOL · USD`, not a national currency.** `docs/references.md` §6: the
- * reference toggles `USD / BRL` because it serves one country; we serve Spain
- * and Latin America, CLAUDE.md fixes the copy as neutral Spanish for that
- * reason, and `ARS` "would be as arbitrary for a reader in Madrid or Bogotá as
- * `BRL` would". There is also no rate source in this codebase to invent one
- * from.
+ * **`USD · ARS`, and it chooses the fiat rather than the ranked figure.** It
+ * read `SOL · USD` until 2026-09-02, when the owner's clone decision replaced
+ * it: the mould toggles `USD · BRL` beside a ranking that is always sorted by
+ * the chain figure, so ours does the same. `docs/round-ars.md` is the round the
+ * peso required, and it is where the choice of rate is recorded as open.
+ *
+ * **Both segments always show, including when there is no rate.** The peso
+ * page still answers — its figures render `sin precio` and the qualifier line
+ * says why — so this is not DESIGN.md's *"control that does not work"*; it is
+ * absence rendered as absence, one layer further in. The alternative was a
+ * second database read in the root layout to decide whether to draw a pill.
  *
  * Links, not buttons: every combination is a real URL, so the state survives a
  * reload, a share and a back button, and the control ships no script for
@@ -31,27 +36,32 @@ import { WINDOW_LABELS } from "@/lib/windows";
  * the page below it.
  *
  * Off `/leaderboard` the parameters are absent and the defaults show, which are
- * exactly what the home page's top ten is: the daily window in SOL. Choosing a
- * segment from there navigates to the full ranking with that choice applied.
+ * exactly what the home page's top ten is: the daily window with the USD total.
+ * Choosing a segment from there navigates to the full ranking with that choice
+ * applied.
  *
- * The option lists arrive as props rather than being imported: `LEADERBOARD_UNITS`
- * lives in `@/lib/leaderboard`, which imports the Postgres driver, and a client
- * component importing it would pull `pg` into the browser bundle.
+ * The option lists arrive as props rather than being imported:
+ * `LEADERBOARD_FIATS` lives in `@/lib/leaderboard`, which imports the Postgres
+ * driver, and a client component importing it would pull `pg` into the browser
+ * bundle.
+ *
+ * The query parameter is still called `unit`, which is what it was published
+ * as; `leaderboard.ts` carries the reasoning.
  */
-const UNIT_LABELS: Record<string, string> = { sol: "SOL", usd: "USD" };
+const FIAT_LABELS: Record<string, string> = { usd: "USD", ars: "ARS" };
 
 export function LeaderboardControls({
   windows,
-  units,
+  fiats,
 }: {
   windows: readonly string[];
-  units: readonly string[];
+  fiats: readonly string[];
 }) {
   const params = useSearchParams();
   // The same fallbacks `/leaderboard` applies to an unreadable parameter, so
   // the control and the page cannot disagree about what is selected.
   const window = windows.includes(params.get("window") ?? "") ? params.get("window")! : windows[0];
-  const unit = units.includes(params.get("unit") ?? "") ? params.get("unit")! : units[0];
+  const unit = fiats.includes(params.get("unit") ?? "") ? params.get("unit")! : fiats[0];
 
   const href = (next: { window?: string; unit?: string }) =>
     `/leaderboard?window=${next.window ?? window}&unit=${next.unit ?? unit}`;
@@ -71,15 +81,15 @@ export function LeaderboardControls({
         ))}
       </div>
 
-      <div className="segmented" role="group" aria-label="Unidad">
-        {units.map((option) => (
+      <div className="segmented" role="group" aria-label="Moneda">
+        {fiats.map((option) => (
           <Link
             key={option}
             className={option === unit ? "segment is-selected" : "segment"}
             aria-current={option === unit ? "true" : undefined}
             href={href({ unit: option })}
           >
-            {UNIT_LABELS[option] ?? option}
+            {FIAT_LABELS[option] ?? option}
           </Link>
         ))}
       </div>

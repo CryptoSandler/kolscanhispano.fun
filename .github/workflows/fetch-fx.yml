@@ -1,0 +1,85 @@
+name: Fetch the peso rate
+
+# Reads one public exchange-rate source and writes one `setting` row, through
+# scripts/fetch-fx.ts. `docs/round-ars.md` is the round behind the figure it
+# feeds; src/lib/fx.ts is what reads it.
+#
+# WHY THIS IS ITS OWN FILE, and not a sixth step in parse-pending.yml. CLAUDE.md
+# requires the next addition to that workflow to justify in writing either why it
+# belongs there or how the file should be split. It does not belong there: every
+# step in that file has an ordering dependency on the ones around it — the
+# sol_price fill must precede the parse, the requeue must sit between them — and
+# this has none with any of them. It reads no trade, writes no trade, and its
+# failure must not stand between a webhook and a row. A step whose position in a
+# five-step file carries no meaning is a step that makes the other four harder to
+# read, which is the cost that rule exists to prevent.
+
+on:
+  schedule:
+    # Every three hours. The source republishes several times on a business day
+    # and not at all on a Sunday, so this is about the resolution of the number
+    # rather than its freshness: fx.ts stops believing a quote after 96 hours,
+    # which is eight missed runs in a row, not one. Hourly would be eight times
+    # the runs for a figure that is an approximation either way.
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+# The GITHUB_TOKEN this workflow gets, declared at workflow level so it covers
+# every job and step. Nothing here uses it for anything but the checkout, and
+# `contents: read` is exactly what the checkout needs.
+permissions:
+  contents: read
+
+# A run still going when the next schedule fires should finish, not be raced.
+# scripts/fetch-fx.ts also takes its own advisory lock for the same case; this
+# group avoids spinning up a runner that would only find that lock held.
+concurrency:
+  group: fetch-fx
+  cancel-in-progress: false
+
+jobs:
+  fetch-fx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # Pinned to a commit with the tag beside it, for the reason the other two
+      # workflows give: a tag is a movable ref, and this job holds DATABASE_URL.
+      #
+      # `persist-credentials: false` because the default writes the job's
+      # GITHUB_TOKEN into .git/config, where every later step can read it.
+      # Nothing here pushes.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      # --ignore-scripts because a dependency's install script would run in this
+      # job, with this job's environment, before the step that was reasoned
+      # about — and that step holds DATABASE_URL.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Fetch the peso rate
+        env:
+          # DATABASE_URL only, and that is the accurate list rather than a
+          # shortened one: the script's import graph is env.ts, db.ts, lock.ts,
+          # lock-key.ts and fx.ts, and none of them reads a WALLET_* key.
+          # wallets.ts, the module that asserts both at load time, is not on
+          # that graph. Handing this step keys it cannot use would only widen
+          # what a compromised step could exfiltrate.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::DATABASE_URL is not set. Add it under Settings -> Secrets and variables -> Actions -> Repository secrets."
+            exit 1
+          fi
+
+          npx tsx scripts/fetch-fx.ts

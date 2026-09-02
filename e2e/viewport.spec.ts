@@ -116,20 +116,19 @@ test.describe("the home page at 1280×900", () => {
   });
 
   /**
-   * The two statements that qualify the figures, on the page rather than
-   * behind a hover: spec §4.1's USD caveat and spec §4.8's win-rate
-   * definition. The seed puts a KOL who closed nothing in the top ten, so the
-   * `sin cierres` cell is on screen too — a percentage over an empty
-   * denominator would have rendered `0 %` there and said something false.
+   * The statement that qualifies the figures, on the page rather than behind a
+   * hover: spec §4.1's USD caveat.
+   *
+   * **It used to check two.** Spec §4.8's win-rate definition was the second,
+   * and it left the page on 2026-09-02 with the column it defined — the mould
+   * has no record column, so a caption defining one had nothing to define. The
+   * case shrank rather than being deleted: the remaining caveat is about the
+   * figure the card still prints, and it is the one that is easy to lose.
    */
   test("qualifies its figures in words", async ({ page }) => {
     await page.goto("/");
 
     await expect(page.getByText(/USD derivado del precio de SOL/)).toBeVisible();
-    await expect(
-      page.getByText(/posiciones cerradas ganadoras \/ posiciones cerradas/),
-    ).toBeVisible();
-    await expect(page.locator(".state-none")).toHaveText("sin cierres");
   });
 
   /**
@@ -198,21 +197,30 @@ for (const { name, viewport } of SIZES) {
     /**
      * Nothing may push the *page* sideways, at either size.
      *
-     * Wide content is allowed to scroll — the ranking table is 768px of fixed
-     * columns and cannot honour DESIGN.md's *"fixed column widths so a live
-     * update never reflows a table"* and fit 390px at the same time — but it
-     * scrolls **inside its own container**, and the document does not move.
+     * Wide content is allowed to scroll **inside its own container**, and the
+     * document does not move. The ranking used to be the wide thing here; it is
+     * a list of cards that wraps since 2026-09-02, and the case below is what
+     * holds it to that.
      *
      * Measured as `documentElement.scrollWidth` rather than by looking for a
      * scrollbar: at 390 the ranking's own columns made the document 581px wide
      * on both `/` and `/leaderboard`, and a screenshot taken at scroll offset 0
      * showed nothing at all. That is how this shipped.
      */
-    for (const path of ["/", "/leaderboard"]) {
+    for (const [path, present] of [
+      ["/", ".row-leaderboard"],
+      ["/leaderboard", ".row-leaderboard"],
+      ["/leaderboard?unit=ars", ".row-leaderboard"],
+      // Built 2026-09-02. `/cabals` carries the widest thing on the site after
+      // the ranking — three podium cards side by side — and `/trade` four.
+      ["/cabals", ".podium-card"],
+      ["/trade", ".step"],
+    ] as const) {
       test(`never scrolls the document sideways on ${path}`, async ({ page }) => {
         await page.goto(path);
-        // The rows have to be there for the measurement to mean anything.
-        await expect(page.locator(".row-leaderboard").first()).toBeVisible();
+        // The content has to be there for the measurement to mean anything: an
+        // empty page fits every viewport on this list.
+        await expect(page.locator(present).first()).toBeVisible();
 
         const box = await page.evaluate(() => ({
           scrollWidth: document.documentElement.scrollWidth,
@@ -222,6 +230,58 @@ for (const { name, viewport } of SIZES) {
         expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
       });
     }
+
+    /**
+     * The money is on screen, at both sizes.
+     *
+     * **This is the defect the parity audit found and the reason the ranking
+     * stopped being a table** (`docs/clone-map.md` §4). At 390 the six fixed
+     * columns came to 768px inside a 358px card, so the PnL — the figure the
+     * page is sorted by — sat past the right edge behind a container scroll,
+     * while `documentElement.scrollWidth` stayed at 390 and the case above
+     * passed. A guard for the document is not a guard for the data.
+     *
+     * So this measures the **cell**, the way the trade timestamp's case does:
+     * the ranked figure's box has to be inside the viewport with nothing
+     * scrolled, and its text has to fit its own box. Both halves are needed —
+     * a cell scrolled out of sight still reports the right `textContent`, and
+     * a cell clipped to `+18,4` still sits inside the viewport.
+     */
+    test("keeps the ranked figure on screen, unscrolled", async ({ page }) => {
+      await page.goto("/leaderboard");
+      const pnl = page.locator(".row-leaderboard .pnl").first();
+      await expect(pnl).toBeVisible();
+
+      // Nothing may have been scrolled to make this true.
+      const scrolled = await page.locator(".board").evaluate((board) => ({
+        left: board.scrollLeft,
+        over: board.scrollWidth - board.clientWidth,
+      }));
+      expect(scrolled.left, "the ranking was scrolled before the measurement").toBe(0);
+      expect(scrolled.over, "the ranking list is wider than the space it has").toBeLessThanOrEqual(
+        0,
+      );
+
+      await expect(pnl).toBeInViewport();
+      const box = await pnl.evaluate((cell) => ({
+        left: cell.getBoundingClientRect().left,
+        right: cell.getBoundingClientRect().right,
+        scrollWidth: cell.scrollWidth,
+        clientWidth: cell.clientWidth,
+        innerWidth: window.innerWidth,
+        text: cell.textContent,
+      }));
+      expect(box.left, "the PnL starts off the left of the screen").toBeGreaterThanOrEqual(0);
+      expect(box.right, "the PnL runs off the right of the screen").toBeLessThanOrEqual(
+        box.innerWidth,
+      );
+      expect(box.scrollWidth, "the PnL is clipped by its own cell").toBeLessThanOrEqual(
+        box.clientWidth,
+      );
+      // And it is a figure, not an empty box that would satisfy every rect
+      // assertion above.
+      expect(box.text).toMatch(/^[+-]/);
+    });
 
     /**
      * `/admin`, which the loop above did not cover, and which broke the rule.
@@ -293,7 +353,9 @@ for (const { name, viewport } of SIZES) {
      */
     test("that guard reports an overflow when one is forced", async ({ page }) => {
       const dialog = await openFirstKol(page);
-      expect(await modalFit(dialog)).toMatchObject({ left: expect.any(Number) });
+      expect(await modalFit(dialog)).toMatchObject({
+        left: expect.any(Number),
+      });
 
       await page.addStyleTag({
         content: `.modal-kol .modal-card {

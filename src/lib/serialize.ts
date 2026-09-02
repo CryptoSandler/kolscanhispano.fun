@@ -192,7 +192,10 @@ export type PublicLeaderboardEntry = {
    * closed nine positions and lost all nine. That is the same failure this
    * project refuses elsewhere: spec §4.6 forbids rendering an unpriceable bag
    * as −100 %, and DESIGN.md's `state-unpriced` exists so a missing number is
-   * said in words instead of being invented. The screen says `sin cierres`.
+   * said in words instead of being invented. **Nothing renders it as a figure
+ * since 2026-09-02** — the record column left the card with the clone decision
+ * — but the field stays: `/api/leaderboard` publishes it, and the leaderboard's
+ * empty state is keyed on it being `null` for every entry.
    */
   winRate: string | null;
 };
@@ -295,7 +298,7 @@ export type KolDetailRow = {
 };
 
 /**
- * One point on `card-pnl-evolution`'s line: a UTC day, and realized PnL
+ * One day of `card-calendario-pnl`: a UTC day, and realized PnL
  * **accumulated** from the start of the window to the end of that day.
  *
  * Cumulative rather than per-day because DESIGN.md calls the card an
@@ -307,7 +310,19 @@ export type KolDetailRow = {
  * `Date` at the *runner's* local midnight — the local-time leak `windows.ts`
  * exists to keep out, one layer up.
  */
-export type KolSeriesPoint = { day: string; cumulativeSol: string };
+export type KolSeriesPoint = {
+  day: string;
+  /**
+   * That day's own realized PnL, which is what the calendar paints.
+   *
+   * It arrives beside the running total rather than being recovered from it:
+   * a calendar built by differencing a cumulative series is a calendar that
+   * cannot tell a quiet day from a missing one, and the difference between
+   * those two is the whole of DESIGN.md's *"Absence is rendered as absence."*
+   */
+  dailySol: string;
+  cumulativeSol: string;
+};
 
 /** Everything a public response may carry about one KOL's period, and nothing more. */
 export type PublicKolDetail = {
@@ -352,7 +367,17 @@ export type PublicKolDetail = {
   volumeSol: string;
   /** `card-stats`: trades. */
   tradeCount: number;
-  /** `card-pnl-evolution`'s line. Empty when nothing closed in the window. */
+  /**
+   * The window that was summed, as `YYYY-MM-DD` UTC days — `from` inclusive,
+   * `to` exclusive.
+   *
+   * The calendar needs the whole span and not only the days that closed
+   * something: a month in which two days traded is a month-shaped grid with two
+   * painted cells, not a grid of two.
+   */
+  from: string;
+  to: string;
+  /** `card-calendario-pnl`'s cells. Empty when nothing closed in the window. */
   series: KolSeriesPoint[];
   /** `list-defi-trades`, newest first, capped by the caller. */
   trades: PublicTrade[];
@@ -375,12 +400,16 @@ export type PublicKolDetail = {
 export function serializeKolDetail(options: {
   row: KolDetailRow;
   window: LeaderboardWindow;
+  from: string;
+  to: string;
   series: KolSeriesPoint[];
   trades: PublicTrade[];
 }): PublicKolDetail {
   const { row } = options;
   return {
     window: options.window,
+    from: options.from,
+    to: options.to,
     kol: {
       slug: row.slug,
       name: row.display_name,

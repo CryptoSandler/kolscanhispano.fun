@@ -19,7 +19,9 @@ import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import type { PublicCabal } from "@/lib/cabals";
 import type { PublicKolDetail, PublicLeaderboardEntry } from "@/lib/serialize";
+import { CabalsBoard } from "./cabals/board";
 import { FeedLive } from "./feed-live";
 import { KolDetail } from "./kol-detail";
 import { LoadFailureState, loadFailure } from "./kol-modal-host";
@@ -51,7 +53,7 @@ function entry(rank: number, overrides: Partial<PublicLeaderboardEntry> = {}): P
 
 function leaderboardHtml(entries: PublicLeaderboardEntry[]): string {
   return renderToStaticMarkup(
-    createElement(LeaderboardTable, { entries, unit: "sol" as const }),
+    createElement(LeaderboardTable, { entries, fiat: "usd" as const, rate: null }),
   );
 }
 
@@ -62,9 +64,10 @@ const DESIGN = readFileSync(join(import.meta.dirname, "..", "..", "DESIGN.md"), 
  * `{ surface: [line1, line2] }`.
  *
  * Only the two rows whose empty cell is a two-part `line / line` pair are
- * matched — the table's other two rows are single-cell states (`sin cierres`,
- * `sin precio`), which `feed-live.test.ts` and `leaderboard-table` cover
- * elsewhere.
+ * matched — the table's other single-cell states (`sin precio`, and the
+ * modal's) are covered elsewhere. `sin cierres` was one of them until
+ * 2026-09-02, when the record column left the card and its row left the
+ * table.
  */
 function emptyStates(): Record<string, [string, string]> {
   const out: Record<string, [string, string]> = {};
@@ -115,6 +118,8 @@ function quietDetail(): PublicKolDetail {
     realizedUsd: "0",
     volumeSol: "0",
     tradeCount: 0,
+    from: "2026-08-25",
+    to: "2026-08-26",
     series: [],
     trades: [],
   };
@@ -124,7 +129,7 @@ describe("DESIGN.md's empty states are what the surfaces render", () => {
   it("names both surfaces in the document", () => {
     // If the table is reshaped so the parse above stops matching, every
     // assertion below would trivially pass on an empty object.
-    expect(Object.keys(emptyStates()).sort()).toEqual(["feed", "leaderboard"]);
+    expect(Object.keys(emptyStates()).sort()).toEqual(["cabals", "feed", "leaderboard"]);
   });
 
   it("renders the feed's two lines, and no row", () => {
@@ -149,20 +154,95 @@ describe("DESIGN.md's empty states are what the surfaces render", () => {
     }
   });
 
-  it("renders the leaderboard's two lines, and no table", () => {
+  it("renders the leaderboard's two lines, and no card", () => {
     const [lead, note] = emptyStates().leaderboard;
     const html = leaderboardHtml([]);
 
     expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
     expect(html).toContain(`<p class="state-empty-note">${note}</p>`);
 
-    // No zeroed rows and no header row standing over records that do not
-    // exist — DESIGN.md's measured case is kolscan.io's fifty rows of
+    // No zeroed rows — DESIGN.md's measured case is kolscan.io's fifty rows of
     // `+0.00 Sol` off a stalled indexer.
-    expect(html).not.toContain("<table");
     expect(html).not.toContain("row-leaderboard");
     expect(html).not.toContain("0,00");
     expect(html).not.toContain("Todavía no hay KOLs en la clasificación.");
+  });
+});
+
+/**
+ * `/cabals`, the surface `docs/clone-map.md` §6 added on 2026-09-02.
+ *
+ * Same rule and same discriminator as the ranking, one level up: a board where
+ * **nothing closed anywhere** measures nothing, and three podium cards reading
+ * `0,00 SOL` would be kolscan.io's fifty zero rows with a medal on them. A
+ * cabal that closed nothing beside one that did is a real comparison and stays.
+ */
+describe("the cabal board's two states", () => {
+  const [lead, note] = emptyStates().cabals;
+
+  function cabal(rank: number, overrides: Partial<PublicCabal> = {}): PublicCabal {
+    return {
+      rank,
+      tag: `C${rank}`,
+      name: `Cabal ${rank}`,
+      members: 3,
+      realizedSol: "0",
+      realizedUsd: "0",
+      closed: 0,
+      ...overrides,
+    };
+  }
+
+  function html(entries: PublicCabal[]): string {
+    return renderToStaticMarkup(createElement(CabalsBoard, { entries }));
+  }
+
+  it("says the empty period in the document's words, with no podium at all", () => {
+    for (const entries of [[], [cabal(1), cabal(2), cabal(3)]]) {
+      const rendered = html(entries);
+      expect(rendered).toContain(`<p class="state-empty-lead">${lead}</p>`);
+      expect(rendered).toContain(`<p class="state-empty-note">${note}</p>`);
+      expect(rendered).not.toContain("podium-card");
+      expect(rendered).not.toContain("0,00");
+    }
+  });
+
+  it("prints every cabal, zeros included, as soon as one has closed something", () => {
+    const entries = [
+      cabal(1, { realizedSol: "42.5", realizedUsd: "4250", closed: 9 }),
+      cabal(2),
+      cabal(3),
+      cabal(4),
+    ];
+    const rendered = html(entries);
+
+    expect(rendered).not.toContain(lead);
+    expect(rendered.match(/podium-card/g)).toHaveLength(3);
+    expect(rendered).toContain("+42,50 SOL");
+    // The fourth is in the list below the podium, not on it.
+    expect(rendered.match(/row-cabal/g)).toHaveLength(1);
+  });
+
+  /**
+   * The podium is read #2, #1, #3 — the shape a podium has — and the ranking
+   * arrives in rank order. A card that rendered in the order it was given would
+   * pass every other assertion here.
+   */
+  it("puts the winner in the middle", () => {
+    const rendered = html([
+      cabal(1, { name: "Primero", closed: 1 }),
+      cabal(2, { name: "Segundo" }),
+      cabal(3, { name: "Tercero" }),
+    ]);
+    const order = [...rendered.matchAll(/class="podium-name">([^<]+)</g)].map((m) => m[1]);
+
+    expect(order).toEqual(["Segundo", "Primero", "Tercero"]);
+  });
+
+  it("renders one card, not a gap, when only one cabal exists", () => {
+    const rendered = html([cabal(1, { closed: 4, realizedSol: "1" })]);
+    expect(rendered.match(/podium-card/g)).toHaveLength(1);
+    expect(rendered).not.toContain("section-label");
   });
 });
 
@@ -187,10 +267,9 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
     const html = leaderboardHtml([1, 2, 3, 4, 5].map((rank) => entry(rank)));
 
     expect(html).toContain(lead);
-    expect(html).not.toContain("<table");
+    expect(html).not.toContain("row-leaderboard");
     // The exact shape kolscan.io was captured in.
     expect(html).not.toContain("0,00");
-    expect(html).not.toContain("sin cierres");
   });
 
   it("prints every row, zeros included, as soon as one KOL has closed something", () => {
@@ -201,13 +280,11 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
     const html = leaderboardHtml(entries);
 
     expect(html).not.toContain(lead);
-    expect(html).toContain("<table");
     expect(html.match(/class="row-leaderboard/g)).toHaveLength(5);
-    // The four that closed nothing keep their own cell-level state rather than
-    // being suppressed or rounded to `0 %`.
-    expect(html.match(/sin cierres/g)).toHaveLength(4);
     expect(html).toContain("+18,42 SOL");
-    expect(html).toContain("77,8 %");
+    // The four that closed nothing are printed at zero rather than suppressed:
+    // spec §2's roster, legible because one row beside them carries a figure.
+    expect(html.match(/0,00 SOL/g)).toHaveLength(4);
   });
 
   it("still says so in words when there is no roster at all", () => {
@@ -223,17 +300,16 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
  * *"an axis with nothing on it"*: an empty chart frame reads as a measurement
  * that came out flat.
  */
-describe("modal-kol's chart says its empty period in words, not as an empty axis", () => {
-  it("renders DESIGN.md's sentence, and no chart", () => {
-    const lead = emptyCell("`modal-kol` chart");
+describe("modal-kol's calendar says its empty period in words, not as an empty grid", () => {
+  it("renders DESIGN.md's sentence, and no grid", () => {
+    const lead = emptyCell("`modal-kol` calendar");
     const html = renderToStaticMarkup(createElement(KolDetail, { detail: quietDetail() }));
 
     expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
-    expect(html).not.toContain("<svg class=\"chart");
-    expect(html).not.toContain("chart-axis");
-    // No zeroed point standing in for a day that did not happen: DESIGN.md,
-    // "Absence is rendered as absence, never as a zero."
-    expect(html).not.toContain("<circle");
+    expect(html).not.toContain('class="calendar"');
+    // No cell at all, zeroed or otherwise, standing in for a day that did not
+    // happen: DESIGN.md, "Absence is rendered as absence, never as a zero."
+    expect(html).not.toContain("calendar-cell");
     expect(html).not.toContain("skeleton");
     for (const apology of ["Ups", "Lo sentimos"]) expect(html).not.toContain(apology);
   });

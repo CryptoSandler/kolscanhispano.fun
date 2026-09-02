@@ -1,45 +1,56 @@
 import { cabalChipClass } from "@/lib/cabal";
-import type { LeaderboardUnit } from "@/lib/leaderboard";
+import type { LeaderboardFiat } from "@/lib/leaderboard";
 import { Avatar } from "./avatar";
 import { KolRow } from "./kol-row";
-import { amountDirection, formatPercent, formatSignedSol, formatSignedUsd } from "@/lib/format";
+import { amountDirection, formatSignedArs, formatSignedSol, formatSignedUsd } from "@/lib/format";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
+import { usdToArs, type ArsRate } from "@/lib/fx";
 
 /**
- * DESIGN.md `row-leaderboard`, as a real `<table>`.
+ * DESIGN.md `row-leaderboard`, as a `<ul>` of cards.
  *
- * Fixed column widths through `<colgroup>` and `table-layout: fixed`, because
- * DESIGN.md's rule is *"fixed column widths so a live update never reflows a
- * table"*: with automatic layout a KOL crossing from `9,99` to `10,01 SOL`
- * widens its column and shifts every row on the page.
+ * **It was a `<table>` until 2026-09-02.** `docs/clone-map.md` §2 and §4: the
+ * mould ranks in cards, and the table could not be made to fit 390px — its
+ * fixed columns pushed the PnL, the figure the page is sorted by, off the right
+ * edge behind a horizontal scroll. The cards wrap there instead; the CSS
+ * carries the full reasoning and the reverted attempt.
+ *
+ * The rule the `<colgroup>` was there for survives as fixed grid **tracks**, so
+ * a KOL crossing from `9,99` to `10,01 SOL` still reflows nothing.
+ *
+ * **No header row and no record column**, at either size: the mould has
+ * neither. `Cerradas` and `% ganadas` came off the row on 2026-09-02 with the
+ * rest of the clone decision.
  *
  * A server component. The one piece of client code on this surface is
- * {@link KolRow}, which wraps each `<tr>` so the row can open the KOL modal;
+ * {@link KolRow}, which wraps each `<li>` so the card can open the KOL modal;
  * the cells are passed to it as children and are still rendered here, on the
  * server.
  *
- * **The row carries two columns DESIGN.md's `row-leaderboard` paragraph does
- * not enumerate** — `Cerradas` and `% ganadas`. That paragraph is not
- * exhaustive: the same document's *"Every surface has two states"* table lists
- * `| row, no closed episodes | win rate | sin cierres |`, which only means
- * something if the populated row prints a win rate. `docs/references.md` §6
- * settles the pair the same way, taking kolscan.io's record column —
- * *"**kolscan.io.** We compute win rate, and `sin cierres` covers its
- * absence"*.
+ * **The record columns are gone from the row and not from the data.**
+ * `serialize.ts` still publishes `wins`, `losses` and `winRate`, because the
+ * empty state below is keyed on `winRate === null` and `/api/leaderboard` is a
+ * contract of its own. What changed is what the row prints.
+ *
+ * ponytail: the lazier version drops the three fields from the payload too. It
+ * is not done because the empty-state rule needs one of them and the API has
+ * its own consumers; the upgrade, if the record never comes back, is one
+ * migration of the serializer and its contract test.
  */
 export function LeaderboardTable({
   entries,
-  unit,
-  showHeader = true,
+  fiat,
+  rate,
 }: {
   entries: PublicLeaderboardEntry[];
-  unit: LeaderboardUnit;
+  /** Which currency the parenthesised total is printed in. */
+  fiat: LeaderboardFiat;
   /**
-   * The home page's top-ten summary drops the header row: `/leaderboard` is
-   * where a reader goes to compare columns, and the caption beneath the table
-   * already names both count columns.
+   * The peso rate, when `fiat` is `ars`. `null` — no rate stored, or one too
+   * old to believe — makes every peso figure `sin precio` rather than a number
+   * computed from last week's dollar. See `src/lib/fx.ts`.
    */
-  showHeader?: boolean;
+  rate: ArsRate | null;
 }) {
   /*
     DESIGN.md, "Every surface has two states". The empty state stays inside the
@@ -69,18 +80,19 @@ export function LeaderboardTable({
     beside a real figure means something.
 
     The signal is `winRate === null`, which `serialize.ts` defines as *"`null`
-    when nothing closed in the window"*. It is the same field the row below uses
-    to print `sin cierres`, so the panel-level rule and the cell-level rule read
-    off one value and cannot drift apart. `entries.every` also covers the
-    no-approved-KOL case, where it is vacuously true.
+    when nothing closed in the window"*. The row stopped printing a rate on
+    2026-09-02, so this is now the only place that field is read on this
+    surface — it is the cheapest true answer to "did anything close in this
+    window", not a leftover of the column that is gone. `entries.every` also
+    covers the no-approved-KOL case, where it is vacuously true.
   */
   if (entries.every((entry) => entry.winRate === null)) {
     return (
       <div className="state-empty">
         <p className="state-empty-lead">Todavía no hay operaciones cerradas.</p>
         <p className="state-empty-note">
-          Aquí va la clasificación por PnL realizado del período, en cuanto los KOL del
-          padrón cierren su primera posición.
+          Aquí va la clasificación por PnL realizado del período, en cuanto los KOL del padrón
+          cierren su primera posición.
         </p>
       </div>
     );
@@ -89,64 +101,15 @@ export function LeaderboardTable({
   return (
     <>
       {/*
-        The table scrolls inside this box rather than pushing the document
-        sideways. DESIGN.md requires the column widths to be fixed and says
-        nothing at all about narrow viewports, so on a screen too small for
-        them the overflow has to go somewhere; putting it here keeps the page
-        still, which is the behaviour `viewport.spec.ts` now pins at 390×844.
-        `.table-scroll` carries the reasoning.
+        A list, and read as one. Each card is a `<li>`; `KolRow` keeps the
+        listitem semantics rather than taking `role="button"`, for the same
+        reason it kept the row semantics when this was a table — see there.
       */}
-      <div className="table-scroll">
-        <table className="leaderboard">
-          <colgroup>
-            <col className="col-rank" />
-            <col className="col-kol" />
-            <col className="col-closed" />
-            <col className="col-rate" />
-            <col className="col-primary" />
-            <col className="col-secondary" />
-          </colgroup>
-          {showHeader && (
-            <thead>
-              <tr>
-                <th scope="col" className="label">
-                  #
-                </th>
-                <th scope="col" className="label">
-                  KOL
-                </th>
-                <th scope="col" className="label num-head">
-                  Cerradas
-                </th>
-                <th scope="col" className="label num-head">
-                  % ganadas
-                </th>
-                <th scope="col" className="label num-head">
-                  {unit === "sol" ? "PnL realizado (SOL)" : "PnL realizado (USD)"}
-                </th>
-                <th scope="col" className="label num-head">
-                  {unit === "sol" ? "USD" : "SOL"}
-                </th>
-              </tr>
-            </thead>
-          )}
-          <tbody>
-            {entries.map((entry) => (
-              <Row key={entry.kol.slug} entry={entry} unit={unit} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/*
-        Spec §4.8: the definition, stated, rather than a bare percentage. When
-        the header row is off, this line names the count columns as well.
-      */}
-      <p className="label table-note">
-        {showHeader
-          ? "% ganadas = posiciones cerradas ganadoras / posiciones cerradas"
-          : "Cerradas = ganadas / perdidas · % ganadas = posiciones cerradas ganadoras / posiciones cerradas"}
-      </p>
+      <ul className="board">
+        {entries.map((entry) => (
+          <Row key={entry.kol.slug} entry={entry} fiat={fiat} rate={rate} />
+        ))}
+      </ul>
     </>
   );
 }
@@ -167,62 +130,105 @@ export function LeaderboardTable({
  * On the page, in DESIGN.md's `label` token, never behind a hover — a caveat
  * you have to point at is a figure published without one.
  */
+export const ARS_CAVEAT =
+  "ARS convertido del total en USD al tipo de cambio de referencia; no es una medición.";
+
+/**
+ * The peso's own sentence, and why it is separate from {@link USD_CAVEAT}
+ * rather than folded into it.
+ *
+ * They are two different admissions. The dollar figure may be **incomplete**,
+ * because a trade whose block had no `sol_price` row contributes nothing to it.
+ * The peso figure inherits that and adds one of its own: it is a **conversion**
+ * of a total, at one rate, taken at one moment — not the sum of each day's
+ * trades at that day's rate, which is what a reader might reasonably assume a
+ * peso PnL to be. `docs/round-ars.md` §3 fixes that arithmetic; this line is
+ * what says so on the page.
+ */
 export const USD_CAVEAT =
   "USD derivado del precio de SOL en el momento de cada operación; puede estar incompleto.";
 
 /**
- * DESIGN.md: *"the medal glyph in the matching `podium-N`"*, and, in Colors,
- * *"The podium is three tints, not three metals."* A tinted glyph is therefore
- * required and an emoji medal is ruled out twice over — it carries its own
- * colour, so it can be neither tinted nor kept out of the green/red the same
- * document reserves for money. `★` takes `currentColor`.
+ * The podium glyphs, per rank.
  *
- * It is outside the latin subset `next/font` loads, so the browser resolves it
- * from a system face. That is glyph fallback, not a second typeface: no rule in
- * this codebase declares a font for it.
+ * **They were a tinted `★` until 2026-09-02.** DESIGN.md read *"three tints,
+ * not three metals"*, which ruled an emoji out twice over — it carries its own
+ * colour, so it can be neither tinted nor kept out of the green and red that
+ * document reserves for money. The owner's clone decision overruled it and
+ * DESIGN.md was rewritten rather than worked around: the mould's own 🏆🥈🥉,
+ * which are Unicode and nobody's asset (`docs/clone-map.md`, exception c).
+ *
+ * The tints did not leave with the glyph — `podium-N` still paints the left bar
+ * and the wash, which is where the rank now reads from. The emoji's colours are
+ * therefore the only ones in this system that answer to nothing, and they are
+ * confined to a box that carries no figure.
+ *
+ * They are outside the latin subset `next/font` loads, so the browser resolves
+ * them from the system emoji face. That is glyph fallback, not a second
+ * typeface: no rule in this codebase declares a font for them.
  */
-const MEDAL = "★";
+const MEDALS = { 1: "🏆", 2: "🥈", 3: "🥉" } as const;
 
-function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: LeaderboardUnit }) {
-  const primaryText = unit === "sol" ? entry.realizedSol : entry.realizedUsd;
-  const secondaryText = unit === "sol" ? entry.realizedUsd : entry.realizedSol;
-  const primary = unit === "sol" ? formatSignedSol(primaryText) : formatSignedUsd(primaryText);
+function Row({
+  entry,
+  fiat,
+  rate,
+}: {
+  entry: PublicLeaderboardEntry;
+  fiat: LeaderboardFiat;
+  rate: ArsRate | null;
+}) {
+  /*
+    **SOL is always the ranked figure**, and the toggle only decides the
+    currency in parentheses — the mould's arrangement, and what `ORDERED` in
+    `leaderboard.ts` now sorts by unconditionally. Until 2026-09-02 the toggle
+    swapped the two, which is why the pair used to be computed from `unit`.
+
+    The peso is a **display conversion** of the USD total at one rate
+    (`docs/round-ars.md`), never a second measurement: the same figure, in
+    another currency, with the rate and its date printed above the list.
+  */
   const secondary =
-    unit === "sol" ? formatSignedUsd(secondaryText) : formatSignedSol(secondaryText);
+    fiat === "usd"
+      ? formatSignedUsd(entry.realizedUsd)
+      : rate === null
+        ? null
+        : formatSignedArs(usdToArs(entry.realizedUsd, rate.rate));
+  const primary = formatSignedSol(entry.realizedSol);
 
   // DESIGN.md: green and red mean direction of money and nothing else. A
   // window in which nothing was realized is neither, so it stays ink. The rule
-  // lives in `format.ts` because the modal colours its header and its chart by
-  // the same one.
-  const direction = amountDirection(primaryText);
+  // lives in `format.ts` because the modal colours its header by the same one.
+  const direction = amountDirection(entry.realizedSol);
   const podium = entry.rank <= 3 ? (entry.rank as 1 | 2 | 3) : null;
 
   return (
     <KolRow name={entry.kol.name} slug={entry.kol.slug} podium={podium}>
-      <td>
-        {/* The flex row lives in a span, not on the `td`: `display: flex` on a
-            table cell takes it out of table layout, and the fixed column
-            widths go with it. */}
-        <span className="rank-cell">
-          {/* DESIGN.md: "rank as zero-padded `numeric`". It does not fix the
-              width; three digits is what `docs/references.md` §6 captured
-              (`001.`) on the site the owner chose the podium from, and it is
-              the width at which a roster that grows past 99 does not change
-              shape. */}
-          <span className="num rank-num">{String(entry.rank).padStart(3, "0")}</span>
-          {/* Rendered on every row so the podium glyph does not shift the rank
-              column by its own width on ranks 1-3. */}
-          <span className={podium === null ? "medal" : `medal medal-${podium}`} aria-hidden="true">
-            {podium === null ? "" : MEDAL}
+      {/* The rank: the medal on the podium, a plain numeral below it — the
+          mould's arrangement, and the owner's decision of 2026-09-02. It was
+          `001` in a zero-padded three-digit box; padding a numeral to a width
+          the roster has not reached says something about the roster that is not
+          true.
+
+          The box is a fixed grid track, so a numeral and a medal occupy the
+          same width and nothing shifts between windows. The medal is
+          `aria-hidden`: the position is already in the list order and in the
+          modal's accessible name, and a screen reader reading "trophy" adds a
+          metaphor rather than a fact. */}
+      <span className="rank-cell">
+        {podium === null ? (
+          <span className="num rank-num">{entry.rank}</span>
+        ) : (
+          <span className="medal" aria-hidden="true">
+            {MEDALS[podium]}
           </span>
-        </span>
-      </td>
-      <td>
-        <span className="identity">
-          <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={36} />
-          <span className="identity-lines">
-            <span className="name">{entry.kol.name}</span>
-            {/*
+        )}
+      </span>
+      <span className="identity">
+        <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={36} />
+        <span className="identity-lines">
+          <span className="name">{entry.kol.name}</span>
+          {/*
               DESIGN.md, `row-leaderboard`: "beneath it the **`@handle`,
               always**, linked to X, with `Wallets ocultas` in `hidden`
               **beside it** where that KOL's wallets are hidden."
@@ -241,52 +247,37 @@ function Row({ entry, unit }: { entry: PublicLeaderboardEntry; unit: Leaderboard
               is exactly that slot. The handle is the KOL's public persona
               (spec §6) and is never withheld.
             */}
-            <span className="identity-second">
-              <a
-                className="handle"
-                href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                aria-label={`Perfil de ${entry.kol.name} en X`}
-              >
-                @{entry.kol.xHandle}
-              </a>
-              {entry.kol.hideWallets && (
-                <span className="hidden-wallets">Wallets ocultas</span>
-              )}
-            </span>
+          <span className="identity-second">
+            <a
+              className="handle"
+              href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
+              target="_blank"
+              rel="noreferrer noopener"
+              aria-label={`Perfil de ${entry.kol.name} en X`}
+            >
+              @{entry.kol.xHandle}
+            </a>
+            {entry.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
           </span>
-          {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
+        </span>
+        {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
               tag alone, so the row and the modal's header cannot disagree
               about which colour a cabal is. See `src/lib/cabal.ts`. */}
-          {entry.kol.cabalTag && (
-            <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
-          )}
-        </span>
-      </td>
-      <td className="num closed">
-        {entry.wins} / {entry.losses}
-      </td>
-      <td className={entry.winRate === null ? "rate" : "num rate"}>
-        {/*
-          Spec §4.8 counts closed positions, and a rate over none of them is
-          undefined rather than zero. `0 %` beside `0 / 0` looked consistent
-          and still said something false: it is the shape of a KOL who closed
-          nine positions and lost all nine. Said in words, the way DESIGN.md's
-          `state-unpriced` says a missing price.
-        */}
-        {entry.winRate === null ? (
-          <span className="state-none">sin cierres</span>
-        ) : (
-          formatPercent(entry.winRate)
+        {entry.kol.cabalTag && (
+          <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
         )}
-      </td>
+      </span>
       {/* DESIGN.md: "right-aligned, the SOL figure in `numeric-lg` coloured by
           sign, and the USD total in `numeric` `ink-muted` in parentheses." The
           unit toggle swaps which of the two is the ranked figure; the shape —
           large and signed, then small and parenthesised — does not move. */}
-      <td className={`num-lg pnl ${direction}`}>{primary}</td>
-      <td className="num secondary">({secondary})</td>
+      <span className={`num-lg pnl ${direction}`}>{primary}</span>
+      {/* DESIGN.md, `state-unpriced`: `sin precio`, never a dash and never a
+          zero. A peso figure with no rate behind it is the same absence as a
+          SOL amount with no price. */}
+      <span className="num secondary">
+        {secondary === null ? <span className="state-unpriced">sin precio</span> : `(${secondary})`}
+      </span>
     </KolRow>
   );
 }

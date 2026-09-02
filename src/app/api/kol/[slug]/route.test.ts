@@ -187,7 +187,7 @@ describe("GET /api/kol/<slug>", () => {
   });
 });
 
-describe("card-pnl-evolution's series", () => {
+describe("card-calendario-pnl's series", () => {
   it("accumulates the daily figures, ending exactly on the window total", async () => {
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([
@@ -196,12 +196,19 @@ describe("card-pnl-evolution's series", () => {
     ]);
 
     const body = await detail("uno", "?window=semanal");
+    // Each day carries its own figure **and** the running total: the calendar
+    // paints the first and the header is the last of the second, and a calendar
+    // that recovered the daily figure by differencing could not tell a flat day
+    // from a missing one.
     expect(body.series).toEqual([
-      { day: "2026-08-24", cumulativeSol: "1.25" },
-      { day: "2026-08-25", cumulativeSol: "0.75" },
+      { day: "2026-08-24", dailySol: "1.25", cumulativeSol: "1.25" },
+      // `dailySol` is the string Postgres emitted for the `numeric`, untouched
+      // — `-0.5`, not the `-0.50` the screen prints. Every reader parses it
+      // with `decimal.ts`; normalising it here would be a second formatter.
+      { day: "2026-08-25", dailySol: "-0.5", cumulativeSol: "0.75" },
     ]);
-    // The header prints `realizedSol` and the chart's last point is the end of
-    // the same line. One number said twice must not be two numbers.
+    // The header prints `realizedSol` and the running total ends on it. One
+    // number said twice must not be two numbers.
     expect(body.series.at(-1)?.cumulativeSol).toBe(body.realizedSol);
   });
 
@@ -211,7 +218,9 @@ describe("card-pnl-evolution's series", () => {
     // the same local-time leak `windows.ts` exists to prevent, one layer up.
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([{ kolId: kol.id, day: "2026-08-25", sol: "1", usd: "100" }]);
-    expect((await detail("uno")).series).toEqual([{ day: "2026-08-25", cumulativeSol: "1" }]);
+    expect((await detail("uno")).series).toEqual([
+      { day: "2026-08-25", dailySol: "1", cumulativeSol: "1" },
+    ]);
   });
 
   it("is empty when nothing closed in the window, rather than a zeroed point", async () => {
@@ -428,13 +437,15 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
     const body = (await response.json()) as PublicKolDetail;
 
     expect(Object.keys(body).sort()).toEqual(
-      ["kol", "privateWallets", "publicWallets", "realizedSol", "realizedUsd", "series",
-       "tradeCount", "trades", "volumeSol", "window"].sort(),
+      ["from", "kol", "privateWallets", "publicWallets", "realizedSol", "realizedUsd", "series",
+       "to", "tradeCount", "trades", "volumeSol", "window"].sort(),
     );
     expect(Object.keys(body.kol).sort()).toEqual(
       ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "xHandle"].sort(),
     );
-    expect(Object.keys(body.series[0]).sort()).toEqual(["cumulativeSol", "day"].sort());
+    expect(Object.keys(body.series[0]).sort()).toEqual(
+      ["cumulativeSol", "dailySol", "day"].sort(),
+    );
     expect(body.kol.avatarUrl).toBe(`/api/avatar/${kol.id}`);
 
     // Every column name these three queries touch. A spread of a database row

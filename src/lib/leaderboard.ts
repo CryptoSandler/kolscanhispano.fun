@@ -26,10 +26,26 @@ import { query } from "./db";
 import { serializeLeaderboardEntry, type LeaderboardRow, type PublicLeaderboardEntry } from "./serialize";
 import { utcDayString, windowBounds, type LeaderboardWindow } from "./windows";
 
-/** Spec §2: `SOL / USD`. SOL is the truth and therefore the default (§4.1). */
-export const LEADERBOARD_UNITS = ["sol", "usd"] as const;
+/**
+ * The two currencies the parenthesised total can be printed in.
+ *
+ * **This used to be `["sol", "usd"]`, and it used to choose the ranked figure.**
+ * Owner's clone decision, 2026-09-02 (`docs/clone-map.md` §2): the mould toggles
+ * `USD · BRL` and the *chain* figure is always the ranked one, so ours toggles
+ * `USD · ARS` and SOL is always what the ranking is sorted by. `docs/round-ars.md`
+ * is the round behind the second currency.
+ *
+ * The consequence, stated because it is a real loss: **there is no longer a way
+ * to rank by USD.** A KOL who realized their gains when SOL was expensive could
+ * outrank on that measure and not on this one, and that ordering is gone from
+ * the product. It went with the toggle that expressed it.
+ *
+ * SOL is the truth (spec §4.1) and USD is the default fiat: it is the one both
+ * halves of this audience can price against.
+ */
+export const LEADERBOARD_FIATS = ["usd", "ars"] as const;
 
-export type LeaderboardUnit = (typeof LEADERBOARD_UNITS)[number];
+export type LeaderboardFiat = (typeof LEADERBOARD_FIATS)[number];
 
 /**
  * DESIGN.md's thesis, as a number: ten leaderboard rows and eight feed rows
@@ -95,14 +111,10 @@ const SELECT = `
  * total in either order, and a leaderboard that reshuffles equal rows between
  * two loads looks like data moving when nothing has.
  */
-const ORDERED: Record<LeaderboardUnit, string> = {
-  sol: `${SELECT} COALESCE(SUM(d.realized_sol), 0) DESC, k.slug ASC`,
-  usd: `${SELECT} COALESCE(SUM(d.realized_usd), 0) DESC, k.slug ASC`,
-};
+const ORDERED = `${SELECT} COALESCE(SUM(d.realized_sol), 0) DESC, k.slug ASC`;
 
 export type LeaderboardQuery = {
   window: LeaderboardWindow;
-  unit: LeaderboardUnit;
   /** Ranks are assigned before the cut, so the top ten are the top ten. */
   limit?: number;
   /** Injectable so a caller can pin the window; defaults to the current instant. */
@@ -111,7 +123,6 @@ export type LeaderboardQuery = {
 
 export type Leaderboard = {
   window: LeaderboardWindow;
-  unit: LeaderboardUnit;
   /** The window actually applied, so the page and the API agree on what was summed. */
   from: string;
   to: string;
@@ -128,7 +139,7 @@ export async function readLeaderboard(options: LeaderboardQuery): Promise<Leader
     throw new Error("limit must be a non-negative integer");
   }
 
-  const sql = limit === undefined ? ORDERED[options.unit] : `${ORDERED[options.unit]} LIMIT $3`;
+  const sql = limit === undefined ? ORDERED : `${ORDERED} LIMIT $3`;
   const rows = await query<LeaderboardRow>(
     sql,
     limit === undefined ? [from, to] : [from, to, limit],
@@ -136,7 +147,6 @@ export async function readLeaderboard(options: LeaderboardQuery): Promise<Leader
 
   return {
     window: options.window,
-    unit: options.unit,
     from: bounds.from.toISOString(),
     to: bounds.to.toISOString(),
     entries: rows.map((row, index) => serializeLeaderboardEntry(row, index + 1)),
@@ -144,12 +154,20 @@ export async function readLeaderboard(options: LeaderboardQuery): Promise<Leader
 }
 
 /**
- * The `unit` query parameter. Absent takes the default; anything that is not
- * one of the two is rejected rather than silently ranked in SOL — a caller
- * asking for `?unit=eur` should learn that it does not exist, not read a SOL
- * ranking labelled however they like.
+ * The `unit` query parameter, which now names a **fiat** currency.
+ *
+ * The parameter keeps the name it was published under: `?unit=usd` is a link
+ * people already have, and changing a query string costs more than the
+ * imprecision it removes — the same reason `/leaderboard` kept its route when
+ * the surface was renamed `Clasificación`. `?unit=sol` stops being a value:
+ * the page falls back to the default for anything it cannot read, and the API
+ * answers `400`.
+ *
+ * Absent takes the default; anything else is rejected rather than silently
+ * treated as USD, so a caller asking for `?unit=eur` learns that it does not
+ * exist.
  */
-export function parseUnit(raw: string | null): LeaderboardUnit | null {
-  if (raw === null) return "sol";
-  return (LEADERBOARD_UNITS as readonly string[]).includes(raw) ? (raw as LeaderboardUnit) : null;
+export function parseFiat(raw: string | null): LeaderboardFiat | null {
+  if (raw === null) return "usd";
+  return (LEADERBOARD_FIATS as readonly string[]).includes(raw) ? (raw as LeaderboardFiat) : null;
 }

@@ -18,14 +18,14 @@
  * changed hands — come from `trade` directly, because they are counts over the
  * log rather than results of the replay.
  *
- * ## The chart's series
+ * ## The calendar's series
  *
  * `pnl_daily` is keyed `(kol_id, day)`, so the finest grain available is a UTC
  * day. `Diario` therefore yields **one** point, and that is the honest render:
  * intraday realized PnL is not a number this system has computed anywhere, and
  * inventing one here by replaying episodes in a page query is exactly the shape
- * of derivation the paragraph above refuses. `chart.ts` draws one point as a
- * point.
+ * of derivation the paragraph above refuses. `calendar.ts` draws one day as one
+ * cell.
  *
  * Days with nothing closed have no row at all and are simply absent from the
  * series. That is deliberate: a zero inserted for them would read as "closed
@@ -129,7 +129,7 @@ const ACTIVITY_SQL = `
      AND t.block_time < $3::timestamptz`;
 
 /**
- * The chart's raw series: one row per day that closed something.
+ * The calendar's raw series: one row per day that closed something.
  *
  * `to_char` rather than the `date` itself, because `pg` parses a `date` into a
  * `Date` at the *runner's* local midnight — so a UTC day would arrive as the
@@ -154,19 +154,19 @@ type ActivityRow = { trade_count: number; volume_sol: string };
 type SeriesRow = { day: string; realized_sol: string };
 
 /**
- * Daily realized PnL, accumulated.
+ * Daily realized PnL, kept **and** accumulated.
  *
  * In `decimal.ts`'s scaled `bigint`, not in doubles: these are the same SOL
  * figures the leaderboard prints, and a running sum is precisely where a float
  * would start drifting. The last point is therefore *exactly* the window total
- * `DETAIL_SQL` summed in Postgres, which is what lets the chart and the modal's
+ * `DETAIL_SQL` summed in Postgres, which is what lets the calendar and the modal's
  * header be read as one statement.
  */
 function accumulate(rows: SeriesRow[]): KolSeriesPoint[] {
   let running = 0n;
   return rows.map((row) => {
     running += parseDecimal(row.realized_sol);
-    return { day: row.day, cumulativeSol: formatDecimal(running) };
+    return { day: row.day, dailySol: row.realized_sol, cumulativeSol: formatDecimal(running) };
   });
 }
 
@@ -217,6 +217,8 @@ export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolD
     // `kol-detail.tsx`.
     row: { ...row, trade_count: activity[0].trade_count, volume_sol: activity[0].volume_sol },
     window: options.window,
+    from,
+    to,
     series: accumulate(series),
     trades,
   });

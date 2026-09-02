@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import { LEADERBOARD_UNITS } from "@/lib/leaderboard";
+import { LEADERBOARD_FIATS } from "@/lib/leaderboard";
 import { LEADERBOARD_WINDOWS } from "@/lib/windows";
 import { AffiliateSlot } from "./affiliate-slot";
 import { LeaderboardControls } from "./leaderboard-controls";
@@ -96,7 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <SiteNav />
 
             <div className="topbar-right">
-              <LeaderboardControls windows={LEADERBOARD_WINDOWS} units={LEADERBOARD_UNITS} />
+              <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS} />
               {/*
                 The wallet action's slot. Spec §6 makes `/registro` the only
                 page that ever connects a wallet, and it now exists — so this is

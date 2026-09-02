@@ -414,7 +414,7 @@ highlighted podium, the cabal badges, and the detail modal.
 | Podium emphasis | none | gradient-tinted row | **Brazil**, as green / amber / blue tints. |
 | PnL columns | one SOL figure | one per chain, signed | **kolscan.io.** We are SOL-only; a per-chain row would be one column wide and imply chains we do not index. |
 | Fiat | `($0.0)` under the figure | `(R$74.999,2)` at row end | **Brazil**: at row end, in parentheses, subordinate. |
-| Record | `0 / 0` wins/losses | absent | **kolscan.io.** We compute win rate, and `sin cierres` covers its absence. |
+| Record | `0 / 0` wins/losses | absent | **kolscan.io** — *superseded 2026-09-02*: the clone decision took the column off the card. We still compute it and still publish it in `/api/leaderboard`; no surface prints it. |
 | Identity chip | truncated address | truncated address **or** `Wallets Ocultas` | **Neither.** See the invariant below. |
 | Avatar | own CDN, keyed by address | hotlinked `pbs.twimg.com` | **Neither.** Our own `/api/avatar/<kol_id>`. |
 | Feed | its own page | none | **kolscan.io**, kept on the home page. |
@@ -460,3 +460,12 @@ so a single national currency is the wrong shape here, and `ARS` would be as arb
 for a reader in Madrid or Bogotá as `BRL` would. **Built: `SOL / USD`**, the unit every
 reader can price against. Adding a national currency is a product decision, recorded in
 the batch report rather than taken here.
+
+**Taken by the owner on 2026-09-02, against this note: `USD · ARS`.** The argument above was
+not answered, it was overruled, which is the owner's to do — and it is left standing here
+because it is the argument that returns the first time a reader in Bogotá asks why the second
+currency is the one it is. What was built is a display conversion of the USD total at one
+dated public rate, with the rate, the casa and the moment printed beside the figures;
+`docs/round-ars.md` is the round it required, and **which dollar is still open**. The toggle
+also stopped choosing the *ranked* figure — the ranking is by SOL now, as on the mould — so
+`SOL / USD` did not become `USD / ARS` so much as split in two, and half of it was lost.

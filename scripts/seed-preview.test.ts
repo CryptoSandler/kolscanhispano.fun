@@ -498,7 +498,7 @@ describe("the replayed roster produces the states the preview exists to show", (
     // clock — which is a different day for a run that starts before UTC
     // midnight and reaches this test after it.
     const at = Date.parse(`${day}T12:00:00.000Z`);
-    return { ...(await readLeaderboard({ window, unit: "sol", now: new Date(at) })), at };
+    return { ...(await readLeaderboard({ window, now: new Date(at) })), at };
   }
 
   it("ranks ten rows spanning gains and losses, with `sin cierres` among them", async () => {

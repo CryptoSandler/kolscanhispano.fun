@@ -49,6 +49,47 @@ for (const { name, viewport } of SIZES) {
   test.describe(`capturas · ${name}`, () => {
     test.use({ viewport });
 
+    /**
+     * The two surfaces the parity audit against `kolscanbrasil.io` compares
+     * first: the home page and the ranking, with the twelve-KOL seed behind
+     * them. `docs/parity-kolscanbrasil.md` reads these beside theirs.
+     */
+    test("la home, con el padrón sembrado", async ({ page }) => {
+      await page.goto("/");
+      await expect(page.locator(".row-leaderboard").first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/home-${name}.png` });
+    });
+
+    test("la clasificación completa", async ({ page }) => {
+      await page.goto("/leaderboard");
+      await expect(page.locator(".row-leaderboard").first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/ranking-${name}.png` });
+    });
+
+    /**
+     * The same ranking with the peso selected, which is the surface
+     * `docs/round-ars.md` is about: the figure, the rate, the casa and the date
+     * it was quoted, all on the page.
+     */
+    test("la clasificación en pesos", async ({ page }) => {
+      await page.goto("/leaderboard?unit=ars");
+      await expect(page.locator(".row-leaderboard").first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/ranking-ars-${name}.png` });
+    });
+
+    /** The two surfaces built on 2026-09-02: `docs/clone-map.md` §6 and §7. */
+    test("los cabals, con el podio de tres", async ({ page }) => {
+      await page.goto("/cabals");
+      await expect(page.locator(".podium-card").first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/cabals-${name}.png`, fullPage: true });
+    });
+
+    test("la página de operar, sin socio", async ({ page }) => {
+      await page.goto("/trade");
+      await expect(page.locator(".step").first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/trade-${name}.png`, fullPage: true });
+    });
+
     test("¡Casi listo!, con varias wallets", async ({ page }) => {
       await page.goto("/preview/onboarding");
 

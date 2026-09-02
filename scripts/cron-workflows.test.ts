@@ -15,12 +15,29 @@ import { describe, expect, it } from "vitest";
 
 const REQUIRED_SECRETS = ["DATABASE_URL", "WALLET_ENC_KEY", "WALLET_HMAC_KEY"];
 
+/**
+ * **Each workflow declares the secrets it actually needs**, and that list is
+ * what the two cases below are run over.
+ *
+ * It used to be one shared `REQUIRED_SECRETS` for every file, which was true
+ * while every cron replayed trades. `fetch-fx.yml` reads one public URL and
+ * writes one `setting` row: its import graph has no `wallets.ts` on it, so
+ * handing it either `WALLET_*` key would widen what a compromised step could
+ * exfiltrate in exchange for nothing — the same argument the metadata step and
+ * the prune step already make inside the other two files, and the same one
+ * `.github/workflows/fetch-fx.yml` states in its own comment.
+ *
+ * The looser reading — "every workflow declares all three" — would have been
+ * satisfied by handing this job two keys it cannot use, which is the outcome
+ * this guardian exists to prevent rather than to require.
+ */
 const WORKFLOWS = [
-  { path: ".github/workflows/parse-pending.yml", cron: "*/5 * * * *", group: "parse-pending", script: "scripts/parse-pending.ts" },
-  { path: ".github/workflows/recompute-dirty.yml", cron: "*/15 * * * *", group: "recompute-dirty", script: "scripts/recompute-dirty.ts" },
+  { path: ".github/workflows/parse-pending.yml", cron: "*/5 * * * *", group: "parse-pending", script: "scripts/parse-pending.ts", secrets: REQUIRED_SECRETS },
+  { path: ".github/workflows/recompute-dirty.yml", cron: "*/15 * * * *", group: "recompute-dirty", script: "scripts/recompute-dirty.ts", secrets: REQUIRED_SECRETS },
+  { path: ".github/workflows/fetch-fx.yml", cron: "0 */3 * * *", group: "fetch-fx", script: "scripts/fetch-fx.ts", secrets: ["DATABASE_URL"] },
 ] as const;
 
-describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
+describe.each(WORKFLOWS)("$path", ({ path, cron, group, script, secrets }) => {
   const text = readFileSync(path, "utf8");
 
   it("schedules the requested cron and also allows workflow_dispatch", () => {
@@ -80,8 +97,8 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     expect(text).toMatch(/^permissions:\s*\n\s+contents:\s*read\s*$/m);
   });
 
-  it("wires all three required secrets into the job env", () => {
-    for (const name of REQUIRED_SECRETS) {
+  it("wires every secret it declares into the job env", () => {
+    for (const name of secrets) {
       expect(text).toMatch(new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));
     }
   });
@@ -93,7 +110,7 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     // stops the job (`exit 1`) rather than limping on with an empty value.
     // Dropping any one secret's check -- the mutation Task 2 asks for --
     // makes exactly one of these iterations fail.
-    for (const name of REQUIRED_SECRETS) {
+    for (const name of secrets) {
       const guard = new RegExp(
         `if \\[ -z "\\$\\{${name}\\}" \\]; then\\s*\\n\\s*echo "::error::${name} is not set\\..*Settings -> Secrets`,
       );
@@ -103,7 +120,7 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     // occurrences is a cheap proxy that still catches a guard that checks
     // and prints but forgets to stop the job.
     const exitCount = (text.match(/exit 1/g) ?? []).length;
-    expect(exitCount).toBeGreaterThanOrEqual(REQUIRED_SECRETS.length);
+    expect(exitCount).toBeGreaterThanOrEqual(secrets.length);
   });
 
   it("never writes a literal secret value -- only the ${{ secrets.* }} reference", () => {
@@ -112,6 +129,32 @@ describe.each(WORKFLOWS)("$path", ({ path, cron, group, script }) => {
     // while editing it by hand.
     expect(text).not.toMatch(/DATABASE_URL\s*[:=]\s*["']?postgres(ql)?:\/\//i);
     expect(text).not.toMatch(/WALLET_(ENC|HMAC)_KEY\s*[:=]\s*["']?[A-Za-z0-9+/]{20,}={0,2}["']?\s*$/m);
+  });
+});
+
+/**
+ * The peso rate's workflow, and the two properties that are decisions rather
+ * than arrangement.
+ *
+ * It is a separate file on purpose — `CLAUDE.md`'s rule about the five-step
+ * parse workflow, answered in that file's own header — and it holds one secret
+ * on purpose. Both are asserted here so that folding it back into
+ * `parse-pending.yml`, or handing it the wallet keys "for consistency", fails
+ * rather than passes review.
+ */
+describe(".github/workflows/fetch-fx.yml", () => {
+  const text = readFileSync(".github/workflows/fetch-fx.yml", "utf8");
+
+  it("is not a step of the parse workflow", () => {
+    const parse = readFileSync(".github/workflows/parse-pending.yml", "utf8");
+    expect(parse).not.toContain("fetch-fx.ts");
+  });
+
+  it("holds no key its script cannot use", () => {
+    expect(text).toMatch(/DATABASE_URL:\s*\$\{\{\s*secrets\.DATABASE_URL\s*\}\}/);
+    expect(text).not.toContain("WALLET_ENC_KEY");
+    expect(text).not.toContain("WALLET_HMAC_KEY");
+    expect(text).not.toContain("HELIUS_API_KEY");
   });
 });
 

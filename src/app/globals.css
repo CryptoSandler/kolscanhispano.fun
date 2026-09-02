@@ -526,14 +526,24 @@ a {
 
    ponytail: the lazier fix is a media query that hides the two count columns
    below some width. It is rejected because it *removes data* on the size most
-   readers are on, and this box costs three declarations. */
+   readers are on, and this box costs three declarations.
+
+   **It is `/admin`'s box now.** The ranking left it on 2026-09-02: keeping the
+   document still was not enough there, because the scroll it moved the problem
+   into hid the PnL at 390 (`.board`, below). `/admin` is a roster nobody sorts
+   by a figure, so scrolling it sideways costs a reader nothing. */
 .table-scroll {
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
 
-/* Fixed layout is the point: DESIGN.md requires "fixed column widths so a live
-   update never reflows a table", and automatic layout widens the PnL column the
+/* `.leaderboard` is now **`/admin`'s roster table alone.** The ranking left it on
+   2026-09-02 for `.board` below, and the two rules this block exists for went
+   with it in a different form: the figure columns are fixed grid tracks there,
+   and the narrow case wraps instead of scrolling.
+
+   Fixed layout is the point: DESIGN.md requires "fixed column widths so a live
+   update never reflows a table", and automatic layout widens a column the
    moment a figure crosses from 9,99 to 10,01.
 
    `min-width` is the floor those fixed widths need to survive a narrow screen:
@@ -550,26 +560,6 @@ a {
   min-width: 768px;
   table-layout: fixed;
   border-collapse: collapse;
-}
-
-.col-rank {
-  width: 68px;
-}
-
-.col-closed {
-  width: 84px;
-}
-
-.col-rate {
-  width: 96px;
-}
-
-.col-primary {
-  width: 168px;
-}
-
-.col-secondary {
-  width: 132px;
 }
 
 .leaderboard th {
@@ -595,8 +585,242 @@ a {
   text-overflow: ellipsis;
 }
 
-/* DESIGN.md `row-leaderboard`: "56px, hairline bottom, `surface-2` on hover,
-   whole row clickable and focusable (it opens the modal)." */
+/* The ranking: a list of cards, not a table.
+
+   **Why it stopped being a table.** `docs/clone-map.md` §2 and §4: the mould
+   ranks in cards with gaps between them, and — the part that is a defect rather
+   than a taste — a table of fixed columns cannot fit 390px, so ours put the PnL,
+   which is the sort key and the reason the page exists, off the right edge
+   behind a scroll nothing announced. A media query cannot rescue it: under
+   `table-layout: fixed`, `display: none` on a cell does not remove its `<col>`'s
+   width, so the header and the body desynchronise (tried and reverted the same
+   day; `docs/parity-kolscanbrasil.md` §3 records it).
+
+   The grid keeps what the table was there for. DESIGN.md's *"fix column widths
+   so a live update never reflows"* is honoured by fixed **tracks** — the same
+   68/84/96/168/132 the `<colgroup>` stated — so a figure crossing 9,99 → 10,01
+   still moves nothing.
+
+   ponytail: a `<ul>` of grid rows, no component library and no measurement in
+   JS. The tracks are literal because there are six of them and they are named
+   in DESIGN.md. */
+.board {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The card itself, shared by both boards this product ranks — KOLs and cabals.
+   Only the tracks differ between them. */
+.board > li {
+  display: grid;
+  align-items: center;
+  gap: 0 8px;
+  min-height: var(--row-height);
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+
+.board .row-leaderboard {
+  grid-template-columns: 48px minmax(0, 1fr) 168px 132px;
+  grid-template-areas: "rank kol pnl usd";
+}
+
+/* `/cabals`, below the podium: the same card with a member count where the KOL
+   card has nothing. */
+.board .row-cabal {
+  grid-template-columns: 48px minmax(0, 1fr) 120px 168px 132px;
+  grid-template-areas: "rank kol members pnl usd";
+}
+
+.board .members {
+  grid-area: members;
+  color: var(--ink-muted);
+  text-align: right;
+}
+
+/* Every cell keeps to one line and yields rather than pushing the card wide;
+   the identity block carries its own ellipsis. */
+.board > li > * {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.rank-cell {
+  grid-area: rank;
+}
+.identity {
+  grid-area: kol;
+}
+.board .pnl {
+  grid-area: pnl;
+}
+.board .secondary {
+  grid-area: usd;
+}
+
+/* The narrow card, and the whole reason for this rewrite: the row **wraps**
+   instead of scrolling, so the PnL is on screen at 390 rather than behind an
+   overflow. The rank and the identity keep the left, and the two figures stack
+   on the right in the order they have at 1280 — the mould's own arrangement
+   (`docs/clone-map.md` §4).
+
+   640px rather than a designed breakpoint: DESIGN.md's Responsive section
+   designs two sizes and leaves the space between them fluid, and 640 is where
+   the four fixed tracks (348px) plus the identity block (~220px) stop fitting.
+   Below it there is nothing left to shrink, so the layout has to change shape. */
+@media (max-width: 640px) {
+  .board > li {
+    row-gap: 2px;
+    padding: 8px;
+  }
+
+  /* **The identity takes the whole first line**, and the figures share the
+     second. The first attempt kept the identity beside the figures and the
+     capture showed what that costs at 390: `Ana …`, `@crip…`, and
+     `Wallets ocult` cut mid-word — the name of the person the row is about,
+     truncated to make room for a figure that already had its own column.
+     DESIGN.md: "Clipping is not a compact layout, it is a bug." */
+  .board .row-leaderboard {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "rank kol kol"
+      "rank pnl usd";
+  }
+
+  .board .row-cabal {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "rank kol     kol"
+      "rank members pnl"
+      "rank members usd";
+  }
+
+  /* And the second line of the identity wraps rather than being cut: the
+     handle and `Wallets ocultas` are two separate facts, and a narrow card
+     gives them two lines instead of half of each. */
+  .identity-second {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .board .members {
+    text-align: left;
+  }
+}
+
+/* `/cabals`'s podium: three cards, **#2 left, #1 centre and taller, #3 right**
+   (`docs/clone-map.md` §6).
+
+   `align-items: end` is what makes the first card taller without any card
+   knowing its own height: they sit on one baseline and #1's extra padding
+   grows it upward. A stated height would have to be re-stated every time the
+   contents change.
+
+   **No glow.** The mould gives each card a coloured halo; DESIGN.md's Colors
+   section says "there are no shadows except the modal's scrim", and that rule
+   was not one of the three exceptions the owner named. The tint arrives the way
+   it does on a ranked card instead — a wash fading down, and a solid bar of
+   `podium-N` — so the two podiums in this product read as one idea. */
+.podium {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  align-items: end;
+  list-style: none;
+  margin: 0 0 var(--stack);
+  padding: 0;
+}
+
+.podium-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  min-width: 0;
+}
+
+.podium-card.is-podium-1 {
+  padding-top: 22px;
+  padding-bottom: 18px;
+  background: linear-gradient(180deg, var(--podium-1-wash) 0%, transparent 70%);
+  box-shadow: inset 0 3px 0 0 var(--podium-1);
+}
+
+.podium-card.is-podium-2 {
+  background: linear-gradient(180deg, var(--podium-2-wash) 0%, transparent 70%);
+  box-shadow: inset 0 3px 0 0 var(--podium-2);
+}
+
+.podium-card.is-podium-3 {
+  background: linear-gradient(180deg, var(--podium-3-wash) 0%, transparent 70%);
+  box-shadow: inset 0 3px 0 0 var(--podium-3);
+}
+
+/* The podium is three cards side by side at 1280 and a stack at 390: the
+   arrangement that puts #1 in the middle is a shape, and a shape with nothing
+   to arrange is a wrong order, so the stack reads 1, 2, 3.
+
+   **This block sits after the base rules and not with the other narrow rules
+   above, and that is not tidiness.** It was written up there first and the
+   capture showed three squeezed columns at 390 with the figures wrapping: the
+   base `repeat(3, 1fr)` is declared later in this file and, at equal
+   specificity, later wins. The `order` beside it applied — nothing competed
+   with it — which is what made the bug look like a half-working media query
+   rather than a cascade mistake. */
+@media (max-width: 640px) {
+  .podium {
+    grid-template-columns: 1fr;
+  }
+
+  .podium-card.is-podium-1 {
+    order: -1;
+  }
+}
+
+.podium-medal {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.podium-name {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.podium-tag,
+.podium-members {
+  color: var(--ink-subtle);
+}
+
+.podium-usd {
+  color: var(--ink-muted);
+}
+
+/* The heading over the list beneath the podium. */
+.section-label {
+  display: block;
+  margin: var(--stack) 0 6px;
+  color: var(--ink-subtle);
+}
+
+/* DESIGN.md `row-leaderboard`: "56px, `surface-2` on hover, whole row clickable
+   and focusable (it opens the modal)." The hairline that was a bottom border
+   under the table rows is the card's own border above. */
 .row-leaderboard {
   transition: background var(--hover);
 }
@@ -608,17 +832,37 @@ a {
   cursor: pointer;
 }
 
-/* "Ranks 1–3 additionally carry their `podium-N-wash` background." */
+/* "Ranks 1–3 additionally carry their `podium-N-wash` background."
+
+   The wash is a *gradient* that fades out across the row, and the rank cell
+   carries a solid bar of the tint. Both are taken from kolscanbrasil.io, which
+   is the reference DESIGN.md names for the podium — read side by side 2026-09-02
+   (`docs/parity-kolscanbrasil.md`): a flat wash reads as "this row is a slightly
+   different colour", and the bar plus the fade reads as a podium. What is not
+   taken is their full-colour 🏆🥈🥉, because DESIGN.md fixes "three tints, not
+   three metals" and an emoji cannot carry the tint.
+
+   The bar is a `box-shadow: inset` on the card rather than a `border-left`, so
+   it costs no layout and every card — podium or not — keeps the same inner
+   width. It sat on the first *cell* while this was a table; on the card it can
+   run the full height, which is what it does on the mould. */
 .row-leaderboard.is-podium-1 {
-  background: var(--podium-1-wash);
+  background: linear-gradient(90deg, var(--podium-1-wash) 0%, transparent 78%);
+  box-shadow: inset 3px 0 0 0 var(--podium-1);
+}
+.row-leaderboard.is-podium-2 {
+  box-shadow: inset 3px 0 0 0 var(--podium-2);
+}
+.row-leaderboard.is-podium-3 {
+  box-shadow: inset 3px 0 0 0 var(--podium-3);
 }
 
 .row-leaderboard.is-podium-2 {
-  background: var(--podium-2-wash);
+  background: linear-gradient(90deg, var(--podium-2-wash) 0%, transparent 78%);
 }
 
 .row-leaderboard.is-podium-3 {
-  background: var(--podium-3-wash);
+  background: linear-gradient(90deg, var(--podium-3-wash) 0%, transparent 78%);
 }
 
 /* The hover state is stated for `row-leaderboard` without exception, so it
@@ -630,39 +874,28 @@ a {
   background: var(--surface-2);
 }
 
-/* The rank cell holds two things and must not reflow between them, so the flex
-   row lives in a span: `display: flex` on a `td` takes it out of table layout
-   and the fixed column widths go with it. */
+/* The rank cell holds exactly one thing — a medal on the podium, a plain
+   numeral below it — centred in a track wide enough for either, so the two
+   never change the card's shape between windows. */
 .rank-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
 }
 
+/* `docs/clone-map.md` §3: "plain numeral, grey". */
 .rank-num {
   color: var(--ink-subtle);
 }
 
-/* The medal box is rendered on every row, empty below rank 3, so the podium
-   glyph does not shift the rank column by its own width. */
+/* 🏆🥈🥉 since 2026-09-02. The emoji brings its own colour, which is why the
+   box states no `color` and why nothing else in this stylesheet does either —
+   it is the one glyph in the system outside the palette, and it carries no
+   figure. `line-height: 1` keeps a 56px card 56px tall whatever the system
+   emoji face's own metrics are. */
 .medal {
-  flex: none;
-  width: 14px;
-  font-size: 13px;
+  font-size: 17px;
   line-height: 1;
-  text-align: center;
-}
-
-.medal-1 {
-  color: var(--podium-1);
-}
-
-.medal-2 {
-  color: var(--podium-2);
-}
-
-.medal-3 {
-  color: var(--podium-3);
 }
 
 /* DESIGN.md: "36px circular avatar from `/api/avatar/<kol_id>`; a two-line
@@ -724,17 +957,11 @@ a {
   color: var(--ink);
 }
 
-.leaderboard .closed,
-.leaderboard .rate,
-.leaderboard .secondary {
+/* DESIGN.md `row-leaderboard`: "the fiat total in `numeric` `ink-muted` in
+   parentheses." */
+.board .secondary {
   color: var(--ink-muted);
   text-align: right;
-}
-
-/* DESIGN.md `row-leaderboard`: "the USD total in `numeric` `ink-muted` in
-   parentheses." */
-.leaderboard .secondary {
-  color: var(--ink-muted);
 }
 
 /* DESIGN.md `numeric-lg`, and the one figure on the row that carries a sign
@@ -774,20 +1001,6 @@ a {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--stale);
-}
-
-/* A win rate with no closed position behind it. `ink-subtle`, not
-   `semantic-stale`: nothing here is a price we have stopped trusting — there
-   is simply nothing to take a percentage of, and DESIGN.md's rule is that such
-   a cell is said in words rather than filled with a number that reads as a
-   result. */
-.state-none {
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-subtle);
 }
 
 /* ---------- feed ---------- */
@@ -887,42 +1100,42 @@ a {
 }
 
 /* DESIGN.md `chip-cabal`: "the group's 3–4 letter tag, `label`, `radius-sm`,
-   on `surface-2`, its text in one of four tints assigned per cabal."
+   **solid** in one of four tints assigned per cabal, its text in `canvas`."
 
-   `surface-2` is a filled ground rather than the hairline border the previous
-   draft carried, and that is load-bearing rather than cosmetic: the document
-   measures the four tints "against `surface-2 #1c2024`, the chip's own
-   background", so the published contrast ratios are only true of a chip that
-   actually sits on it. `design-tokens.test.ts` recomputes them.
+   **It was tinted text on `surface-2` until 2026-09-02**, when the owner's
+   clone decision made it solid like the mould's. The swap is load-bearing
+   rather than cosmetic: the four tints stopped being foregrounds and became
+   grounds, so the pair the contrast table measures is now `canvas` **on** the
+   tint, and DESIGN.md's sentence beneath that table moved with it.
+   `design-tokens.test.ts` recomputes every row either way.
 
    Which of the four a cabal gets is decided by `src/lib/cabal.ts`, from the
    tag alone, so the same cabal keeps its colour across renders and reloads. */
 .chip-cabal {
   flex: none;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 2px 6px;
-  background: var(--surface-2);
   border-radius: var(--radius-sm);
-  color: var(--ink-muted);
+  color: var(--canvas);
 }
 
 .chip-cabal-a {
-  color: var(--cabal-a);
+  background: var(--cabal-a);
 }
 
 .chip-cabal-b {
-  color: var(--cabal-b);
+  background: var(--cabal-b);
 }
 
 .chip-cabal-c {
-  color: var(--cabal-c);
+  background: var(--cabal-c);
 }
 
 .chip-cabal-d {
-  color: var(--cabal-d);
+  background: var(--cabal-d);
 }
 
 /* Fixed width: the age column is the one thing on the row that changes every
@@ -965,7 +1178,13 @@ a.row-age:hover {
    and this is its largest surface; the document does not assign it, so that
    pairing is a judgement recorded here rather than a rule quoted. */
 .modal-kol {
-  width: min(720px, calc(100vw - 32px));
+  /* 720px until 2026-09-02, when the body became two columns
+     (`docs/clone-map.md` §5). At 720 the right column was 320px against a trade
+     row of 461px of fixed columns, so every timestamp sat behind the list's own
+     scroll — legal by DESIGN.md's Responsive rule and still a row that reads as
+     cut. 860 gives the right column 483px, which is the row plus room, and it
+     is inside Layout's 1280px maximum with the gutters. */
+  width: min(860px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   padding: 0;
   border: 1px solid var(--hairline);
@@ -1214,59 +1433,96 @@ a.row-age:hover {
   gap: 8px;
 }
 
-/* DESIGN.md `card-pnl-evolution`: "a line chart in `semantic-gain` (or
-   `semantic-loss` when the period is negative) with point markers". The sign is
-   stated once, as the class on the `<svg>`, and `currentColor` carries it to
-   the line and the markers alike. A period that realized nothing is neither
-   gain nor loss and stays ink — the same rule the row's figure follows.
+/* DESIGN.md `card-calendario-pnl`: the mould's calendar heatmap, one cell per
+   UTC day of the window.
 
-   `aspect-ratio` rather than a fixed height with `preserveAspectRatio="none"`:
-   a non-uniform scale would turn every circular marker into an ellipse. */
-.chart {
+   Seven columns, always, whatever the window holds — a `Diario` cell sits in
+   its own weekday's column rather than being centred, because the column *is*
+   the information. `calendar.ts` places the first cell with
+   `grid-column-start`; every cell after it follows on its own.
+
+   The shades are `color-mix` over `--gain` and `--loss` rather than new
+   tokens: DESIGN.md's contrast table is a claim about a fixed set of colours,
+   and a mixed-down background carrying no text is not a foreground that owes
+   the table a row. The cell prints no figure — its `aria-label` does. */
+.calendar {
+  display: grid;
+  /* **Fixed cells, not `1fr`.** Stretched across the card a single-day window
+     rendered one 95px green square — read in the capture, and the reason this
+     is stated rather than left to a `1fr` that happens to look right at one
+     window. A calendar cell is a cell at every span: 32px whether the grid
+     holds one day or thirty-one. */
+  grid-template-columns: repeat(7, 32px);
+  justify-content: start;
+  gap: 4px;
+}
+
+.calendar-weekday {
+  text-align: center;
+  color: var(--ink-subtle);
+}
+
+.calendar-cell {
   display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 4 / 1;
-  overflow: visible;
-  color: var(--ink);
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  /* A day the window covers with nothing behind it. Visible as a slot, so the
+     shape of the month is readable, and unmistakable for a figure. */
+  background: var(--surface-2);
 }
 
-.chart.gain {
-  color: var(--gain);
+.calendar-cell.gain.level-1 {
+  background: color-mix(in srgb, var(--gain) 25%, var(--surface-2));
+}
+.calendar-cell.gain.level-2 {
+  background: color-mix(in srgb, var(--gain) 55%, var(--surface-2));
+}
+.calendar-cell.gain.level-3 {
+  background: var(--gain);
+}
+.calendar-cell.loss.level-1 {
+  background: color-mix(in srgb, var(--loss) 25%, var(--surface-2));
+}
+.calendar-cell.loss.level-2 {
+  background: color-mix(in srgb, var(--loss) 55%, var(--surface-2));
+}
+.calendar-cell.loss.level-3 {
+  background: var(--loss);
 }
 
-.chart.loss {
-  color: var(--loss);
-}
-
-.chart-line {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  /* The viewBox is scaled to the card's width, and without this the stroke is
-     scaled with it — a 2px line drawn at 1.3x. */
-  vector-effect: non-scaling-stroke;
-}
-
-.chart circle {
-  fill: currentColor;
-}
-
-/* The time axis: the first and last day the series carries. */
-.chart-axis {
-  display: flex;
-  justify-content: space-between;
-}
-
-/* The chart's empty state occupies the space the chart would, so opening a
+/* The calendar's empty state occupies the space the grid would, so opening a
    quiet period does not produce a modal of a different height. */
-.chart-empty {
+.calendar-empty {
   display: grid;
   place-items: center;
   min-height: 96px;
   text-align: center;
+}
+
+/* `docs/clone-map.md` §5: two columns below the calendar — the figures left,
+   the trade list right. One column below 640px, in the source order, which puts
+   the wallet counts back above the `PRIVADO` rows they explain. */
+.modal-columns {
+  display: grid;
+  /* Not halves: the left column holds three short figure cards and the right
+     holds a list whose row has 461px of fixed columns. Splitting them evenly
+     starved the half that needed the width. */
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--stack);
+  align-items: start;
+}
+
+.modal-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack);
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .modal-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* DESIGN.md `card-stats`: "PnL total, trades, volume." Three figures in a row,
@@ -1655,10 +1911,15 @@ a.row-moment:hover {
 select.input {
   appearance: none;
   padding-right: 26px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--ink-subtle) 50%),
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-subtle) 50%),
     linear-gradient(135deg, var(--ink-subtle) 50%, transparent 50%);
-  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
-  background-size: 5px 5px, 5px 5px;
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
   background-repeat: no-repeat;
   width: auto;
   min-width: 110px;
@@ -1683,4 +1944,151 @@ a.cta {
   display: inline-block;
   text-decoration: none;
   text-align: center;
+}
+
+/* ---------- /trade ---------- */
+
+/* `docs/clone-map.md` §7. Their affiliate landing is the one surface on the
+   mould that is a *page* rather than a board, and it is built out of four
+   pieces: a partner pill, a two-line display headline, bracketed dividers, and
+   four numbered cards over a ghosted numeral. */
+.trade-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pill-partner {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+
+.trade-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+}
+
+/* Their second line is green. Here that is the one colour it cannot be:
+   DESIGN.md reserves green and red for direction of money, and a headline is
+   not a figure. The accent is what this system marks a heading with, and it is
+   already the thing that "never touches a figure" — so the two rules point the
+   same way. */
+.trade-title-accent {
+  color: var(--accent);
+}
+
+/* The call to action while there is no partner: a label, not a disabled
+   button. DESIGN.md's last Don't — and the same shape the wallet slot held in
+   the header while `/registro` did not exist. */
+.cta-slot {
+  padding: 10px 14px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius-md);
+  color: var(--ink-subtle);
+}
+
+.cta-partner {
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: none;
+  transition: background var(--hover);
+}
+
+.cta-partner:hover {
+  background: var(--accent-hover);
+}
+
+/* `▣ CÓMO EMPEZAR ▣`, with a hairline running out to each side. The rules are
+   drawn with a flex row and two borders rather than with a pseudo-element on a
+   background gradient: two lines of CSS, and it survives a long label. */
+.divider-marked {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: calc(var(--stack) * 2) 0 var(--stack);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.divider-marked::before,
+.divider-marked::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--hairline);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The ghosted numeral sits behind the text, so the card is a positioning
+   context and the numeral is out of the flow entirely — it must not add a line
+   box or the four cards stop agreeing on their height. */
+.step {
+  position: relative;
+  overflow: hidden;
+  padding: 16px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.step.is-last {
+  border-color: var(--accent);
+}
+
+.step-number {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  font-family: var(--font-numeric);
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--surface-3);
+}
+
+.step-title {
+  position: relative;
+  margin: 0 0 6px;
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.step-body {
+  position: relative;
+  margin: 0;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.trade-partner {
+  margin: 0;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.trade-note {
+  display: block;
+  margin-top: var(--stack);
+}
+
+@media (max-width: 640px) {
+  .steps {
+    grid-template-columns: 1fr;
+  }
 }

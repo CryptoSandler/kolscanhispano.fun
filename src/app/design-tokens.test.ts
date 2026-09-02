@@ -104,8 +104,8 @@ describe("the stylesheet matches DESIGN.md", () => {
  * Which background each row of the contrast table is measured against, read
  * out of the sentence beneath it:
  *
- *   "The four cabal tints are measured against `surface-2 #1c2024`, the chip's
- *    own background; every other row is against `surface-1`."
+ *   "The four cabal tints are measured against `canvas #0f1113`, the ink the
+ *    solid chip prints in; every other row is against `surface-1`."
  *
  * Parsed rather than restated, for the same reason the palette is: a document
  * that moves the chip onto another surface, or adds a second exception, must
@@ -113,14 +113,20 @@ describe("the stylesheet matches DESIGN.md", () => {
  * `{ "cabal-": "surface-2" }` in this file -- is a second source of truth about
  * the one thing the guardian exists to prevent a second source of truth about.
  *
- * The exception exists because a chip has its own ground. `cabal-a` on
- * `surface-1` measures 6.48 and on `surface-2` it measures 6.02; only the
- * second is a statement about anything a reader will look at, and only the
- * second is what `globals.css` renders.
+ * The exception exists because a chip has its own ground, and **which ground
+ * moved on 2026-09-02**: the chip went solid, so the tint is the background and
+ * `canvas` is the ink on it. The measured pair is the one a reader looks at —
+ * `cabal-a` against `surface-1` is 6.48, against `surface-2` 6.02, against
+ * `canvas` 6.95, and only the last describes the chip `globals.css` renders.
+ *
+ * The ground is therefore allowed to be `canvas` as well as a `surface-N`. It
+ * is still read out of the document and still checked against the palette; what
+ * widened is the set of grounds the sentence may name, not the number of things
+ * this function is willing to believe.
  */
 function measuredAgainst(colors: Record<string, string>): (token: string) => string {
   const exception = squash(DESIGN).match(
-    /The four ([a-z0-9]+) tints are measured against `(surface-[0-9]+) (#[0-9a-f]{6})`/i,
+    /The four ([a-z0-9]+) tints are measured against `(surface-[0-9]+|canvas) (#[0-9a-f]{6})`/i,
   );
   const fallback = squash(DESIGN).match(/every other row is against `(surface-[0-9]+)`/i);
   if (!exception || !fallback) {

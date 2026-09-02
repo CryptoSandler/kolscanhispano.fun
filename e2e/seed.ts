@@ -25,11 +25,11 @@ const KOLS: ReadonlyArray<readonly [string, string, string | null]> = [
   ["la_carla", "Carla Solana", null],
   ["dani_sol", "Dani Sol", "LAT"],
   ["elena_dex", "Elena DEX", "LAT"],
-  ["fer_trench", "Fer Trench", null],
+  ["fer_trench", "Fer Trench", "IBE"],
   ["gaby_onchain", "Gaby On-Chain", "LAT"],
   ["hector_pump", "Héctor Pump", null],
   ["ines_meme", "Inés Meme", "EJE"],
-  ["javi_flip", "Javi Flip", null],
+  ["javi_flip", "Javi Flip", "IBE"],
   ["kari_hold", "Kari Hold", null],
   ["luis_scalp", "Luis Scalp", "LAT"],
 ];
@@ -53,12 +53,46 @@ export async function seedLeaderboard(): Promise<void> {
       "raw_tx CASCADE",
   );
 
+  /*
+    Three cabals, not two, since `/cabals` was built (`docs/clone-map.md` §6):
+    that page's whole shape is a podium of three, and a fixture with two would
+    photograph a podium that is missing a card for a reason nobody could tell
+    from the picture. They carry real names as well as tags, because the page
+    prints the name and the chip prints the tag.
+  */
   const cabals = new Map<string, string>();
-  for (const tag of ["EJE", "LAT"]) {
+  for (const [tag, name] of [["EJE", "Ejemplo"], ["LAT", "Latam"], ["IBE", "Iberia"]]) {
     const id = crypto.randomUUID();
-    await query("INSERT INTO cabal (id, tag, name) VALUES ($1, $2, $3)", [id, tag, tag]);
+    await query("INSERT INTO cabal (id, tag, name) VALUES ($1, $2, $3)", [id, tag, name]);
     cabals.set(tag, id);
   }
+
+  /*
+    A peso rate, so the `USD · ARS` toggle has something to convert with and the
+    captures show the figure a reader would see rather than `sin precio`.
+
+    The values are the ones verified against `https://dolarapi.com/v1/dolares`
+    on 2026-09-02 — a fixture, never a live call: the suite must not depend on
+    somebody else's uptime, and `network-guard.ts` exists to keep it from
+    trying. The quote is dated *now* so `fx.ts`'s 96-hour staleness rule does
+    not expire it as the fixture ages, which is the same reason the `pnl_daily`
+    rows below land on today rather than on a written date.
+  */
+  const quotedAt = new Date().toISOString();
+  await query(
+    `INSERT INTO setting (key, value) VALUES ('fx.ars', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [
+      JSON.stringify({
+        fetchedAt: quotedAt,
+        casas: {
+          oficial: { rate: "1535", asOf: quotedAt },
+          blue: { rate: "1545", asOf: quotedAt },
+          bolsa: { rate: "1533.9", asOf: quotedAt },
+        },
+      }),
+    ],
+  );
 
   const mint = inventAddress();
   await query(

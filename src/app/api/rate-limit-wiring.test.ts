@@ -78,7 +78,7 @@ const SURFACES: Surface[] = [
 
 function requestFrom(surface: Surface, search = ""): Request {
   const url =
-    surface.bucket === "leaderboard" ? "?window=diario&unit=sol" : search;
+    surface.bucket === "leaderboard" ? "?window=diario&unit=usd" : search;
   return new Request(`http://localhost${surface.path}${url}`, {
     headers: { "x-forwarded-for": surface.ip },
   });

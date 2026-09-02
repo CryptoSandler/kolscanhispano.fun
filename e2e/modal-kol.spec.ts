@@ -36,8 +36,8 @@ import { findDisallowedBase58 } from "../src/lib/hygiene";
  * modal that published nothing anywhere, which asserts the absence of a string
  * that was never supplied.
  *
- * Each KOL gets exactly one `pnl_daily` row, so the daily chart is the
- * single-point case `chart.ts` handles — drawn here for real, in a browser.
+ * Each KOL gets exactly one `pnl_daily` row, so the daily calendar is the
+ * single-cell case `calendar.ts` handles — drawn here for real, in a browser.
  */
 test.use({ viewport: { width: 1280, height: 900 } });
 
@@ -158,7 +158,7 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     // document and the screen disagreeing, so the count stays exact rather
     // than becoming a `toBeGreaterThan`.
     await expect(dialog.locator("section.card")).toHaveCount(5);
-    await expect(dialog.getByText("PnL acumulado")).toBeVisible();
+    await expect(dialog.getByText("Calendario de PnL")).toBeVisible();
     await expect(dialog.getByText("PnL por cadena")).toBeVisible();
     // Counts, never a list. The seed gives this KOL one published wallet, so
     // the card carries the public half only -- the private half is omitted
@@ -171,10 +171,15 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     // And it names neither an address nor anything base58: the whole card is
     // two words and a number.
     expect(findDisallowedBase58((await wallets.innerHTML()) ?? "")).toEqual([]);
-    // One `pnl_daily` row per KOL, so the daily chart is `chart.ts`'s
-    // single-point case: a marker and no line.
-    await expect(dialog.locator(".chart circle")).toHaveCount(1);
-    await expect(dialog.locator(".chart-line")).toHaveCount(0);
+    // One `pnl_daily` row per KOL and a daily window, so the calendar is
+    // `calendar.ts`'s single-cell case: one painted day, in its own weekday's
+    // column, and no grid of five weeks around it.
+    await expect(dialog.locator(".calendar time.calendar-cell")).toHaveCount(1);
+    await expect(dialog.locator(".calendar span.calendar-cell")).toHaveCount(0);
+
+    // And the two columns `docs/clone-map.md` §5 put below it: the figures on
+    // the left, the trade list on the right.
+    await expect(dialog.locator(".modal-columns > .modal-column")).toHaveCount(2);
 
     // DESIGN.md's second Don't. The seed's handles are fictional so unavatar
     // has nothing for them and `/api/avatar/<kol_id>` answers with the
@@ -218,7 +223,7 @@ test.describe("the three dismissals DESIGN.md names", () => {
     // pass the case above.
     const { dialog } = await open(page, PUBLIC_ROW);
 
-    await dialog.getByText("PnL acumulado").click();
+    await dialog.getByText("Calendario de PnL").click();
 
     await expect(dialog).toHaveAttribute("open", "");
   });
@@ -531,9 +536,7 @@ test.describe("modal-kol on a transient failure", () => {
 test.describe("modal-kol when the KOL is gone", () => {
   /** Everything the API knows about this slug, after the page was rendered. */
   async function withdraw(page: Page): Promise<void> {
-    await page.route("**/api/kol/**", (route) =>
-      route.fulfill({ status: 404, body: "not found" }),
-    );
+    await page.route("**/api/kol/**", (route) => route.fulfill({ status: 404, body: "not found" }));
   }
 
   test("says it is gone, and offers nothing to click", async ({ page }) => {
@@ -588,9 +591,14 @@ test.describe("modal-kol when the KOL is gone", () => {
     await expect(page.locator(".row-leaderboard .name", { hasText: "Beto Trader" })).toHaveCount(1);
 
     // The ranks are **not** renumbered: the ranking was measured with that KOL
-    // in it, and promoting 002 to 001 would restate a measurement rather than
-    // remove a row.
-    await expect(rows.first().locator(".rank-num")).toHaveText("002");
+    // in it, and promoting the second to first would restate a measurement
+    // rather than remove a row.
+    //
+    // Read off the **medal**, which is what a podium rank renders since
+    // 2026-09-02 — there is no numeral on the first three cards to read. A row
+    // that had been renumbered would carry the trophy.
+    await expect(rows.first().locator(".medal")).toHaveText("🥈");
+    await expect(rows.first().locator(".rank-num")).toHaveCount(0);
 
     // And the page gets its scroll back, the same as any other dismissal.
     await expectScrollBack(page);

@@ -140,6 +140,30 @@ export function formatSignedUsd(text: string): string {
 }
 
 /**
+ * The same total in pesos: `+AR$2.784.708`.
+ *
+ * **No decimals, unlike every other money figure here.** At the rates this
+ * product converts through — 1.545 ARS to the dollar, measured 2026-09-02 — one
+ * peso is six thousandths of a US cent, so a decimal place would be printing
+ * the rounding of a rate rather than anything about the trade. The figure is
+ * already an approximation of an approximation; two more digits would dress it
+ * as a measurement.
+ */
+export function formatSignedArs(text: string): string {
+  const value = parseDecimal(text);
+  return `${signOf(value)}AR$${renderEs(roundTo(absolute(value), 0), 0)}`;
+}
+
+/**
+ * The rate itself, as the qualifier line prints it: `1.545`, `1.533,9`. Six
+ * significant digits with no decimal floor — the source publishes whole pesos
+ * for some casas and one decimal for others, and neither is padded.
+ */
+export function formatArsRate(text: string): string {
+  return formatAmount(text, 6, 0);
+}
+
+/**
  * A win rate: `68,4 %`, `100 %`, `0 %`. Three significant digits with no
  * decimal floor, so a whole percentage is not padded to `100,0 %`.
  *
@@ -212,7 +236,7 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
  * only thing Postgres puts in front of a negative `numeric`.
  *
  * It lives here rather than in either component because the leaderboard row,
- * the modal's header and the modal's chart all colour by the same rule, and
+ * the modal's header and the modal's calendar all colour by the same rule, and
  * three copies of it would eventually disagree about what a zero is.
  */
 export function amountDirection(text: string): "gain" | "loss" | "" {

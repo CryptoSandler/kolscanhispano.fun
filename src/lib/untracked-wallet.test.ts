@@ -90,8 +90,8 @@ describe("a wallet the project does not track", () => {
     await parsePending();
 
     expect((await readFeedPage()).trades).toEqual([]);
-    expect((await readLeaderboard({ window: "diario", unit: "sol" })).entries).toEqual([]);
-    expect((await readLeaderboard({ window: "semanal", unit: "usd" })).entries).toEqual([]);
+    expect((await readLeaderboard({ window: "diario" })).entries).toEqual([]);
+    expect((await readLeaderboard({ window: "semanal" })).entries).toEqual([]);
   });
 
   it("could not be published even if a trade were written around the parser", async () => {

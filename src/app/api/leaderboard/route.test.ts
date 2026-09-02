@@ -243,19 +243,27 @@ describe("GET /api/leaderboard", () => {
       { kolId: medio.id, day: "2026-08-25", sol: "2", usd: "350" },
     ]);
 
-    expect(await ranking("?window=diario&unit=sol")).toEqual(["alto", "medio", "bajo"]);
-    expect((await entries("?window=diario&unit=sol")).map((e) => e.rank)).toEqual([1, 2, 3]);
+    expect(await ranking("?window=diario")).toEqual(["alto", "medio", "bajo"]);
+    expect((await entries("?window=diario")).map((e) => e.rank)).toEqual([1, 2, 3]);
   });
 
   /**
-   * Spec §4.1: the SOL and USD rankings *will* differ, and that is correct.
+   * **The ranking is by SOL, whatever `?unit` says** — and this case is the one
+   * that used to assert the opposite.
    *
-   * These three are built so the two orders are exact reversals of each other:
-   * a route that ranked by `realized_sol` whatever the caller asked for
-   * returns the SOL order twice and fails on the USD half, and a route that
-   * ranked by `realized_usd` always fails on the SOL half.
+   * Until 2026-09-02 the toggle chose the ranked figure, and this test proved
+   * the two orders were computed independently: the three rows below are built
+   * so the SOL order and the USD order are exact reversals of each other. The
+   * owner's clone decision made the toggle choose the *currency in
+   * parentheses* instead (`docs/clone-map.md` §2), so the same three rows now
+   * pin the opposite property — the order does not move when the parameter
+   * does — and they are kept as reversals precisely so a route that quietly
+   * went back to ordering by USD fails here.
+   *
+   * The loss is real and is recorded in `leaderboard.ts`: there is no longer a
+   * way to rank by USD.
    */
-  it("orders independently by the selected unit", async () => {
+  it("orders by SOL whichever currency the caller asks for", async () => {
     const a = await insertKol({ slug: "a" });
     const b = await insertKol({ slug: "b" });
     const c = await insertKol({ slug: "c" });
@@ -265,8 +273,9 @@ describe("GET /api/leaderboard", () => {
       { kolId: c.id, day: "2026-08-25", sol: "1", usd: "900" },
     ]);
 
-    expect(await ranking("?window=diario&unit=sol")).toEqual(["a", "b", "c"]);
-    expect(await ranking("?window=diario&unit=usd")).toEqual(["c", "b", "a"]);
+    expect(await ranking("?window=diario&unit=usd")).toEqual(["a", "b", "c"]);
+    expect(await ranking("?window=diario&unit=ars")).toEqual(["a", "b", "c"]);
+    expect(await ranking("?window=diario")).toEqual(["a", "b", "c"]);
   });
 
   it("breaks a tie on slug so the order does not move between two loads", async () => {
@@ -296,7 +305,8 @@ describe("GET /api/leaderboard", () => {
    * `0 %` is the shape of a real result: it reads exactly like a KOL who
    * closed nine positions and lost all nine. This is the same failure spec
    * §4.6 forbids for an unpriceable bag rendered as −100 %. The route carries
-   * `null` and the screen says `sin cierres`.
+   * `null`. The card stopped printing it on 2026-09-02, but the payload did
+   * not: this endpoint is a contract of its own.
    */
   it("has no win rate at all when nothing closed, rather than 0", async () => {
     const kol = await insertKol({ slug: "uno" });
@@ -412,15 +422,19 @@ describe("GET /api/leaderboard", () => {
     expect(entry.kol.avatarUrl).toBe(`/api/avatar/${kol.id}`);
   });
 
-  it("defaults to the daily window in SOL", async () => {
+  it("defaults to the daily window", async () => {
     const body = await board(await GET(request()));
-    expect([body.window, body.unit]).toEqual(["diario", "sol"]);
+    expect(body.window).toBe("diario");
     expect(body.from).toBe("2026-08-25T00:00:00.000Z");
+    // The currency is not in the payload and never was a property of it: this
+    // endpoint publishes `realizedSol` and `realizedUsd` both, and the peso is
+    // a conversion a page applies with a rate it also prints.
+    expect(body).not.toHaveProperty("unit");
   });
 
   it("rejects a window or a unit it does not know, without echoing it back", async () => {
-    for (const search of ["?window=daily", "?window=anual", "?unit=eur", "?unit=SOL",
-      "?window=diario&unit=", "?window="]) {
+    for (const search of ["?window=daily", "?window=anual", "?unit=eur", "?unit=USD",
+      "?unit=sol", "?window=diario&unit=", "?window="]) {
       const response = await GET(request(search));
       expect(response.status).toBe(400);
       expect(await response.text()).toBe("bad request");

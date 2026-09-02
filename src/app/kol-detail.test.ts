@@ -59,9 +59,11 @@ function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
     realizedUsd: "2861.62",
     volumeSol: "28.65",
     tradeCount: 4,
+    from: "2026-08-24",
+    to: "2026-08-26",
     series: [
-      { day: "2026-08-24", cumulativeSol: "4.1" },
-      { day: "2026-08-25", cumulativeSol: "12.35" },
+      { day: "2026-08-24", dailySol: "4.1", cumulativeSol: "4.1" },
+      { day: "2026-08-25", dailySol: "8.25", cumulativeSol: "12.35" },
     ],
     trades: [trade()],
     ...overrides,
@@ -116,48 +118,76 @@ describe("the header", () => {
   });
 });
 
-describe("card-pnl-evolution", () => {
-  it("draws a line with a marker per point, in the period's sign colour", () => {
+/**
+ * `card-calendario-pnl`, which replaced `card-pnl-evolution` on 2026-09-02.
+ *
+ * The grid itself is `calendar.ts` and is tested there; what belongs here is
+ * what the *card* does with it — the span it is given, the two states, and the
+ * text a reader who cannot see the colours is left with.
+ */
+describe("card-calendario-pnl", () => {
+  it("draws one cell per day of the window, painted by sign", () => {
     const html = render();
-    expect(html).toContain('class="chart gain"');
-    expect(html).toContain('class="chart-line"');
-    expect((html.match(/<circle /g) ?? []).length).toBe(2);
+
+    expect(html).toContain('class="calendar"');
+    // Two days in the window, both with a figure. Counted as painted cells
+    // rather than as `<time>` elements: the trade list below carries one too.
+    expect((html.match(/<time class="calendar-cell/g) ?? []).length).toBe(2);
+    expect(html).toContain('class="calendar-cell gain level-3"');
   });
 
-  it("draws a marker and no line for a period with one point", () => {
-    // `Diario` produces exactly one, because `pnl_daily` is keyed by day.
-    const html = render({ series: [{ day: "2026-08-25", cumulativeSol: "12.35" }] });
-    expect((html.match(/<circle /g) ?? []).length).toBe(1);
-    expect(html).not.toContain("chart-line");
+  /**
+   * The colours are the whole card, so the text under them has to carry the
+   * same information: every painted cell says its date and its amount.
+   */
+  it("labels every painted cell with its day and its figure", () => {
+    const html = render();
+
+    expect(html).toContain('aria-label="24/08: +4,10 SOL"');
+    expect(html).toContain('aria-label="25/08: +8,25 SOL"');
   });
 
-  it("survives a period whose every day came out to the same figure", () => {
+  /**
+   * `Diario` is one day, because `pnl_daily` is keyed by day and spec §4.9
+   * makes the window a calendar day. A one-cell calendar is the honest render
+   * of that, not a bug to pad out to five weeks — the mould's rolling `1D` is a
+   * different measurement and has its own round (`docs/clone-map.md` §8).
+   */
+  it("draws a single cell for the daily window", () => {
     const html = render({
-      series: [
-        { day: "2026-08-24", cumulativeSol: "3" },
-        { day: "2026-08-25", cumulativeSol: "3" },
-      ],
+      from: "2026-08-25",
+      to: "2026-08-26",
+      series: [{ day: "2026-08-25", dailySol: "12.35", cumulativeSol: "12.35" }],
     });
-    expect(html).toContain("chart-line");
-    expect(html).not.toContain("NaN");
-    expect(html).not.toContain("Infinity");
+
+    expect((html.match(/<time class="calendar-cell/g) ?? []).length).toBe(1);
   });
 
-  it("labels the axis with the first and last day it actually carries", () => {
-    expect(render()).toContain(
-      '<div class="chart-axis label"><span>2026-08-24</span><span>2026-08-25</span></div>',
-    );
+  /**
+   * A day the window covers with no `pnl_daily` row behind it: an empty cell,
+   * hidden from a screen reader, and never a zero. DESIGN.md, "Absence is
+   * rendered as absence, never as a zero."
+   */
+  it("leaves an untraded day blank rather than printing it at zero", () => {
+    const html = render({
+      from: "2026-08-24",
+      to: "2026-08-27",
+      series: [{ day: "2026-08-25", dailySol: "1", cumulativeSol: "1" }],
+    });
+
+    expect((html.match(/<time class="calendar-cell/g) ?? []).length).toBe(1);
+    expect((html.match(/<span class="calendar-cell" aria-hidden="true"/g) ?? []).length).toBe(2);
+    // And no cell claims a figure for a day that has none.
+    expect(html).not.toContain('aria-label="24/08');
+    expect(html).not.toContain('aria-label="26/08');
   });
 
-  it("names a single day once rather than printing it as both ends of a range", () => {
-    const html = render({ series: [{ day: "2026-08-25", cumulativeSol: "1" }] });
-    expect(html).toContain('<div class="chart-axis label"><span>2026-08-25</span></div>');
-  });
-
-  it("draws no axis and no chart at all for an empty period", () => {
+  it("says an empty period in words, and draws no grid at all", () => {
     const html = render({ series: [] });
-    expect(html).not.toContain("<svg class=\"chart");
-    expect(html).not.toContain("chart-axis");
+
+    expect(html).toContain("Sin operaciones cerradas en este período.");
+    expect(html).not.toContain('class="calendar"');
+    expect(html).not.toContain("calendar-cell");
   });
 });
 
