@@ -1,4 +1,5 @@
 import { audit, isAdmin } from "@/lib/admin";
+import { syncWebhookAfterRosterChange } from "@/lib/helius-webhook";
 import { query } from "@/lib/db";
 import { approveKol } from "@/lib/roster";
 
@@ -47,6 +48,20 @@ export async function POST(
     after: { status: "approved" },
     request,
   });
+
+  /*
+    Spec §5.4: approving changes the desired address set, so the webhook is
+    reconciled here. It runs **after** the audit and cannot fail this response —
+    the approval already happened, and a Helius outage must not report it as
+    refused. A sync that could not run leaves the stored hash alone, so the next
+    one repairs the difference.
+
+    Awaited rather than floated: this route runs on `nodejs`, and a promise left
+    dangling at the end of a serverless invocation is a promise that may never
+    resolve. One HTTP call is worth the wait; an approval that silently did not
+    reach Helius is the defect this whole module exists for.
+  */
+  await syncWebhookAfterRosterChange("kol.approve");
 
   return Response.json({ kolId: id, status: "approved" });
 }

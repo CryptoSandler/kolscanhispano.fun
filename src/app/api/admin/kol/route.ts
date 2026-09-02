@@ -1,6 +1,7 @@
 import { activeChains, isChain } from "@/lib/chain";
 import { audit, isAdmin } from "@/lib/admin";
 import { query } from "@/lib/db";
+import { syncWebhookAfterRosterChange } from "@/lib/helius-webhook";
 import { findDisallowedBase58, findDisallowedEvm } from "@/lib/hygiene";
 import { createKol, type WalletInput } from "@/lib/roster";
 import { normalizeXHandle } from "@/lib/x-handle";
@@ -235,6 +236,12 @@ export async function POST(request: Request): Promise<Response> {
     },
     request,
   });
+
+  // Spec §5.4, the same single path the approval takes. A `pending` create
+  // changes nothing — `desiredAddresses` only counts approved KOLs — so the
+  // hash matches, no call is made and no credit is spent. That is the property
+  // that makes it safe to call this unconditionally.
+  await syncWebhookAfterRosterChange(`kol.create:${status}`);
 
   return Response.json(
     {

@@ -360,6 +360,14 @@ Adding a wallet later backfills it in full. A KOL cannot choose the date from wh
 
 ### 5.4 Address-set reconciliation
 
+**Built 2026-09-02** as `src/lib/helius-webhook.ts`, called by `POST /api/admin/kol` and by
+the approve route, with `scripts/sync-helius-webhook.ts` for the changes that have no path
+yet (suspension and wallet withdrawal are §9 and unbuilt). The cron this section describes is
+**not** built: the mutation paths cover every change the product can currently make, and a
+schedule for a set that only changes when somebody presses a button would be a job that
+almost always finds nothing. `docs/padron.md` §3 has the measurement that made it urgent and
+the two things the first real run taught.
+
 A cron computes the desired address set from the database, hashes it, and compares it with
 `setting['helius_webhook_address_hash']`. If unchanged: no API call, zero credits. If changed: one
 edit call (100 credits), then the hash is updated. Approving, suspending, withdrawing a wallet or

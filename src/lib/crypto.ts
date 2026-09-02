@@ -91,6 +91,13 @@ export function decrypt(blob: Buffer, aad: string): string {
  * exploit. The domain is folded into the HMAC input, not appended afterward,
  * so it cannot be stripped or confused with the value itself.
  *
+ * `"webhook"` is the fourth, and it exists to keep a *set* digest out of the
+ * address domain. `helius-webhook.ts` hashes the whole desired address set into
+ * one value; with exactly one wallet on the roster that value would otherwise
+ * be byte-identical to that wallet's own `address_hmac`, which is stored in
+ * `kol_wallet` — one number meaning two different things in two tables is how a
+ * blind index stops being blind.
+ *
  * `"ip"` is the third domain, and it is here rather than in `rate-limit.ts`
  * because of what `key()` does above: it loads *both* keys and refuses when
  * they are equal. `ipHash` read `WALLET_HMAC_KEY` out of `process.env`
@@ -101,6 +108,9 @@ export function decrypt(blob: Buffer, aad: string): string {
  * produces for the `"ip"` domain, so every `rate_limit` row already written
  * still matches.
  */
-export function blindIndex(value: string, domain: "address" | "signature" | "ip"): Buffer {
+export function blindIndex(
+  value: string,
+  domain: "address" | "signature" | "ip" | "webhook",
+): Buffer {
   return createHmac("sha256", key("WALLET_HMAC_KEY")).update(`${domain}:${value}`, "utf8").digest();
 }

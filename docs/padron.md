@@ -140,9 +140,36 @@ is a code defect:
    has told that webhook to watch their wallets. Spec §327 puts `accountAddresses` = every
    active wallet of every approved KOL and tracks it in
    `setting['helius_webhook_address_hash']`; that sync is **unbuilt** — no code references
-   that key, and the row does not exist in production. It is the next thing that has to be
-   built for an approved roster to mean anything, and it needs the key that owns the live
-   webhook.
+   that key, and the row does not exist in production.
+
+**Built the same day.** `src/lib/helius-webhook.ts` is spec §5.4's single path, and
+`POST /api/admin/kol` and the approve route both call it. A **new** webhook was registered
+under this environment's key rather than trying to take over the other one, because the
+other one cannot be reached from here:
+
+    b5739db9-5039-49e8-aae6-4d69f467b4ba
+    https://kolscanhispano.fun/api/webhooks/helius — enhanced, ["SWAP"], authHeader set
+    3 addresses, all 3 on the roster, 0 roster wallets unwatched (verified 2026-09-02)
+
+Both webhooks now deliver to the same endpoint, and that is harmless: `storeRawTxBatch` is
+keyed on the signature, so a transaction delivered twice is one row. The foreign one's rows
+keep being discarded exactly as before — no wallet of ours appears in them.
+
+**Two things the first run taught, and both are in the code:**
+
+- **`GET /v0/webhooks` summarises.** It listed the new webhook with no `accountAddresses` at
+  all while `GET /v0/webhooks/<id>` showed three. Anything checking this webhook has to ask
+  for the object, never read the list.
+- **A `200` is Helius accepting a request, not Helius holding the set.** The sync now reads
+  the webhook back after every write and refuses to store the hash unless the count agrees.
+  It costs one extra call per *change* — never per approval, since an unchanged set makes no
+  call at all — and without it a silently partial write would leave a hash saying "in sync"
+  forever, which is the same shape as the defect this whole module was built to fix.
+
+The repair path was then exercised against the real API rather than only against a fake: the
+stored hash was falsified by hand in production, the sync noticed, edited the existing
+webhook (it did not create a second), read back three addresses and restored the hash. A
+following run made no call at all.
 
 ---
 
