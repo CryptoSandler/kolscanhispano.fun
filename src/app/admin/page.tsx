@@ -76,6 +76,7 @@ const REASONS: Record<string, string> = {
   handle_taken: "Ese usuario ya está en el padrón.",
   no_wallets: "Hace falta al menos una wallet.",
   not_pending: "Ese KOL ya no está pendiente.",
+  bad_status: "Ese estado no existe."
 };
 
 export default function AdminPage() {

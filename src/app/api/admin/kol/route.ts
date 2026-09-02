@@ -24,7 +24,29 @@ type Payload = {
   handle?: unknown;
   displayName?: unknown;
   wallets?: unknown;
+  status?: unknown;
 };
+
+/**
+ * The two states this route may create, and why `approved` stays the default.
+ *
+ * `docs/padron.md` §4 built this route as "create an approved KOL": the admin
+ * types a handle they are vouching for, and vouching is what the button means.
+ * That stays the default so the screen and every existing caller behave as they
+ * did.
+ *
+ * **`pending` exists for a different act: staging a candidate for review.** A
+ * roster assembled from a public tracker is a list of people who have not asked
+ * to be here and whom nobody has vouched for yet, and creating those as
+ * `approved` would publish them on the strength of a third party's attribution.
+ * `kol.status` already has both values in its `CHECK`, `roster.ts` already takes
+ * either, and `approveKol` is already the one thing that moves a row between
+ * them — this route was the only place pinning the choice shut.
+ *
+ * A pending KOL is on no public surface: `address-invariant.test.ts` proves it,
+ * and `status = 'approved'` gates the feed, the ranking and the detail.
+ */
+const CREATABLE = ["approved", "pending"] as const;
 
 /**
  * Reason codes, never prose, and never the value that failed.
@@ -112,6 +134,15 @@ export async function POST(request: Request): Promise<Response> {
     return refuse("no_wallets");
   }
 
+  // Absent means `approved`, which is what the admin screen sends and what this
+  // route has always done. Anything present and not one of the two is refused
+  // rather than coerced: a typo that silently became `approved` would publish
+  // somebody the caller meant to stage.
+  const status = payload.status === undefined ? "approved" : payload.status;
+  if (typeof status !== "string" || !(CREATABLE as readonly string[]).includes(status)) {
+    return refuse("bad_status");
+  }
+
   const wallets: WalletInput[] = [];
   for (const entry of payload.wallets) {
     if (typeof entry !== "object" || entry === null) return refuse("bad_wallet");
@@ -129,7 +160,7 @@ export async function POST(request: Request): Promise<Response> {
     handle,
     displayName: typeof payload.displayName === "string" ? payload.displayName : undefined,
     wallets,
-    status: "approved",
+    status: status as (typeof CREATABLE)[number],
   });
 
   if (!created.ok) {
@@ -151,7 +182,7 @@ export async function POST(request: Request): Promise<Response> {
     targetId: created.kolId,
     after: {
       handle,
-      status: "approved",
+      status,
       wallets: created.wallets.map((w) => ({ chain: w.chain, isPublic: w.isPublic })),
     },
     request,
@@ -161,7 +192,7 @@ export async function POST(request: Request): Promise<Response> {
     {
       kolId: created.kolId,
       handle,
-      status: "approved",
+      status,
       wallets: created.wallets.map((w) => ({ id: w.id, chain: w.chain, isPublic: w.isPublic })),
     },
     { status: 201 },

@@ -174,6 +174,75 @@ describe("2-6. what a wallet has to be", () => {
 });
 
 describe("7. what a successful creation leaves", () => {
+  /**
+   * The other state this route may create, and the one a tracker-sourced roster
+   * needs: a candidate staged for review, vouched for by nobody yet.
+   *
+   * `approved_at` stays NULL, which is the difference that matters — a row that
+   * says pending and carries an approval timestamp is a row two readers would
+   * describe differently.
+   */
+  it("creates the KOL pending when asked, and leaves approved_at null", async () => {
+    const address = inventAddress();
+    const response = await POST(
+      request({ handle: "@Pendiente", wallets: [{ address, chain: "solana" }], status: "pending" }),
+    );
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { kolId: string; status: string };
+    expect(body.status).toBe("pending");
+
+    const [kol] = await query<{ status: string; approved_at: Date | null }>(
+      "SELECT status, approved_at FROM kol WHERE id = $1", [body.kolId]);
+    expect(kol.status).toBe("pending");
+    expect(kol.approved_at).toBeNull();
+  });
+
+  it("records the status it actually created in the audit trail, not a constant", async () => {
+    const response = await POST(
+      request({ handle: "@Auditado", wallets: [{ address: inventAddress(), chain: "solana" }], status: "pending" }),
+    );
+    const { kolId } = (await response.json()) as { kolId: string };
+
+    const [row] = await query<{ after: { status: string } }>(
+      "SELECT after FROM audit_log WHERE target_id = $1 AND action = 'kol.create'", [kolId]);
+    expect(row.after.status).toBe("pending");
+  });
+
+  /**
+   * Absent means approved, which is what the admin screen sends and what this
+   * route did before it could do anything else. The default is asserted so a
+   * later refactor cannot quietly flip it and stage everyone the admin vouched
+   * for.
+   */
+  it("still creates approved when no status is sent", async () => {
+    const response = await POST(
+      request({ handle: "@PorDefecto", wallets: [{ address: inventAddress(), chain: "solana" }] }),
+    );
+    const { kolId, status } = (await response.json()) as { kolId: string; status: string };
+    expect(status).toBe("approved");
+
+    const [kol] = await query<{ status: string }>("SELECT status FROM kol WHERE id = $1", [kolId]);
+    expect(kol.status).toBe("approved");
+  });
+
+  /**
+   * Refused rather than coerced. A typo that silently became `approved` would
+   * publish somebody the caller meant to stage, which is the one direction this
+   * mistake must not fail in.
+   */
+  it("refuses a status that is neither, and writes nothing", async () => {
+    for (const status of ["rejected", "suspended", "APPROVED", "", 1, null]) {
+      const response = await POST(
+        request({ handle: "@Malo", wallets: [{ address: inventAddress(), chain: "solana" }], status }),
+      );
+      expect(response.status, `status ${JSON.stringify(status)}`).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe("bad_status");
+    }
+    const [{ n }] = await query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM kol WHERE x_handle = 'Malo'");
+    expect(n).toBe(0);
+  });
+
   it("creates the KOL approved, with its wallets private by default", async () => {
     const address = inventAddress();
     const response = await POST(
