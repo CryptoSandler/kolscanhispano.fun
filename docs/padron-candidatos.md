@@ -142,6 +142,12 @@ already recorded about the category leader:
 — *"The last FAQ answer is the whole curation model: manual, DM-based, with a stated PnL
 bar."* Inbound curation is what `/registro` is, and it needs no seed.
 
+**And the closer reference goes further.** `references.md` §2.1, corrected 2026-09-01:
+kolscanbrasil.io — the national clone this product is modelled on — has **self-serve alta**,
+where the KOL connects a wallet and claims their own profile. So opt-in is not a scruple
+this project invented against the grain of the category; it is what the nearest neighbour
+already does, and the DM in §1 is the older shape rather than the standard one.
+
 **For the tracker path, the missing input is a seed of handles, and it is human.** With a
 list of handles, §4's procedure runs over each one and produces followers, country and the
 language verdict mechanically; the wallet then comes from whichever tracker publishes it

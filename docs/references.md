@@ -167,6 +167,50 @@ Multichain from the start: **Solana, BSC, Base, Ethereum**. Attribution in metad
 `og:locale` `pt_BR`, `robots: index, follow` — SEO is treated as a first-class channel, which
 kolscan.io does not bother with.
 
+### 2.1 Self-serve alta — corrected 2026-09-01
+
+**This file said kolscanbrasil.io curated "manual, unstated", and that was wrong.** It has a
+self-serve sign-up: a KOL connects a wallet and claims their own profile. The evidence was
+already in this document — the nav item `Conectar Wallet` is recorded two paragraphs below,
+captured on the first pass — and nobody followed it. A described affordance that was never
+clicked is a fact half-collected, and the half that was missing changed the conclusion.
+
+What it offers, **from the owner's observation on 2026-09-01, not from a crawl**:
+
+| Step | What the site does |
+|---|---|
+| Connect | A wallet chooser offering **Phantom, MetaMask and WalletConnect** |
+| Profile | The KOL claims a profile and attaches their **X handle** |
+| Privacy | A control to **hide wallets** — which is what the `Wallets Ocultas` label on ~80% of rows is: a per-KOL choice its owner made, not a policy of the site |
+| Export | **"Exportar PnL Card"** — a shareable image of the KOL's own numbers |
+
+**Marked as owner-supplied, like the KOL detail modal in §6, and for the same reason.** The
+sign-up is entirely client-rendered: a scrape of `kolscanbrasil.io` on 2026-09-01 asking
+specifically for connect-wallet text, wallet names, profile features and a PnL card returned
+`{connectWalletText: "", walletsOffered: [], profileFeatures: [], pnlCard: "", verbatimStrings: []}`
+against an HTTP 200. The crawler reaches the leaderboard and nothing behind it, so this table
+is not independently verifiable from a URL and says so.
+
+**Phantom, MetaMask and WalletConnect is a fixed list, and it is the thing not to copy.** The
+site is multichain, so MetaMask earns its place there; here Solana is the only chain indexed,
+and `/registro` discovers wallets over the Wallet Standard handshake instead of naming any —
+see `src/lib/wallet-standard.ts`. Same feature, opposite construction: their list closes at
+three, ours has no list to close.
+
+**What this changes about the category, and about `/registro`.** §1 records kolscan.io asking
+for a DM, and that is still what kolscan.io's own FAQ says. But the *closer* reference — the
+national clone this product is modelled on — is self-serve, which makes `/registro` the
+normal shape of the thing rather than a deviation from it. The roster being opt-in is not a
+scruple this project invented.
+
+**"Exportar PnL Card" is recorded as an idea and is not built.** It is the one feature here
+with no equivalent on either side of this product, and it is a good one: the KOL's own
+numbers as an image they post themselves, which is distribution that costs nothing and puts
+the site's name in front of exactly the audience it wants. It also needs decisions this
+batch has not taken — what a card may show when the wallets behind it are hidden, whether a
+card is public at a URL or generated per request, and whether a figure in a shared image can
+go stale in a way the ranking's own numbers cannot. Written down here rather than started.
+
 ### Leaderboard (home)
 
 Header: 🇧🇷 flag + `KOLScan Brasil` (with "Brasil" in blue) + tagline "Ranking de Traders
@@ -249,7 +293,7 @@ Ranking dos Melhores Traders Brasileiros de Crypto em Solana, BSC, Base e Ethere
 | Avatars | Self-hosted CDN keyed by wallet | Hotlinked from twimg |
 | Identity | Wallet-first (`/account/<wallet>`) | Person-first (X handle) |
 | Monetisation | Pump.fun affiliate | GMGN affiliate |
-| Curation | Manual, DM on X, "$100k+ PnL" bar | Manual, unstated |
+| Curation | Manual, DM on X, "$100k+ PnL" bar | **Self-serve**: connect a wallet, claim a profile (§2.1) |
 | SEO | Minimal | Deliberate (OG, robots, long titles) |
 
 ## 4. What this implies for kolscanhispano.fun
