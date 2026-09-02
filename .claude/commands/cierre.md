@@ -61,6 +61,14 @@ npm run build > "$EV/npm-build.log" 2>&1; echo "BUILD EXIT: $?"
 Read the logs after the three statuses, not through a pipe on the command itself — see the
 fourth rule at the top of this file.
 
+**`EV` is assigned ONCE, at the top of the close, and every command after it uses the
+variable.** Never re-evaluate `date -u` later in the batch. Crossing midnight UTC mid-close
+on 2026-09-01 in `milliondollarpage` sent a build and a suite into a directory dated the
+next day that did not exist: both reported a non-zero exit, and the exit was the shell
+failing to redirect rather than either tool failing. A close that re-derives its own
+evidence path can report a failure it did not have, and can scatter one batch across two
+directories.
+
 `npm test` needs `TEST_DATABASE_URL` set and the test database reachable — `vitest.env.ts`
 asserts a sentinel marker before any test file is allowed to touch anything, so a missing
 or wrong test database aborts the run rather than quietly hitting the wrong one. If it
