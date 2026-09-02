@@ -1,6 +1,7 @@
 import { activeChains, isChain } from "@/lib/chain";
 import { audit, isAdmin } from "@/lib/admin";
 import { query } from "@/lib/db";
+import { findDisallowedBase58, findDisallowedEvm } from "@/lib/hygiene";
 import { createKol, type WalletInput } from "@/lib/roster";
 import { normalizeXHandle } from "@/lib/x-handle";
 
@@ -25,7 +26,14 @@ type Payload = {
   displayName?: unknown;
   wallets?: unknown;
   status?: unknown;
+  provenance?: unknown;
 };
+
+/**
+ * How long a provenance line may be. A URL and a date; not a paragraph, and not
+ * a place to paste a payload.
+ */
+const MAX_PROVENANCE = 200;
 
 /**
  * The two states this route may create, and why `approved` stays the default.
@@ -47,6 +55,39 @@ type Payload = {
  * and `status = 'approved'` gates the feed, the ranking and the detail.
  */
 const CREATABLE = ["approved", "pending"] as const;
+
+/**
+ * Where a staged candidate came from, and **why it is required for `pending`
+ * and optional for `approved`.**
+ *
+ * The two states are two different acts. `approved` is the admin vouching for
+ * somebody: the provenance is the admin, and the audit row already names them.
+ * `pending` is a candidate assembled from **a third party's attribution** — a
+ * public tracker that prints a wallet beside a handle — and a row created that
+ * way with no record of who says so is a person on this roster for reasons
+ * nobody can reconstruct. `docs/padron-candidatos.md` §1 calls that standard B
+ * and requires *"the tracker URL where the pair appears, plus the date it was
+ * read"*; this is that requirement, at the boundary rather than in a document.
+ *
+ * It goes to `audit_log` and nowhere else. `kol` has no column for it because
+ * no surface renders it: it is a fact about the decision, not about the KOL.
+ *
+ * **It is scanned for an address before it is stored.** `audit_log.after` is
+ * the easiest place in this system to persist a wallet in cleartext — `audit`
+ * says so — and this is the first field that lets a caller put free text there.
+ * `hygiene.ts`'s two scanners are the ones that already decide what an address
+ * looks like in this repository; reusing them is what keeps one answer to that
+ * question.
+ */
+function readProvenance(raw: unknown, status: string): string | null | undefined {
+  if (raw === undefined) return status === "pending" ? undefined : null;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed.length > MAX_PROVENANCE) return undefined;
+  if (findDisallowedBase58(trimmed).length > 0) return undefined;
+  if (findDisallowedEvm(trimmed).length > 0) return undefined;
+  return trimmed;
+}
 
 /**
  * Reason codes, never prose, and never the value that failed.
@@ -143,6 +184,12 @@ export async function POST(request: Request): Promise<Response> {
     return refuse("bad_status");
   }
 
+  // `undefined` is the refusal, `null` is "not given and not needed": a
+  // provenance that is absent on an `approved` create is fine, and one that is
+  // absent on a `pending` create is the thing this rejects.
+  const provenance = readProvenance(payload.provenance, status);
+  if (provenance === undefined) return refuse("bad_provenance");
+
   const wallets: WalletInput[] = [];
   for (const entry of payload.wallets) {
     if (typeof entry !== "object" || entry === null) return refuse("bad_wallet");
@@ -184,6 +231,7 @@ export async function POST(request: Request): Promise<Response> {
       handle,
       status,
       wallets: created.wallets.map((w) => ({ chain: w.chain, isPublic: w.isPublic })),
+      ...(provenance === null ? {} : { provenance }),
     },
     request,
   });

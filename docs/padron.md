@@ -128,6 +128,13 @@ at.
   on a chain nothing reads is a control that does not work.
 - A duplicate address is refused **by blind index**, and the refusal says only that the
   address is taken — never by whom, which would be a lookup oracle over the roster.
+- **A `pending` create must say where it came from.** `status: "pending"` stages a candidate
+  the admin has *not* vouched for — a wallet a public tracker printed beside a handle — so
+  the route requires a `provenance` line (the source URL and the date it was read,
+  `docs/padron-candidatos.md` §1's standard B) and puts it in `audit_log`. An `approved`
+  create needs none: the admin is the provenance, and the audit row names them. The field is
+  scanned with `hygiene.ts`'s address scanners before it is stored, because `after` is JSONB
+  and this is the first field a caller can write free text into.
 
 ---
 

@@ -27,6 +27,9 @@ afterEach(() => {
   else process.env.ADMIN_TOKEN = previousToken;
 });
 
+/** A standard-B line: the tracker URL where the pair is printed, and the date it was read. */
+const PROVENANCE = "Solana Tracker KOL leaderboard https://data.solanatracker.io/v2/pnl/leaderboard/kols, read 2026-09-01";
+
 function request(body: unknown, token: string | null = TOKEN): Request {
   return new Request("https://kolscanhispano.fun/api/admin/kol", {
     method: "POST",
@@ -185,7 +188,12 @@ describe("7. what a successful creation leaves", () => {
   it("creates the KOL pending when asked, and leaves approved_at null", async () => {
     const address = inventAddress();
     const response = await POST(
-      request({ handle: "@Pendiente", wallets: [{ address, chain: "solana" }], status: "pending" }),
+      request({
+        handle: "@Pendiente",
+        wallets: [{ address, chain: "solana" }],
+        status: "pending",
+        provenance: PROVENANCE,
+      }),
     );
     expect(response.status).toBe(201);
     const body = (await response.json()) as { kolId: string; status: string };
@@ -197,9 +205,97 @@ describe("7. what a successful creation leaves", () => {
     expect(kol.approved_at).toBeNull();
   });
 
+  /**
+   * The provenance, on the row and nowhere else.
+   *
+   * `docs/padron-candidatos.md` §1's standard B: a candidate the owner did not
+   * vouch for rests on *"the tracker URL where the pair appears, plus the date
+   * it was read"*, and a `pending` row created without it is a person on this
+   * roster for reasons nobody can reconstruct. Both halves are asserted — that
+   * it is stored, and that its absence is refused — because a requirement whose
+   * refusal nobody has seen is a requirement that stops firing.
+   */
+  it("stores the provenance of a staged candidate in the audit trail", async () => {
+    const response = await POST(
+      request({
+        handle: "@Procedencia",
+        wallets: [{ address: inventAddress(), chain: "solana" }],
+        status: "pending",
+        provenance: PROVENANCE,
+      }),
+    );
+    const { kolId } = (await response.json()) as { kolId: string };
+
+    const [row] = await query<{ after: { provenance: string } }>(
+      "SELECT after FROM audit_log WHERE target_id = $1 AND action = 'kol.create'", [kolId]);
+    expect(row.after.provenance).toBe(PROVENANCE);
+  });
+
+  it("refuses to stage a candidate that does not say where it came from", async () => {
+    for (const provenance of [undefined, "", "   ", 7, "x".repeat(201)]) {
+      const response = await POST(
+        request({
+          handle: "@SinFuente",
+          wallets: [{ address: inventAddress(), chain: "solana" }],
+          status: "pending",
+          ...(provenance === undefined ? {} : { provenance }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe("bad_provenance");
+    }
+    expect(await query("SELECT 1 FROM kol")).toHaveLength(0);
+  });
+
+  /**
+   * The one thing a free-text field at this boundary must not become. `audit`
+   * says `after` is "the easiest place in this system to accidentally persist a
+   * wallet in cleartext", and this is the first field that lets a caller write
+   * into it — so it is scanned with the same two scanners that decide what an
+   * address looks like everywhere else in this repository.
+   */
+  it("refuses a provenance with an address hidden in it", async () => {
+    for (const provenance of [
+      `tracker, read 2026-09-01, wallet ${inventAddress()}`,
+      `tracker, read 2026-09-01, wallet ${inventEvmAddress()}`,
+    ]) {
+      const response = await POST(
+        request({
+          handle: "@ConDireccion",
+          wallets: [{ address: inventAddress(), chain: "solana" }],
+          status: "pending",
+          provenance,
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe("bad_provenance");
+    }
+  });
+
+  /**
+   * An `approved` create is the admin vouching, and the audit row already names
+   * them — so the field is optional there, and absent means absent rather than
+   * an empty string somebody has to interpret later.
+   */
+  it("leaves the provenance out of an approved creation that gave none", async () => {
+    const response = await POST(
+      request({ handle: "@Avalado", wallets: [{ address: inventAddress(), chain: "solana" }] }),
+    );
+    const { kolId } = (await response.json()) as { kolId: string };
+
+    const [row] = await query<{ after: Record<string, unknown> }>(
+      "SELECT after FROM audit_log WHERE target_id = $1 AND action = 'kol.create'", [kolId]);
+    expect(row.after).not.toHaveProperty("provenance");
+  });
+
   it("records the status it actually created in the audit trail, not a constant", async () => {
     const response = await POST(
-      request({ handle: "@Auditado", wallets: [{ address: inventAddress(), chain: "solana" }], status: "pending" }),
+      request({
+        handle: "@Auditado",
+        wallets: [{ address: inventAddress(), chain: "solana" }],
+        status: "pending",
+        provenance: PROVENANCE,
+      }),
     );
     const { kolId } = (await response.json()) as { kolId: string };
 

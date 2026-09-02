@@ -1,8 +1,12 @@
 # Candidate roster: Spanish-speaking KOLs
 
-A working list for the owner to strike through and confirm. **Nothing here is registered.**
-No row in this file has touched `kol`, `kol_wallet` or the admin API; the alta happens only
-after the owner confirms, and then through `POST /api/admin/kol` like any other creation.
+A working list for the owner to strike through and confirm.
+
+**Three rows are registered, 2026-09-02**, on the owner's instruction: the three that cross
+the tracker were created `pending` through `POST /api/admin/kol` with their provenance, then
+approved through `POST /api/admin/kol/<id>/approve`. Every other row in this file has still
+touched nothing — no `kol`, no `kol_wallet`, no admin call — and the alta of any of them
+happens only after the owner confirms.
 
 ---
 
@@ -60,12 +64,12 @@ handle, read 2026-09-01). **Zero Firecrawl.**
 | `@DomiTrader` | solo handle | — | — | exists; not in the tracker |
 | `@eguito0` | solo handle | — | — | exists; not in the tracker |
 | `@gigac312` | solo handle | — | — | exists; not in the tracker |
-| `@k4yeSol` | **crosses** | 1 | Solana Tracker KOL leaderboard, read 2026-09-01 | staged **pending** through the admin |
+| `@k4yeSol` | **crosses** | 1 | `https://data.solanatracker.io/v2/pnl/leaderboard/kols`, read 2026-09-01 | staged **pending** 2026-09-02, then approved |
 | `@KairosHolder` | solo handle | — | — | exists; not in the tracker |
-| `@mambatrades_` | **crosses** | 1 | Solana Tracker KOL leaderboard, read 2026-09-01 | staged **pending** through the admin |
+| `@mambatrades_` | **crosses** | 1 | `https://data.solanatracker.io/v2/pnl/leaderboard/kols`, read 2026-09-01 | staged **pending** 2026-09-02, then approved |
 | `@ochouso` | solo handle | — | — | exists; not in the tracker |
 | `@Penguzxbt` | solo handle | — | — | exists; not in the tracker |
-| `@Stigman__` | **crosses** | 1 | Solana Tracker KOL leaderboard, read 2026-09-01 | staged **pending** through the admin |
+| `@Stigman__` | **crosses** | 1 | `https://data.solanatracker.io/v2/pnl/leaderboard/kols`, read 2026-09-01 | staged **pending** 2026-09-02, then approved |
 | `@victordegods` | solo handle | — | — | exists; not in the tracker |
 | `@Von_Draken` | solo handle | — | — | exists; not in the tracker |
 | `@zl4sh1x` | solo handle | — | — | exists; not in the tracker |
