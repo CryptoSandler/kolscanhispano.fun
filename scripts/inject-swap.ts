@@ -23,7 +23,7 @@ import { parsePending } from "../src/lib/parse-swap";
 import { recomputeDirty } from "../src/lib/pnl";
 import { seedDev } from "./seed-dev";
 
-const BASE_URL = process.env.INJECT_BASE_URL ?? "http://localhost:3000";
+const BASE_URL = process.env.INJECT_BASE_URL ?? "http://localhost:3102";
 
 /** 1,23 SOL for 16,9M tokens, with a 5,000-lamport fee. */
 const SOL_SPENT_LAMPORTS = 1_230_000_000n;

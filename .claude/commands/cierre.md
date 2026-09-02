@@ -100,6 +100,19 @@ aborts, that is a blocked close (see rule 2). Do not work around it by running a
 Paste the parts that are not about your change too. A pre-existing failure you inherited is
 information the reader needs; hiding it makes the next batch debug it from scratch.
 
+### The server runs on this repository's own port
+
+**`kolscanhispano` is 3102** — `npm run dev` and `npm start` carry `-p 3102`, and any
+rehearsal or end-to-end script defaults to it. The table for all six
+repositories is in `~/.claude/GATES.md`; do not move a port without moving it
+there.
+
+**A run that reaches a server still asks which application answered.** Measured
+2026-09-02 in `nftraffle`: a rehearsal on the old shared port got `404`s from a
+different project that had taken it, after an earlier call in the same session
+had been answered correctly. The port table makes that unlikely; an identity
+check on a sentence only this application serves is what makes it detectable.
+
 ## 3. Read the captures yourself
 
 A batch that ran Playwright produced screenshots. **They are evidence for you, not a

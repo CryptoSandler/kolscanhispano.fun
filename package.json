@@ -11,9 +11,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "dev": "next dev",
+    "dev": "next dev -p 3102",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3102",
     "lint": "eslint",
     "test:watch": "vitest",
     "test:contract": "vitest run --config vitest.contract.config.mts",
