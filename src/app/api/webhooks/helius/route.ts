@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { after } from "next/server";
 import { withLock } from "@/lib/lock";
 import { parsePending } from "@/lib/parse-swap";
+import { recomputeDirty } from "@/lib/pnl";
 import { storeRawTxBatch, type RawTxInput } from "@/lib/raw-tx";
 import { clientIp, hitLimit } from "@/lib/rate-limit";
 
@@ -30,6 +31,21 @@ export const maxDuration = 60;
  * delivery rather than by one long function.
  */
 const DELIVERY_DRAIN_BATCH = 10;
+
+/**
+ * How many dirty positions one delivery replays, after the parse.
+ *
+ * **The parse alone does not put a trade on the ranking.** It writes a `trade`
+ * row and marks its position dirty; the ranking reads `pnl_daily`, which only
+ * `recomputeDirty` writes. Leaving that to `recompute-dirty.yml` would have
+ * moved the wait from one throttled GitHub cron to another — the goal is
+ * trade→**row** in minutes, not trade→`trade`.
+ *
+ * Small, because a delivery's ten rows can only dirty a handful of positions,
+ * and because a replay walks a position's whole trade log. The cron keeps its
+ * own, larger limit and remains the net for a backlog.
+ */
+const DELIVERY_REPLAY_BATCH = 20;
 
 function authorized(header: string | null): boolean {
   const expected = process.env.HELIUS_WEBHOOK_SECRET;
@@ -198,6 +214,22 @@ function drainAfterResponse(): void {
         const parsed = await withLock("parse-pending", () => parsePending(DELIVERY_DRAIN_BATCH));
         if (parsed === null) return; // another run holds it; it is draining the same queue
         if (parsed > 0) console.log(`webhook drain: parsed ${parsed} row(s)`);
+
+        /*
+          And the replay, under its own lock — the cron's, again, never a new
+          one. It is a separate lock from the parse's because they are separate
+          crons and either may be running without the other.
+
+          It runs even when the parse found nothing: a previous delivery may
+          have been killed between the two, and a position left dirty is a trade
+          that exists and does not show.
+        */
+        const replayed = await withLock("recompute-dirty", () =>
+          recomputeDirty(DELIVERY_REPLAY_BATCH),
+        );
+        if (replayed !== null && replayed > 0) {
+          console.log(`webhook drain: replayed ${replayed} position(s)`);
+        }
       } catch {
         // Never the thrown message: it can carry a payload fragment.
         console.warn("webhook drain: failed");

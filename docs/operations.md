@@ -23,8 +23,14 @@ that cleared a queue of 102, hours after the earliest of them happened.
 
 ### The decision: the delivery drains
 
-**`POST /api/webhooks/helius` parses a small batch after it has answered**, through Next's
-`after()`. The cron stays exactly as it is and becomes the net.
+**`POST /api/webhooks/helius` parses a small batch after it has answered, and replays the
+positions that parse dirtied**, through Next's `after()`. Both crons stay exactly as they are
+and become the net.
+
+**Both hops, because one is not enough.** The parse writes a `trade` and marks its position
+dirty; the ranking reads `pnl_daily`, which only `recomputeDirty` writes. A drain that stopped
+after the parse would have moved the wait from one throttled GitHub cron to another. Each hop
+takes its own cron's lock — `parse-pending` then `recompute-dirty` — never a new one.
 
 Three options were on the table, in the owner's order of preference, and the first one wins on
 every axis that matters:

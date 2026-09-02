@@ -104,6 +104,45 @@ describe("the delivery drains after it has answered", () => {
     expect(Number(after.n)).toBe(0);
   });
 
+  /**
+   * The hop that puts the trade on the *ranking*.
+   *
+   * The parse writes a `trade` and marks its position dirty; `pnl_daily` — what
+   * the ranking reads — is written only by `recomputeDirty`. A drain that
+   * stopped after the parse would have moved the wait from one throttled GitHub
+   * cron to another, which is not what `docs/operations.md` §1 promises.
+   *
+   * Asserted through a position the test dirties itself: the delivery's own row
+   * belongs to no wallet here, so the parse produces nothing, and what is being
+   * pinned is that the replay runs at all — including when the parse found
+   * nothing, which is the case a delivery killed between the two hops leaves
+   * behind.
+   */
+  it("replays a dirty position the parse left behind", async () => {
+    const kolId = crypto.randomUUID();
+    await query(
+      `INSERT INTO kol (id, slug, display_name, x_handle, status, approved_at)
+       VALUES ($1, 'drenaje', 'DRENAJE', 'drenaje', 'approved', now())`,
+      [kolId],
+    );
+    await query(
+      `INSERT INTO position (kol_id, chain, mint, dirty)
+       VALUES ($1, 'solana', 'MintDePruebaParaElDrenaje', TRUE)`,
+      [kolId],
+    );
+
+    await POST(delivery(inventSignature()));
+    await scheduled[0]();
+
+    const [row] = await query<{ n: string }>(
+      "SELECT count(*) AS n FROM position WHERE dirty",
+    );
+    expect(Number(row.n)).toBe(0);
+
+    await query("DELETE FROM position WHERE kol_id = $1", [kolId]);
+    await query("DELETE FROM kol WHERE id = $1", [kolId]);
+  });
+
   /** A delivery that stored nothing schedules nothing: no row, no work. */
   it("schedules no drain for a delivery with no event in it", async () => {
     const empty = new Request("https://kolscanhispano.fun/api/webhooks/helius", {
