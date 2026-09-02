@@ -133,7 +133,8 @@ test.describe("the home page at 1280×900", () => {
 
   /**
    * DESIGN.md, Identity and the last Don't: the header carries the wordmark,
-   * the subtitle, both `segmented` controls and the wallet slot — and the
+   * the subtitle and the wallet slot — the two `segmented` controls moved to
+   * the page on 2026-09-02 — and the
    * wallet slot is a label, not a control. *"Don't show a control that does not
    * work"*: `/registro` does not exist yet, so nothing here may be clickable.
    */

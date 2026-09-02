@@ -1,7 +1,8 @@
-import { parseFiat, readLeaderboard } from "@/lib/leaderboard";
+import { LEADERBOARD_FIATS, parseFiat, readLeaderboard } from "@/lib/leaderboard";
 import { ARS_SOURCE_LABELS, readArsRate } from "@/lib/fx";
 import { formatArsRate, formatUtcMoment } from "@/lib/format";
-import { WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { LEADERBOARD_WINDOWS, WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { LeaderboardControls } from "../leaderboard-controls";
 import { KolModalHost } from "../kol-modal-host";
 import { ARS_CAVEAT, LeaderboardTable, USD_CAVEAT } from "../leaderboard-table";
 
@@ -63,15 +64,17 @@ export default async function LeaderboardPage({
 
   return (
     <>
-      {/* DESIGN.md's `display-lg`: the page's own title, above the panel that
-          holds its data. */}
-      <div className="page-head">
-        <h1 className="display-lg">Clasificación</h1>
-        {/* The ranked figure is SOL whatever the toggle says — the toggle
-            chooses the currency in parentheses, not the sort. */}
-        <p className="page-subtitle">
-          PnL realizado · {WINDOW_LABELS[window]} · SOL
-        </p>
+      {/* `docs/clone-map.md` §2: the title and the controls share one row, the
+          way `KOL Leaderboard` and its two pill groups do on the mould. They
+          were in the site header until 2026-09-02. */}
+      <div className="page-head is-row">
+        <div>
+          <h1 className="display-lg">Clasificación</h1>
+          {/* The ranked figure is SOL whatever the toggle says — the toggle
+              chooses the currency in parentheses, not the sort. */}
+          <p className="page-subtitle">PnL realizado · {WINDOW_LABELS[window]} · SOL</p>
+        </div>
+        <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS} />
       </div>
 
       <section className="panel" style={{ marginTop: "var(--stack)" }}>

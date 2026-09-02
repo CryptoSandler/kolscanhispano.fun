@@ -63,8 +63,8 @@ above the ranking.
 
 | | Ellos | Nosotros | Estado |
 |---|---|---|---|
-| Page title | `KOL Leaderboard`, left, on the controls row | `Clasificación` as an `h1` with a subtitle line | **pendiente**: ours keeps the title above the panel. Cosmetic, and the only §2 row still open |
-| Controls | `USD·BRL` then `Daily·Weekly·Monthly`, right of the title, two pill groups | `DIARIO·SEMANAL·MENSUAL` and `SOL·USD` in the header | **mover**: theirs live on the page, not in the chrome |
+| Page title | `KOL Leaderboard`, left, on the controls row | `Clasificación` and its subtitle, left, on the controls row | **listo** (2026-09-02) |
+| Controls | `USD·BRL` then `Daily·Weekly·Monthly`, right of the title, two pill groups | `DIARIO·SEMANAL·MENSUAL` and `USD·ARS`, right of the title | **listo** (2026-09-02). `/cabals` carries the window group alone: no figure there is in a fiat the reader chose |
 | Currency | `USD · BRL` | `SOL · USD` | **decidido, con ronda escrita**: `docs/round-ars.md`. A display conversion over the stored USD, at one dated public rate, with the source printed. **Which rate stays the owner's open decision** |
 | Rows | Cards, gap between them, rounded, no header row | Cards, 6px gap, `radius-md`, no header row | **listo** (2026-09-02) |
 | Live feed | none | `En vivo` on the home page | **se queda, y es nuestro.** `docs/references.md` §5: the feed on the home page is the choice that makes the site read as alive in the first three seconds. Open for the owner |
@@ -76,7 +76,7 @@ above the ranking.
 | Podium 1–3 | 🏆 🥈 🥉 emoji + solid left bar + gradient fading right | 🏆 🥈 🥉 + left bar + gradient | **listo** (2026-09-02). DESIGN.md's *"three tints, not three metals"* was rewritten rather than worked around |
 | Rank 4+ | plain numeral, grey | plain numeral, `ink-subtle` | **listo** (2026-09-02) |
 | Avatar | 36px circle, photo, hotlinked from `pbs.twimg.com` | 36px circle via `/api/avatar/<kol_id>` | **listo** — exception (a) keeps our proxy |
-| Identity | name bold, then cabal chip, then `𝕏`, then address chip **or** `Wallets Ocultas` | name bold over `@handle`, chip, `Wallets ocultas` | **pendiente**: theirs is one line, ours is two. The handle is ours to show and stays |
+| Identity | name bold, then cabal chip, then `𝕏`, then address chip **or** `Wallets Ocultas` | name, `@handle`, `Wallets ocultas`, chip — one line | **listo** (2026-09-02). The handle is printed where theirs prints a glyph, which is ours to show |
 | Cabal chip | solid colour background, dark text, `radius-sm` | solid tint, `canvas` text, `radius-sm` | **listo** (2026-09-02). The contrast table now measures the ink on the tint, not the tint on `surface-2` |
 | Address chip | `0x3719` + `EVM` tag, and `CDus2r +2 ⌄` for several | never | **no se copia — excepción (a)** |
 | PnL | one column per chain, negative red, positive in the chain's colour | one SOL figure by sign | **adaptar**: we index one chain, so one column. Colour stays by sign |

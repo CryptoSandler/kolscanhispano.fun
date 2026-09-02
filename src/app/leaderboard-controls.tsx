@@ -5,10 +5,18 @@ import { useSearchParams } from "next/navigation";
 import { WINDOW_LABELS } from "@/lib/windows";
 
 /**
- * DESIGN.md, Layout: *"Header: wordmark and subtitle left, nav centre, unit and
- * window controls plus the wallet action right."* So the two `segmented`
- * controls live in the site header, not on the leaderboard page — one place,
- * every route.
+ * **The controls live on the page, beside its title, and not in the chrome.**
+ * They were in the site header until 2026-09-02, on DESIGN.md's *"Header:
+ * wordmark and subtitle left, nav centre, unit and window controls plus the
+ * wallet action right"* — the mould puts them on the ranking itself, to the
+ * right of `KOL Leaderboard`, and `docs/clone-map.md` §2 is the decision that
+ * moved them. That paragraph of DESIGN.md moved with them.
+ *
+ * It costs something and the something is worth naming: off `/leaderboard`
+ * there is no longer a window toggle in reach. That is the mould's arrangement
+ * — their home *is* the ranking — and here the home page's top ten is
+ * explicitly the daily window with the USD total, with `Ver todo` beside it for
+ * anything else.
  *
  * DESIGN.md `segmented`: *"`Diario · Semanal · Mensual` and `USD · ARS` as pill
  * segments; selected segment `surface-3` with cyan text. **All three windows
@@ -53,18 +61,42 @@ const FIAT_LABELS: Record<string, string> = { usd: "USD", ars: "ARS" };
 export function LeaderboardControls({
   windows,
   fiats,
+  basePath = "/leaderboard",
 }: {
   windows: readonly string[];
+  /**
+   * Empty renders no currency group at all, which is what `/cabals` passes: no
+   * figure on that page is in a fiat the reader chose, so a toggle over one
+   * would be a control that changes nothing.
+   */
   fiats: readonly string[];
+  /** Where a segment navigates. `/cabals` keeps its own route. */
+  basePath?: string;
 }) {
+  /*
+    `useSearchParams` is typed non-null and **is** null when this renders
+    outside a request — `renderToStaticMarkup` on the page, which is exactly how
+    `address-invariant.test.ts` reads every public surface for an address. It
+    was unreachable from that test while this lived in the layout; moving it
+    onto the page made it reachable and it threw.
+
+    So the query string is read defensively and its absence means the defaults,
+    which is the same answer this control already gives on a URL that carries no
+    parameters. A control that cannot render without a router is a control that
+    cannot be swept for an address.
+  */
   const params = useSearchParams();
-  // The same fallbacks `/leaderboard` applies to an unreadable parameter, so
-  // the control and the page cannot disagree about what is selected.
-  const window = windows.includes(params.get("window") ?? "") ? params.get("window")! : windows[0];
-  const unit = fiats.includes(params.get("unit") ?? "") ? params.get("unit")! : fiats[0];
+  const selected = (name: string): string | null => params?.get(name) ?? null;
+
+  // The same fallbacks the page applies to an unreadable parameter, so the
+  // control and the page cannot disagree about what is selected.
+  const window = windows.includes(selected("window") ?? "") ? selected("window")! : windows[0];
+  const unit = fiats.includes(selected("unit") ?? "") ? selected("unit")! : fiats[0];
 
   const href = (next: { window?: string; unit?: string }) =>
-    `/leaderboard?window=${next.window ?? window}&unit=${next.unit ?? unit}`;
+    fiats.length === 0
+      ? `${basePath}?window=${next.window ?? window}`
+      : `${basePath}?window=${next.window ?? window}&unit=${next.unit ?? unit}`;
 
   return (
     <div className="controls">
@@ -81,18 +113,20 @@ export function LeaderboardControls({
         ))}
       </div>
 
-      <div className="segmented" role="group" aria-label="Moneda">
-        {fiats.map((option) => (
-          <Link
-            key={option}
-            className={option === unit ? "segment is-selected" : "segment"}
-            aria-current={option === unit ? "true" : undefined}
-            href={href({ unit: option })}
-          >
-            {FIAT_LABELS[option] ?? option}
-          </Link>
-        ))}
-      </div>
+      {fiats.length > 0 && (
+        <div className="segmented" role="group" aria-label="Moneda">
+          {fiats.map((option) => (
+            <Link
+              key={option}
+              className={option === unit ? "segment is-selected" : "segment"}
+              aria-current={option === unit ? "true" : undefined}
+              href={href({ unit: option })}
+            >
+              {FIAT_LABELS[option] ?? option}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -333,6 +333,28 @@ a {
   margin-top: var(--stack);
 }
 
+/* The title and the page's controls on one row (`docs/clone-map.md` §2), the
+   way `KOL Leaderboard` and its two pill groups sit on the mould.
+
+   `align-items: end` puts the pills on the subtitle's baseline rather than
+   centring them against a two-line block, which is what makes the row read as
+   one line of chrome instead of two stacked things. Below 640px it stacks: the
+   controls are three pills plus two, and beside a title they would leave the
+   title a word wide. */
+.page-head.is-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--gutter);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .page-head.is-row {
+    align-items: stretch;
+  }
+}
+
 .page-subtitle {
   color: var(--ink-muted);
   margin-top: 2px;
@@ -700,14 +722,6 @@ a {
       "rank members usd";
   }
 
-  /* And the second line of the identity wraps rather than being cut: the
-     handle and `Wallets ocultas` are two separate facts, and a narrow card
-     gives them two lines instead of half of each. */
-  .identity-second {
-    flex-wrap: wrap;
-    row-gap: 0;
-  }
-
   .board .members {
     text-align: left;
   }
@@ -909,40 +923,49 @@ a {
   min-width: 0;
 }
 
-.identity-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
+/* One line since 2026-09-02: name, handle, the hidden marker, the chip. It was
+   a two-line block (`identity-lines` over `identity-second`) until the clone
+   decision — `docs/clone-map.md` §3 — and the mould reads them across.
 
-.identity-lines > * {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The second line holds two things now, not one: DESIGN.md, `row-leaderboard`
-   — "The handle and the hidden marker are **not alternatives**, and an earlier
-   draft of this document wrongly wrote them as one." The handle is the public
-   identity; `Wallets ocultas` occupies "the **address** slot and nothing
-   else", which is the slot to its right on both references. `min-width: 0` on
-   the handle is what makes the ellipsis fall on the handle rather than pushing
-   the marker out of the row. */
-.identity-second {
+   The name is the only part that yields: it has the ellipsis and the others are
+   `flex: none`, because a handle cut to `@cripto…` and a chip cut to `EJ` are
+   both unreadable, while a shortened name is still a name. */
+.identity-line {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
 
-.identity-second > .handle {
+.identity-line > .name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
 }
 
-.identity-second > .hidden-wallets {
+.identity-line > .handle,
+.identity-line > .hidden-wallets,
+.identity-line > .chip-cabal {
   flex: none;
+}
+
+/* **Below 640px the identity wraps rather than being cut**, and this block sits
+   here rather than with the other narrow rules because the rules it overrides
+   are declared above it: at equal specificity the later declaration wins, and
+   the first attempt put this in a media query earlier in the file, where it did
+   nothing. The podium learned the same lesson two hundred lines up.
+
+   The name, the handle, the hidden marker and the chip are four separate facts;
+   a narrow card gives them two lines instead of half of each. `Wallets ocult`,
+   cut mid-word, is what the first pass shipped — DESIGN.md calls that a bug
+   rather than a compact layout. `.identity-second` is the modal's header, which
+   wraps for the same reason. */
+@media (max-width: 640px) {
+  .identity-line,
+  .identity-second {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
 }
 
 .handle {
@@ -1088,6 +1111,47 @@ a {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* **The feed row wraps below 640px**, and it was the last surface still
+   clipping. Its sentence had about 150px of a row whose other three parts are
+   fixed, so `text-overflow: ellipsis` was doing its job and printing
+   `compró 1…`: a name, a verb and three characters of an amount. A feed row is
+   a sentence, not a column of figures — it takes the width it needs on its own
+   line and says the whole thing.
+
+   `overflow: visible` on the row as well as on the sentence: the row's own
+   `overflow: hidden` clips the second line otherwise, which is the state the
+   capture caught on the first attempt. Read in the capture on 2026-09-02; the
+   defect had been shipping since before the ranking was fixed. */
+@media (max-width: 640px) {
+  /* The reserved height is six rows of 56px, which is six rows only while a row
+     *is* 56px. Once the sentence takes a second line the same 336px shows four
+     and a half, and the half — a sentence cut across the middle — is exactly
+     what this batch is removing everywhere else. So the list stops reserving
+     and the panel grows; the page below it moves, which is the cost, and on a
+     phone the reader was going to scroll for the ranking anyway. */
+  .feed-list {
+    height: auto;
+    max-height: calc(6 * var(--row-height) * 1.6);
+  }
+
+  .row-feed {
+    height: auto;
+    min-height: var(--row-height);
+    flex-wrap: wrap;
+    overflow: visible;
+    padding: 8px 2px;
+  }
+
+  .row-sentence {
+    flex: 1 0 100%;
+    order: 1;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    line-height: 1.45;
+  }
 }
 
 .symbol {

@@ -226,51 +226,50 @@ function Row({
       </span>
       <span className="identity">
         <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={36} />
-        <span className="identity-lines">
+        {/*
+          **One line, not two**, since 2026-09-02: name, handle, the hidden
+          marker and the cabal chip, in that order — the mould's arrangement
+          (`docs/clone-map.md` §3), which reads `name`, chip, `𝕏`, then a
+          truncated address or `Wallets Ocultas`.
+
+          Two of those four are ours and stay. The **handle** is printed where
+          theirs prints only a glyph: `docs/references.md` §6 — the handle is
+          public identity and the wallet is the secret. `Wallets ocultas`
+          occupies the address slot and nothing else, which is the whole of
+          spec §7's "Spanish label wherever a wallet would otherwise appear";
+          `hide_wallets` defaults to `TRUE`, so treating it as a handle switch
+          would erase the person from almost every row. That correction was
+          made in `b0f2a43` and survives the change of shape: the handle and
+          the marker are **not alternatives**, they are two things on one line.
+
+          The row stays 56px. The two-line block was what that height was
+          originally for; the 36px avatar is what keeps it now.
+        */}
+        <span className="identity-line">
+          {/* The name is **not** the link, and that is deliberate: `KolRow`
+              excludes anything inside an `<a>` from opening the modal, so a
+              linked name would take the row's largest click target away from
+              the thing the row is for. The handle is the link, as it was when
+              this block had two lines. */}
           <span className="name">{entry.kol.name}</span>
-          {/*
-              DESIGN.md, `row-leaderboard`: "beneath it the **`@handle`,
-              always**, linked to X, with `Wallets ocultas` in `hidden`
-              **beside it** where that KOL's wallets are hidden."
-
-              That paragraph was corrected in `b0f2a43`, and this row was built
-              against the draft it replaced: "The handle and the hidden marker
-              are **not alternatives**, and an earlier draft of this document
-              wrongly wrote them as one. On both references a row carries a
-              handle *and* an identity chip that is either a truncated address
-              or `Wallets Ocultas`: the handle is public identity, the wallet is
-              the secret. `hide_wallets` defaults to `TRUE` here, so treating it
-              as a handle switch would erase the person from almost every row."
-
-              So `hideWallets` decides the *address slot* and nothing else, and
-              spec §7's "Spanish label wherever a wallet would otherwise appear"
-              is exactly that slot. The handle is the KOL's public persona
-              (spec §6) and is never withheld.
-            */}
-          <span className="identity-second">
-            <a
-              className="handle"
-              href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              aria-label={`Perfil de ${entry.kol.name} en X`}
-            >
-              @{entry.kol.xHandle}
-            </a>
-            {entry.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
-          </span>
-        </span>
-        {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
+          <a
+            className="handle"
+            href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
+            target="_blank"
+            rel="noreferrer noopener"
+            aria-label={`Perfil de ${entry.kol.name} en X`}
+          >
+            @{entry.kol.xHandle}
+          </a>
+          {entry.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
+          {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
               tag alone, so the row and the modal's header cannot disagree
               about which colour a cabal is. See `src/lib/cabal.ts`. */}
-        {entry.kol.cabalTag && (
-          <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
-        )}
+          {entry.kol.cabalTag && (
+            <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
+          )}
+        </span>
       </span>
-      {/* DESIGN.md: "right-aligned, the SOL figure in `numeric-lg` coloured by
-          sign, and the USD total in `numeric` `ink-muted` in parentheses." The
-          unit toggle swaps which of the two is the ranked figure; the shape —
-          large and signed, then small and parenthesised — does not move. */}
       <span className={`num-lg pnl ${direction}`}>{primary}</span>
       {/* DESIGN.md, `state-unpriced`: `sin precio`, never a dash and never a
           zero. A peso figure with no rate behind it is the same absence as a

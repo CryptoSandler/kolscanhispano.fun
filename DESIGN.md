@@ -179,8 +179,12 @@ crossing `9,99 → 10,01` reflows nothing — the rule that used to say "fixed c
 kept its job when the table went. The only fixed-layout table left in this product is
 `/admin`'s roster, which no reader sees.
 
-Header: wordmark and subtitle left, nav centre, unit and window controls plus the wallet
-action right.
+Header: wordmark and subtitle left, nav centre, the wallet action right. **The window and
+currency controls are on the page**, in one row with its title — `docs/clone-map.md` §2: the
+mould puts them to the right of `KOL Leaderboard`, not in the chrome. They were in the header
+until 2026-09-02, and the cost of moving them is stated rather than hidden: off `/leaderboard`
+and `/cabals` there is no window toggle in reach, and the home page's top ten is explicitly
+the daily window with the USD total, with `Ver todo` beside it.
 
 ## Responsive
 
@@ -213,6 +217,11 @@ behind a scroll nothing announced. Hiding columns under a media query cannot fix
 day, `docs/parity-kolscanbrasil.md` §3) and it would remove data on the size most readers
 are on.
 
+**The feed row wraps below 640px too**, and it was the last surface still clipping. Its
+sentence had about 150px of a row whose other three parts are fixed, so the ellipsis was
+printing `compró 1…` — a name, a verb and three characters of an amount. A feed row is a
+sentence, not a column of figures: it takes two lines and says the whole thing.
+
 So **the ranking card wraps below 640px**: the rank and the identity keep the left, and the
 two figures stack on the right in the order they hold at 1280 — everything visible without
 scrolling anything. 640px is not a designed size — the two designed sizes are still 1280×900
@@ -230,10 +239,16 @@ its own container is scrolled — never merely that the text exists.
 **`row-leaderboard`** — a card: 56px minimum, `radius-md`, a hairline border, `surface-2` on
 hover, whole card clickable and focusable (it opens the modal). Left to right: the rank —
 🏆 🥈 🥉 on the podium, a **plain** `numeric` numeral in `ink-subtle` below it; 36px circular
-avatar from `/api/avatar/<kol_id>`; a two-line identity block — `name` on top, and beneath it
-the **`@handle`, always**, linked to X, with `Wallets ocultas` in `hidden` **beside it**
-where that KOL's wallets are hidden; the cabal chip; then right-aligned, the SOL figure in
-`numeric-lg` coloured by sign, and the fiat total in `numeric` `ink-muted` in parentheses.
+avatar from `/api/avatar/<kol_id>`; **one line of identity** — `name`, then the
+**`@handle`, always**, linked to X, then `Wallets ocultas` in `hidden` where that KOL's
+wallets are hidden, then the cabal chip; then right-aligned, the SOL figure in `numeric-lg`
+coloured by sign, and the fiat total in `numeric` `ink-muted` in parentheses.
+
+It was a two-line block — name over handle — until 2026-09-02; the mould reads them across
+(`docs/clone-map.md` §3). Only the name yields: a handle cut to `@cripto…` and a chip cut to
+`EJ` are unreadable, a shortened name is still a name. **The name is not the link.** The row
+opens the modal and `KolRow` excludes anything inside an `<a>`, so linking the name would
+take the row's largest target away from what the row is for.
 
 **No record column and no header row**, because the mould has neither. `Cerradas` and
 `% ganadas` were on this card until 2026-09-02 and came off with the clone decision; the

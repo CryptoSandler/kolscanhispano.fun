@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { readCabals } from "@/lib/cabals";
-import { WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { LEADERBOARD_WINDOWS, WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { LeaderboardControls } from "../leaderboard-controls";
 import { USD_CAVEAT } from "../leaderboard-table";
 import { CabalsBoard } from "./board";
 
@@ -43,12 +44,18 @@ export default async function CabalsPage({
 
   return (
     <>
-      <div className="page-head">
-        <h1 className="display-lg">Cabals</h1>
-        <p className="page-subtitle">Grupos de traders compitiendo por ganancias</p>
-        <Link className="panel-link" href="/leaderboard">
-          ← Volver a la clasificación
-        </Link>
+      <div className="page-head is-row">
+        <div>
+          <h1 className="display-lg">Cabals</h1>
+          <p className="page-subtitle">Grupos de traders compitiendo por ganancias</p>
+          <Link className="panel-link" href="/leaderboard">
+            ← Volver a la clasificación
+          </Link>
+        </div>
+        {/* No currency group: every figure on this page is a SOL total with its
+            USD equivalent beside it, so there is nothing for a toggle to
+            choose. */}
+        <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={[]} basePath="/cabals" />
       </div>
 
       <section className="panel" style={{ marginTop: "var(--stack)" }}>
