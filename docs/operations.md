@@ -106,13 +106,46 @@ about a key's owner: `/v0/account`, `/v0/usage` and `/v0/me` all answer *"Method
 The `project` id above is the only identifier the API gives, and it comes from the webhook
 object rather than from the key.
 
-**Open, and the owner's:** whether to recreate this webhook under the `kolscanhispano-server`
-key so that everything lives in one project. It is one run of the sync script with a different
-`HELIUS_API_KEY` — it would create a webhook in that project — plus deleting this one by hand.
-Nothing is blocked on it; it is tidiness, and the cost of getting it wrong is a period with two
-live webhooks or none.
+**Decided by the owner on 2026-09-02: migrate it to the `kolscanhispano` project.** The
+migration is **blocked on one thing and only one thing — the `kolscanhispano-server` key is not
+in this environment.** It is not in `.env.local`, which holds exactly one `HELIUS_API_KEY` (the
+`ce8b…1fc8` one above), and it is not in Vercel either. Nothing else about the migration is
+open.
 
-### Theirs
+**The order matters and it is the owner's, not a preference.** Create first, prove it delivers,
+delete second — a delete-then-create leaves a window with no webhook at all, and every swap in
+that window is lost for good (spec §5.1: Helius retries three times and drops the event).
+
+    1. HELIUS_API_KEY=<kolscanhispano-server>  npx tsx scripts/sync-helius-webhook.ts
+       The stored state names b5739db9, which that key cannot read, so the sync sees a webhook
+       that is gone and CREATES a new one with the three wallets. That behaviour is not
+       incidental — it is the vanished-webhook case of §4, and it is what makes this migration
+       one command instead of a hand-edited setting row.
+    2. Confirm it delivers: a real trade from one of the three, or watch `raw_tx` for a row
+       whose delivery the new webhook can be shown to have caused.
+    3. Only then delete b5739db9, with the OLD key.
+    4. Then the old key leaves `.env.local`, and this section keeps one project.
+
+**Two webhooks live at once is safe for exactly as long as it takes.** `raw_tx`'s primary key is
+`(chain, signature_hmac)` and `storeRawTxBatch` inserts `ON CONFLICT ... DO NOTHING` — verified
+against production's own `pg_constraint` on 2026-09-02, not against the migration file — so the
+same transaction delivered by both is one row. What doubles is the delivery count, not the data.
+
+### The sync does not run in production, and that is the more urgent half
+
+**Vercel's production environment has no `HELIUS_API_KEY` at all** — checked 2026-09-02:
+`ADMIN_TOKEN`, `HELIUS_WEBHOOK_SECRET`, `WALLET_HMAC_KEY`, `WALLET_ENC_KEY` and `DATABASE_URL`,
+and nothing else. So `syncHeliusWebhook` returns `no_api_key` on every approval and every
+create made through the deployed admin: **the address set is reconciled only when somebody runs
+the script from a machine that holds a key.**
+
+Approving a KOL in production today therefore does *not* start watching their wallets. Nothing
+warns; the approval succeeds and the log line goes to a serverless log nobody reads.
+
+Adding `kolscanhispano-server` to Vercel closes this and the migration at once, and it is the
+one action that should happen before the next approval.
+
+### The other one
 
     webhookID   not visible from this environment
     URL         https://kolscanhispano.fun/api/webhooks/helius
