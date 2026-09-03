@@ -1,0 +1,4 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "base=\"$VERCEL_GIT_PREVIOUS_SHA\"; if [ -n \"$base\" ] && git cat-file -e \"$base^{commit}\" 2>/dev/null; then git diff --quiet \"$base\" HEAD -- ':(exclude)docs' ':(exclude).claude' ':(exclude,glob)*.md'; else exit 1; fi"
+}
