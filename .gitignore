@@ -22,3 +22,8 @@ fixtures/helius
 # pulls down.
 .vercel
 .env
+
+# Scratch de sesión: el arranque local contra la rama preview de Neon.
+# Se coló al tracking el 2026-09-04 en un commit de otra sesión (ver CLAUDE.md,
+# "One session per working tree"), que barrió el árbol de trabajo entero.
+.dev.sh

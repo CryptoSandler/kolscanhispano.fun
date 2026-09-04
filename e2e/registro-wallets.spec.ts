@@ -75,8 +75,20 @@ test.describe("the wallet chooser on /registro", () => {
     // `.state-error` and not `getByRole("alert")`: Next injects its own
     // `__next-route-announcer__` with `role="alert"`, so the role alone matches
     // two elements and fails on strict mode rather than on the copy.
+    /*
+      **The message names no chain since 2026-09-04**, and that is the change
+      rather than a rewording. `/registro` offers Solana over Wallet Standard
+      and, with `CHAIN_ROBINHOOD_INGESTION=on`, Robinhood over EIP-6963 — so a
+      sentence saying "ninguna wallet de Solana" was false the moment the second
+      namespace appeared: a reader with MetaMask installed and no Solana wallet
+      would have been told, accurately and uselessly, about the one they do not
+      have.
+
+      What a reader needs here is what to do, not which handshake came back
+      empty, so the copy states the action and the chain stays out of it.
+    */
     await expect(page.locator("p.state-error")).toContainText(
-      "No encontramos ninguna wallet de Solana",
+      "No encontramos ninguna wallet en este navegador",
     );
   });
 

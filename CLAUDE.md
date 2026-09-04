@@ -37,6 +37,39 @@ session thinks it is on is the branch every other session is also on.
 The suite lock in `vitest.globalSetup.ts` only guards the database. Nothing
 guards the files.
 
+**It happened again on 2026-09-04, and the shape was new.** A second session in
+this checkout ran a commit for *its* work — a note about a Robinhood Chain swap
+aggregator, written from `arrival` — and `git add` swept up **fourteen files of
+another session's uncommitted batch** along with it: the EIP-6963 module,
+`/registro`'s split into a server wrapper and a client form, three updated tests
+and two documents. One commit, one message, two sessions' work, and nothing
+anywhere said so. The message described a quarter of what the commit contained.
+
+Two things that made it worse than the 2026-08-26 case. It is **invisible from
+both sides**: the committing session saw a clean tree afterwards and believed it
+had committed its note, and the other session found its own work already
+committed under a subject it had never written. And it swept in `.dev.sh`, a
+scratch file, which became tracked — a session's local scaffolding shipped into
+the repository because it happened to be in the directory.
+
+**So from 2026-09-04 this repository is worktree-per-session, not by convention
+but by default.** `main` lives in `~/proyectos/kolscanhispano-main` and every
+batch gets its own:
+
+    git -C ~/proyectos/kolscanhispano-main worktree add ~/proyectos/kh-<tanda> -b <rama>
+    # ...work, gates, commit, push...
+    git -C ~/proyectos/kolscanhispano-main worktree remove ~/proyectos/kh-<tanda>
+
+A worktree has its own index and its own `HEAD`, so `git add -A` in one cannot
+reach the other's files. That is the property the convention was asking for and
+never enforced.
+
+**And a commit that is already there is not yours to rewrite.** `cierre.md` says
+it for a foreign commit at the tip of your branch, and it holds when the mixing
+runs the other way: keep it, push it as it stands, and add a commit of your own
+that says what it really contains. Rewriting is how the other session's work
+disappears without anyone deciding that it should.
+
 ## One Playwright run at a time, machine-wide
 
 `npm run test:e2e` takes an exclusive lockfile at `/tmp/claude-playwright-e2e.lock` before
