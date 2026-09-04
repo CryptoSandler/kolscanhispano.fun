@@ -43,8 +43,30 @@ export const PROOF_DOMAIN = "kolscanhispano.fun";
  */
 export const PROOF_VALIDITY_MS = 5 * 60_000;
 
-/** Spec §6: the two things a signature can be for. */
-export type ProofAction = "alta de perfil" | "agregar wallet";
+/**
+ * What a signature is for.
+ *
+ * Spec §6 defined the first two, whose subject is always the signer's own
+ * wallet. The six that follow are a cabal leader's, added with
+ * `docs/round-cabals.md` §4's decision that there is **no KOL session** — every
+ * one of them is proved per request, over a nonce this server issued.
+ *
+ * They stay a closed union rather than becoming a free string: the action is
+ * compared, and a comparison against something a caller can invent is not a
+ * comparison. What varies per request is the {@link ProofFields.subject}.
+ */
+export const PROOF_ACTIONS = [
+  "alta de perfil",
+  "agregar wallet",
+  "crear cabal",
+  "pedir entrar al cabal",
+  "aceptar solicitud",
+  "rechazar solicitud",
+  "expulsar del cabal",
+  "transferir el cabal",
+] as const;
+
+export type ProofAction = (typeof PROOF_ACTIONS)[number];
 
 export type ProofFields = {
   domain: string;
@@ -52,6 +74,22 @@ export type ProofFields = {
   address: string;
   chain: Chain;
   action: ProofAction;
+  /**
+   * **What the action is about**, when the action alone does not say.
+   *
+   * `aceptar solicitud` names a verb and no object: the same signature would
+   * satisfy the verifier for every pending request in a cabal. The subject is
+   * bound to the nonce server-side (`migrations/017`) so a proof cannot be
+   * redirected, and it is rendered into the message so the person reading their
+   * wallet prompt can see **whom** they are admitting.
+   *
+   * A KOL's `@handle` or a cabal's tag — never an address, on any surface,
+   * and never a database id, which would tell the signer nothing.
+   *
+   * `undefined` for the two `/registro` actions: their subject is the wallet
+   * doing the signing, and it is already on the line above.
+   */
+  subject?: string;
   /** Server-issued, single-use. Hex, 16–64 characters. */
   nonce: string;
   /** ISO 8601, absolute. */
@@ -93,6 +131,10 @@ export function proofMessage(fields: ProofFields): string {
     `Wallet: ${fields.address}`,
     `Cadena: ${caip2(fields.chain)}`,
     `Acción: ${fields.action}`,
+    // Only when there is one, so the two `/registro` messages are byte-for-byte
+    // what they were before this line existed: every signature already issued
+    // against them still verifies.
+    ...(fields.subject === undefined ? [] : [`Sobre: ${fields.subject}`]),
     `Nonce: ${fields.nonce}`,
     `Expira: ${fields.expiresAt}`,
   ].join("\n");

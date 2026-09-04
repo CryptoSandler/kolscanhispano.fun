@@ -32,13 +32,22 @@ export async function issueNonce(
   address: string,
   chain: Chain,
   action: ProofAction,
+  /**
+   * What the action is about, for the actions where the verb alone does not
+   * say — a cabal's tag or a KOL's `@handle`. See `migrations/017`: it is
+   * stored here so a signature cannot later be pointed at a different target,
+   * because the server never asks the client what the target was.
+   *
+   * `undefined` for `/registro`'s two actions, whose subject is the signer.
+   */
+  subject?: string,
 ): Promise<IssuedNonce> {
   const nonce = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + PROOF_VALIDITY_MS).toISOString();
   await query(
-    `INSERT INTO wallet_proof_nonce (nonce, address_hmac, chain, action, expires_at)
-     VALUES ($1, $2, $3, $4, $5::timestamptz)`,
-    [nonce, blindIndex(address, "address"), chain, action, expiresAt],
+    `INSERT INTO wallet_proof_nonce (nonce, address_hmac, chain, action, subject, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6::timestamptz)`,
+    [nonce, blindIndex(address, "address"), chain, action, subject ?? null, expiresAt],
   );
   return { nonce, expiresAt };
 }
@@ -71,27 +80,40 @@ export async function consumeNonce(
   address: string,
   chain: Chain,
   action: ProofAction,
+  /**
+   * The subject the caller believes it is acting on. **Compared, never read**:
+   * a mismatch is `wrong_nonce`, indistinguishable from a nonce that was never
+   * issued, so a caller cannot probe which subject a nonce belongs to.
+   *
+   * `IS NOT DISTINCT FROM` rather than `=`, so the `/registro` actions — whose
+   * subject is `NULL` on both sides — still match. With `=`, every existing
+   * proof would fail the moment this column existed.
+   */
+  subject?: string,
 ): Promise<NonceClaim> {
   const hmac = blindIndex(address, "address");
   const claimed = await query<{ expires_at: Date }>(
     `UPDATE wallet_proof_nonce
         SET used_at = now()
       WHERE nonce = $1 AND address_hmac = $2 AND chain = $3 AND action = $4
+        AND subject IS NOT DISTINCT FROM $5
         AND used_at IS NULL AND expires_at > now()
       RETURNING expires_at`,
-    [nonce, hmac, chain, action],
+    [nonce, hmac, chain, action, subject ?? null],
   );
   if (claimed[0]) return { ok: true, expiresAt: claimed[0].expires_at.toISOString() };
 
   const existing = await query<{ used_at: Date | null; expired: boolean }>(
     `SELECT used_at, expires_at <= now() AS expired
        FROM wallet_proof_nonce
-      WHERE nonce = $1 AND address_hmac = $2 AND chain = $3 AND action = $4`,
-    [nonce, hmac, chain, action],
+      WHERE nonce = $1 AND address_hmac = $2 AND chain = $3 AND action = $4
+        AND subject IS NOT DISTINCT FROM $5`,
+    [nonce, hmac, chain, action, subject ?? null],
   );
-  // No row at all: never issued, issued to another wallet, or another action.
-  // All three are one answer on purpose -- telling them apart would confirm to
-  // a caller that some *other* wallet holds a given nonce.
+  // No row at all: never issued, issued to another wallet, another action, or
+  // another subject. All four are one answer on purpose -- telling them apart
+  // would confirm to a caller that some *other* wallet holds a given nonce, or
+  // that a given subject has a proof outstanding.
   if (!existing[0]) return { ok: false, reason: "wrong_nonce" };
   if (existing[0].used_at !== null) return { ok: false, reason: "nonce_used" };
   return { ok: false, reason: "expired" };

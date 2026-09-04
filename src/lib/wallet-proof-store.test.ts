@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { query } from "./db";
 import { inventAddress, inventEvmAddress } from "./ids";
 import { consumeNonce, issueNonce, pruneNonces } from "./wallet-proof-store";
+import { PROOF_ACTIONS } from "./wallet-proof";
 
 /**
  * The half of `docs/wallet-proof.md` §3 that cannot be tested purely: cases 5
@@ -150,5 +151,138 @@ describe("pruneNonces", () => {
     await issueNonce(address, "solana", "alta de perfil");
     await query("UPDATE wallet_proof_nonce SET expires_at = now() - interval '1 minute'");
     expect(await pruneNonces()).toBe(0);
+  });
+});
+
+
+/**
+ * The subject binding — `migrations/017`, and the hole it closes.
+ *
+ * A leader signing `aceptar solicitud` authorises *an* acceptance. Without a
+ * subject on the nonce, the same proof satisfies the verifier for every pending
+ * request in the cabal: one handler bug or one race between two open tabs and
+ * the signature meant for Ana admits Beto, recorded in `audit_log` as the
+ * leader's own decision, because cryptographically it is.
+ *
+ * These are the negative cases that make that impossible, written the way
+ * `docs/wallet-proof.md` §3 asks — named before the handlers exist.
+ */
+describe("the subject a nonce is bound to", () => {
+  it("refuses a nonce claimed for a different subject", async () => {
+    const address = inventAddress();
+    const { nonce } = await issueNonce(address, "solana", "aceptar solicitud", "@ana");
+
+    // The same wallet, the same action, the same live nonce — another target.
+    const wrong = await consumeNonce(nonce, address, "solana", "aceptar solicitud", "@beto");
+    expect(wrong).toEqual({ ok: false, reason: "wrong_nonce" });
+
+    // And it is still spendable for the subject it was issued for: a refused
+    // claim must not burn somebody else's nonce.
+    const right = await consumeNonce(nonce, address, "solana", "aceptar solicitud", "@ana");
+    expect(right.ok).toBe(true);
+  });
+
+  /**
+   * `wrong_nonce` and not a distinct reason: a caller must not be able to probe
+   * which subject a nonce belongs to by reading the refusal. Same rule the
+   * wrong-wallet and wrong-action cases already follow.
+   */
+  it("says the same thing for a wrong subject as for a nonce that never existed", async () => {
+    const address = inventAddress();
+    const { nonce } = await issueNonce(address, "solana", "expulsar del cabal", "@ana");
+
+    const wrongSubject = await consumeNonce(nonce, address, "solana", "expulsar del cabal", "@beto");
+    const neverIssued = await consumeNonce(
+      "00000000000000000000000000000000",
+      address,
+      "solana",
+      "expulsar del cabal",
+      "@ana",
+    );
+    expect(wrongSubject).toEqual(neverIssued);
+  });
+
+  it("refuses a subjectless claim on a nonce issued with one, and the reverse", async () => {
+    const address = inventAddress();
+    const conSujeto = await issueNonce(address, "solana", "aceptar solicitud", "@ana");
+    expect(await consumeNonce(conSujeto.nonce, address, "solana", "aceptar solicitud")).toEqual({
+      ok: false,
+      reason: "wrong_nonce",
+    });
+
+    const sinSujeto = await issueNonce(address, "solana", "aceptar solicitud");
+    expect(
+      await consumeNonce(sinSujeto.nonce, address, "solana", "aceptar solicitud", "@ana"),
+    ).toEqual({ ok: false, reason: "wrong_nonce" });
+  });
+
+  /**
+   * The compatibility half: `/registro`'s two actions carry no subject on
+   * either side, and `IS NOT DISTINCT FROM` is what keeps `NULL = NULL` from
+   * failing every proof the moment this column existed.
+   */
+  it("still accepts the registration actions, which have no subject", async () => {
+    const address = inventAddress();
+    const { nonce } = await issueNonce(address, "solana", "alta de perfil");
+    expect((await consumeNonce(nonce, address, "solana", "alta de perfil")).ok).toBe(true);
+  });
+});
+
+
+/**
+ * **The union and the CHECK are one rule written twice, and this is the test
+ * that notices when they stop agreeing.**
+ *
+ * Adding an action is **two changes**: the list in `wallet-proof.ts` and the
+ * constraint in a migration. Doing only the first was tried on 2026-09-04 and
+ * Postgres refused the insert — the right failure, but at the first *issue* of
+ * a cabal nonce rather than at the change. Doing only the second is worse and
+ * silent: the column would accept a value nothing in the code can produce or
+ * compare, and the drift would sit there until somebody read the schema.
+ *
+ * So the comparison runs **both ways**, against the catalogue rather than
+ * against a literal in this file — a literal would be a third copy of the same
+ * list, which is the thing being guarded against. `DECISIONES.md` carries the
+ * two-changes rule and points here.
+ */
+describe("the action list in the code and the one in the schema", () => {
+  /** The values inside `CHECK (action IN ('a','b',...))`, from `pg_constraint`. */
+  async function schemaActions(): Promise<string[]> {
+    const [row] = await query<{ def: string }>(
+      `SELECT pg_get_constraintdef(c.oid) AS def
+         FROM pg_constraint c
+         JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'wallet_proof_nonce'
+          AND c.conname = 'wallet_proof_nonce_action_check'`,
+    );
+    if (!row) throw new Error("the action CHECK is not in the catalogue at all");
+    return [...row.def.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+  }
+
+  it("is the same set, with nothing extra on either side", async () => {
+    const schema = (await schemaActions()).sort();
+    const code: string[] = [...PROOF_ACTIONS].sort();
+
+    // Both directions, named separately so a failure says which way it drifted.
+    expect(
+      code.filter((a) => !schema.includes(a)),
+      "in wallet-proof.ts but not in the CHECK — the migration is missing",
+    ).toEqual([]);
+    expect(
+      schema.filter((a) => !code.includes(a)),
+      "in the CHECK but not in wallet-proof.ts — a value nothing can verify",
+    ).toEqual([]);
+    expect(schema).toEqual(code);
+  });
+
+  /**
+   * Proof the parse above is reading something real: if the regex stopped
+   * matching, both filters would be empty against an empty list and the case
+   * would pass for the wrong reason.
+   */
+  it("reads a non-trivial list out of the catalogue", async () => {
+    const schema = await schemaActions();
+    expect(schema.length).toBeGreaterThanOrEqual(8);
+    expect(schema).toContain("alta de perfil");
   });
 });

@@ -385,3 +385,27 @@ toman el descubrimiento y la firma; el envío no cruza.
 una fila hace una pregunta con una única respuesta —el último Don't de `DESIGN.md`— y le
 cobra un click a cada lector para que la minoría con dos pueda elegir. Lo que decide es
 cuántas se registraron, no nada que el código sepa de ellas.
+
+## Agregar una acción firmable son DOS cambios — 2026-09-04
+
+Una acción de `ProofAction` vive en dos lugares y los dos son obligatorios:
+
+1. **`PROOF_ACTIONS` en `src/lib/wallet-proof.ts`**, de donde sale el tipo. Es lo que el
+   verificador compara y lo que el mensaje firmado imprime en la línea `Acción:`.
+2. **El `CHECK` de `wallet_proof_nonce.action`**, en una migración. Es lo que decide si la fila
+   del nonce entra.
+
+**Los dos olvidos fallan distinto, y por eso hace falta el test.** Ampliar sólo el código produjo
+`violates check constraint wallet_proof_nonce_action_check` la primera vez que se emitió un nonce
+de cabal — un fallo correcto, pero en el momento equivocado: al *usar* la acción y no al agregarla.
+Ampliar sólo la migración es peor y es silencioso — la columna aceptaría un valor que nada en el
+código puede producir ni comparar, y la deriva se quedaría ahí hasta que alguien leyera el esquema.
+
+**Quien lo recuerda es `wallet-proof-store.test.ts`**, en el bloque *"the action list in the code
+and the one in the schema"*: lee el `CHECK` del catálogo (`pg_get_constraintdef` sobre
+`pg_constraint`) y lo compara con `PROOF_ACTIONS` **en las dos direcciones**, con un mensaje que
+dice hacia qué lado derivó. Contra el catálogo y no contra un literal en el test, porque un literal
+sería una tercera copia de la misma lista — exactamente lo que se está tratando de evitar.
+
+Verificado que muerde: agregando una acción sólo en el código, falla con *"in wallet-proof.ts but
+not in the CHECK — the migration is missing"*.

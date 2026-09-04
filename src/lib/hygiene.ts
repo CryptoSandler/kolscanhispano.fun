@@ -65,6 +65,13 @@ export const HYGIENE_SKIP = ["src/lib/hygiene.ts", "package-lock.json"];
 const ALLOWED_CONTRACTS = [
   "0x8366a39cc670b4001a1121b8f6a443a643e40951", // Uniswap V4 PoolManager, Robinhood Chain 4663
   "0x8876789976dEcBfCbBbe364623C63652db8C0904", // UniversalRouter (Robinhood fork), chain 4663
+  // Third-party swap aggregator on the same chain, documented in
+  // `docs/multichain.md`: 761+ distinct users in seven days, and the reason
+  // behavioural analysis has to control for it — everything routed through it
+  // shares a signature. Probed 2026-09-04 before being listed here: 752 bytes
+  // of bytecode and nonce 2, so it is a deployed contract and not somebody's
+  // wallet, which is the only distinction this list is about.
+  "0x65050a9b7e5075a2ba5ced7b1b64ee66262c40dc",
 ];
 
 const ALLOWED_CONTRACT_RE = new RegExp(

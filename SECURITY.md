@@ -39,6 +39,17 @@ Stated plainly, because a control that oversells itself is worse than none:
   already running our code.
 - **A malicious or coerced administrator.** Reveals are logged, not prevented. The audit log is
   evidence after the fact, not a control.
+
+  **And the two things that protect the audit log are tripwires, not guarantees.** `audit_log` is
+  append-only by trigger (`migrations/018`), and every row commits to the hash of the one before
+  it. Both stop the accident and the casual edit — a console session, a migration that "fixes" a
+  row, a handler that meant to update — and neither stops the operator: the same owner the trigger
+  refuses can `DROP TRIGGER` and then delete, and whoever can write rows can recompute the chain
+  from the point they changed. What survives an operator who decides to rewrite the account is the
+  **signature** stored beside each entry (`audit_signature`): it was produced by a KOL's wallet
+  over a single-use nonce, so nobody with database access can forge one or move it to a different
+  action. That is the only part of this account that does not rest on trusting us — and it covers
+  only the entries a KOL signed, never the admin's own, which are authorised by a token we hold.
 - **Inherent chain exposure.** Amount, mint and timestamp are enough to locate a transaction in any
   public explorer, and from there the signer. "Wallets ocultas" means *we do not publish the
   address*. It is not anonymity, and both the KOL page and the terms say so in those words. Anyone
