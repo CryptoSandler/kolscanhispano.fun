@@ -129,10 +129,44 @@ decision. If the goal is cabals *working* this week, the lazier answer is the on
 shipping: Fede creates them from `/admin`, and this round gets reopened when there are enough
 KOLs that the admin is the bottleneck.
 
-## 4. Open, and the owner's
+## 4. Closed by the owner, 2026-09-04
 
-- **Sessions: yes or no?** Signature-per-action keeps the written decision and costs prompts. A
-  cookie is comfortable and reverses it. This is the decision the whole batch hangs on.
-- **A leader who loses the wallet** — is the admin the recovery path, and does that survive the
-  "not editable by admin" carve-out?
-- **Tag squatting**: releasable, reclaimable, or permanent?
+The three questions this round left open were answered, and all three the conservative way.
+
+**No KOL session. Signature per action.** The written decision in
+`src/app/api/registro/route.ts` — *"There is no session, deliberately"* — stands, and every
+mutating action carries its own proof over a server-issued nonce, exactly as `/registro` already
+does. The cost is a wallet prompt per decision, and the owner's reasoning is that a leader takes
+few actions a day; **if it turns out to chafe, it gets revisited with data rather than with a
+guess.** That is the sentence that makes this a decision and not an assumption: the thing that
+would change it is named, and it is a measurement.
+
+The consequence worth stating: this batch adds a second authorization principal **without**
+adding a session, so nothing here can ever be replayed from a cookie, and there is no session
+fixation, no CSRF surface and no logout to get wrong. The whole class is absent rather than
+defended.
+
+**A leader who loses the wallet: transfer only if there is a co-leader.** Otherwise the cabal is
+**orphaned** — it keeps existing, keeps its members and keeps ranking, and only the admin may
+reassign it, through `audit_log` with a stated reason. Orphaned is a real state and not an error:
+the alternative is a recovery path that lets anyone who can talk to an operator take over a group
+they do not control.
+
+This also settles the shape of the carve-out. *"No cabal created by a leader is editable by
+admin"* has exactly two exceptions and both are named: a takedown, and reassigning an orphan.
+Neither is published as a promise — `CLAUDE.md`, *Decisions with a door* — and both leave a row
+in `audit_log` naming the actor, the target and the reason.
+
+**Tags: released 30 days after the cabal dissolves, never reclaimed while in use.** So a tag is
+first-come and permanent for as long as the group exists, and the namespace does not fill up with
+abandoned three-letter words. The 30 days is a cooling-off: a tag freed the instant a group
+dissolves is a tag someone can snipe the moment a rival disbands, and a group that dissolves by
+mistake has a month to come back to its own name.
+
+**What that leaves for the build**, all of it now decided:
+
+- `leader_kol_id`, `color` limited to the four measured tints, `x_handle`, `created_by`.
+- `cabal_request`, and a `co_leader_kol_id` — needed by the transfer rule above, so it is not a
+  batch-B nicety any more.
+- A `dissolved_at` on `cabal`, because the tag's 30 days are counted from it.
+- Every mutation signed, every mutation in `audit_log` with provenance.

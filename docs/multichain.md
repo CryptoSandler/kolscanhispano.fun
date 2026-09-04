@@ -361,3 +361,78 @@ decoders cover 85%.
    against mainnet reads. There is no official faucet; third-party ones are listed in §4.2
    and untested. Not a blocker — the read-only mainnet replay covers more.
 5. Nothing else. No private key, no signing key, no wallet is needed by any part of this.
+
+## Las direcciones de Robinhood Chain, una por fila — 2026-09-04
+
+Sondeadas contra la cadena por RPC (`eth_chainId` devolvió `0x1237` = **4663**, que confirma el
+id que `chain.ts` declara). Lo probado y lo no probado van separados a propósito: una fila que
+diga qué es un contrato sin fuente verificada es exactamente lo que `CLAUDE.md` prohíbe escribir.
+
+| address | qué es | probado por RPC | fuente |
+|---|---|---|---|
+| `0x8366a39cc670b4001a1121b8f6a443a643e40951` | Uniswap V4 **PoolManager** | 24.009 bytes de bytecode; responde `owner()`; saldo 12.086 ETH; nonce 1 | **pendiente de explorador.** El nombre viene del comentario en `hygiene.ts`, no de una verificación |
+| `0x8876789976dEcBfCbBbe364623C63652db8C0904` | **UniversalRouter** (fork de Robinhood) | 24.546 bytes; **responde `poolManager()`**, que lo ata al de arriba; saldo 0; nonce 1 | **pendiente de explorador**, pero el `poolManager()` es evidencia real de la relación |
+
+**Las tres "direcciones" de smartmoney no son direcciones.** Son hashes de topic de evento, de
+32 bytes:
+
+| valor completo (64 hex) | qué es |
+|---|---|
+| `0xec36bf57…cbfc455` | `CURVE_BUY`, topic de evento (`smartmoney/src/robinhood/rpc.ts:11`) |
+| `0x8113d738…151f59df` | `CURVE_SELL`, topic de evento (`rpc.ts:12`) |
+| `0x8d4aad49…` | `TOKEN_LAUNCHED`, topic de evento (`rpc.ts:13`) |
+
+Los tres devuelven **0 bytes de bytecode, saldo 0 y nonce 0** en la cadena: no son cuentas.
+
+**Cómo se produjo el error, porque importa más que el error.** `docs/round-robinhood.md` §2 dice
+*"tres direcciones, ninguna en la allowlist, y copiar ese módulo rompe la suite en el import"*.
+Eso salió de un `grep -o "0x[a-fA-F0-9]\{40\}"` sobre el repo ajeno, que matcheó los **primeros 40
+caracteres de un hash de 64** y los presentó como direcciones. El sondeo por RPC lo deshizo en un
+comando: un contrato tiene bytecode, un topic no.
+
+**El guardián nunca tuvo ese defecto.** `EVM_IDENTIFIER` exige el prefijo `0x`, longitudes
+**exactas** de 40 o 64 y frontera a la derecha, así que ve un topic como un identificador de 64 y
+no como una address de 40 seguida de basura. Comprobado: marca los dos topics como identificadores
+de 64 caracteres, **ninguno** como address, y no marca los dos contratos allowlisteados.
+
+**Lo que eso cambia para la tanda (3).** El bloqueo que la ronda describía —"cinco direcciones que
+establecer antes de poder copiar"— no existe: son **dos** contratos, ya allowlisteados, más tres
+constantes de evento. Pero los topics **sí** los marca la rama de 64, así que copiar ese módulo
+necesita allowlistearlos **como topics de evento y no como contratos** — una lista distinta, con
+su propio comentario, porque un topic público y una address de wallet no son la misma clase de
+cosa aunque compartan la forma.
+
+**Lo que sigue pendiente y no se escribe como cierto:** qué son exactamente los dos contratos según
+un explorador de Robinhood Chain o la documentación de PONS. El `poolManager()` del segundo es
+evidencia fuerte de que el par es PoolManager + router de Uniswap V4, y no es una verificación.
+
+---
+
+## El agregador dominante de Robinhood Chain (2026-09-04, desde arrival)
+
+**`0x65050a9b7e5075a2ba5ced7b1b64ee66262c40dc`** — un **agregador de swaps de terceros**, activo
+desde el **2026-07-03**, con **≥761 usuarios distintos en 7 días** y una tarifa fija de
+**0,014444444444444444 ETH por operación**.
+
+Su método dominante es `0x4d819a2a` =
+`swap((uint8,address,address,address,uint24,int24,address,bytes,address,bytes32)[],address,uint256,uint256,uint256)`
+— rutas multi-salto con PoolKey estilo Uniswap v4. **No se le pudo poner nombre comercial**: 752
+bytes de bytecode, sin `name()`, y no se consultó el explorador de Robinhood por D2.
+
+### Por qué importa acá
+
+**Todo lo que pasa por ese router se parece entre sí.** Tipo de transacción, priority fee, gas limit
+y selector son del programa, no de quien opera. Cualquier análisis de comportamiento —«estas dos
+wallets se configuran igual, deben ser la misma persona»— **está confundido si los sujetos usan el
+mismo agregador**, y en esta cadena eso es lo más probable.
+
+**La regla que sale de esto:** cuando dos sujetos comparten herramienta, el control son **los otros
+usuarios de esa herramienta**, no wallets al azar. Medido en un caso real: contra wallets al azar,
+dos grupos compartían 3 de 5 parámetros de firma; contra usuarios del mismo router, **0 de 5**.
+
+### Y una advertencia para cualquier indexación de PONS
+
+En la ingesta de arrival, **el 37,4% de las operaciones quedaron atribuidas al router** y no a sus
+usuarios: es la «wallet» número uno del leaderboard por un factor de cuatro, y son cientos de
+personas en una fila. Quien indexe PONS por eventos de curva **tiene que decodificar el `recipient`
+del swap** o va a construir un ranking con un primer puesto que no existe.

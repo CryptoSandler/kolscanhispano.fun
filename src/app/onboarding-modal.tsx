@@ -45,7 +45,7 @@ const CHAIN_LABEL: Record<Chain, string> = {
  * also gets `e` before a word starting in `i`- right, which a hand-rolled join
  * would not until somebody noticed.
  */
-function listChains(chains: Chain[]): string {
+function listChains(chains: readonly Chain[]): string {
   return new Intl.ListFormat("es", { style: "long", type: "conjunction" }).format(
     chains.map((chain) => CHAIN_LABEL[chain]),
   );
@@ -157,7 +157,7 @@ export function OnboardingModal({
    * A parameter with a default rather than a call inside the component, so a
    * test can state each combination without touching `process.env`.
    */
-  available?: Chain[];
+  available?: readonly Chain[];
   onSubmit?: (result: { handle: string; publicWalletIds: string[] }) => void;
 }) {
   /**

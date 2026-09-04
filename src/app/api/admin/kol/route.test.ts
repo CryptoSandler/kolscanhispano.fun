@@ -113,7 +113,13 @@ describe("2-6. what a wallet has to be", () => {
       request({ handle: "ejemplo", wallets: [{ address: inventEvmAddress(), chain: "bnb" }] }),
     );
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "chain_not_active", active: ["solana"] });
+    // The list is the environment's, so it grew when Robinhood was switched on
+    // for `/registro` (2026-09-04). `bnb` is still off, which is what this case
+    // is about: the refusal names what *is* live rather than only saying no.
+    expect(await response.json()).toEqual({
+      error: "chain_not_active",
+      active: ["solana", "robinhood"],
+    });
   });
 
   it("3b. tells an unknown chain apart from an inactive one", async () => {

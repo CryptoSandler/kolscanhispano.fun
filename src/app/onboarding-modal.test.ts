@@ -134,12 +134,18 @@ describe("¡Casi listo!", () => {
  * flag until that flag is on, and the screen offers only what it can index.
  */
 describe("only the chains with live ingestion", () => {
-  it("names Solana, and only Solana, on today's environment", () => {
-    // No ingestion flag is set anywhere in this repository, so this is what the
-    // screen actually says -- asserted against the real default rather than a
-    // list passed in.
+  it("names the chains today's environment actually offers", () => {
+    /*
+      Asserted against the real default rather than a list passed in, and it
+      **changed on 2026-09-04**: `CHAIN_ROBINHOOD_INGESTION=on` since the
+      registration batch, so the sentence names two chains where it named one.
+
+      The two that are still off stay out, which is the half of this case that
+      does not move: a chain with no flag is not mentioned to a reader, because
+      naming it would promise a date nobody has.
+    */
     const html = renderToStaticMarkup(createElement(OnboardingModal, { wallets: [solana] }));
-    expect(html).toContain("Por ahora indexamos Solana.");
+    expect(html).toContain("Por ahora indexamos Solana y Robinhood.");
     expect(html).not.toContain("Ethereum");
     expect(html).not.toContain("BNB Chain");
   });

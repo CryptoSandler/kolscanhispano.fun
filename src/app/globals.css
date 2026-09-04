@@ -1826,6 +1826,22 @@ a.row-age:hover {
   font-weight: 700;
   text-transform: uppercase;
 }
+/* The chain a row registers on, as the mould's own chain chip: 10px, `2px 4px`,
+   a 4px radius and a tinted ground — measured on its `EVM` and `SOL` chips at
+   1440 on 2026-09-03. **It names a chain and never an address**, which is the
+   whole difference between copying their chip and copying their row. */
+.wallet-choice-chain {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--brand-hispano);
+  background: color-mix(in srgb, var(--brand-hispano) 18%, transparent);
+}
+
 .wallet-choice-name {
   font-family: var(--font-body);
   font-size: 15px;

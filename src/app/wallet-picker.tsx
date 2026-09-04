@@ -22,13 +22,35 @@ import type { StandardWallet } from "@/lib/wallet-standard";
  * path. A wallet with no icon gets its initial, the same fallback the avatar
  * takes.
  */
+/**
+ * What the chooser needs from a wallet: a name to show and a chain to label it
+ * with. Deliberately structural rather than a union of the two wallet types —
+ * this component has no business knowing which handshake found a row.
+ */
+/** The chains a row may name, spelled for a reader. `chain.ts` is the source. */
+const CHAIN_LABEL: Record<string, string> = {
+  solana: "Solana",
+  robinhood: "Robinhood",
+  bnb: "BNB",
+  ethereum: "Ethereum",
+};
+
+export type PickableWallet = { name: string; chain: string; icon?: string };
+
 export function WalletPicker({
   wallets,
   onPick,
   onCancel,
 }: {
-  wallets: readonly StandardWallet[];
-  onPick: (wallet: StandardWallet) => void;
+  /**
+   * **A row is a name and a chain, and nothing else.** It was
+   * `readonly StandardWallet[]` while Solana was the only namespace; EIP-6963
+   * wallets arrive through a different handshake and have no `features` map, so
+   * the chooser stopped taking wallets and started taking rows. What it must
+   * never take is anything it could *call* — it picks, the caller connects.
+   */
+  wallets: readonly PickableWallet[];
+  onPick: (wallet: PickableWallet) => void;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -63,7 +85,7 @@ export function WalletPicker({
 
         <ul className="wallet-choices">
           {wallets.map((wallet) => (
-            <li key={wallet.name}>
+            <li key={`${wallet.chain}:${wallet.name}`}>
               <button
                 type="button"
                 className="wallet-choice"
@@ -79,6 +101,12 @@ export function WalletPicker({
                   </span>
                 )}
                 <span className="wallet-choice-name">{wallet.name}</span>
+                {/* The chain, because two namespaces now reach this list and a
+                    reader with MetaMask and Phantom installed is choosing
+                    between two different things, not two brands. Copied from
+                    the mould's chain chip — `docs/copy.md` keeps the term in
+                    English — and it carries no address, ever. */}
+                <span className="wallet-choice-chain">{CHAIN_LABEL[wallet.chain] ?? wallet.chain}</span>
               </button>
             </li>
           ))}

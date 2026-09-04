@@ -141,10 +141,21 @@ describe("activeChains", () => {
   });
 
   it("is what the environment actually says today", () => {
-    // The measured fact, not an assumption: no ingestion flag is set anywhere
-    // in this repository's environment, so Solana is the only live chain and
-    // the modal must offer exactly it.
-    expect(activeChains()).toEqual(["solana"]);
+    /*
+      The measured fact, not an assumption — and it **moved on 2026-09-04**,
+      which is the point of pinning it.
+
+      `CHAIN_ROBINHOOD_INGESTION=on` since the registration batch, so Robinhood
+      is offered in `/registro`'s wallet chooser and named in the onboarding
+      sentence. It was `["solana"]` while no flag was set anywhere.
+
+      **What this does not mean:** Robinhood ingestion is not running.
+      `activeChains()` gates *the offer* — a chain a wallet may be registered on
+      — and `docs/round-robinhood.md` §3 keeps the ingestion itself behind a
+      different condition: a real EVM wallet existing in the roster. The two are
+      deliberately not the same switch, and this test is about the first.
+    */
+    expect(activeChains()).toEqual(["solana", "robinhood"]);
   });
 });
 
