@@ -120,8 +120,8 @@ describe("12. what a registration leaves", () => {
     // surface consulting only `is_public` would carry this KOL. Only the status
     // gate can stop it.
     const [board, detail, feed] = await Promise.all([
-      readLeaderboard({ window: "diario" }),
-      readKolDetail({ slug: "invisible", window: "diario" }),
+      readLeaderboard({ window: "1d" }),
+      readKolDetail({ slug: "invisible", window: "1d" }),
       readFeedPage(),
     ]);
     expect(board.entries).toHaveLength(0);
@@ -136,7 +136,7 @@ describe("12. what a registration leaves", () => {
       { params: Promise.resolve({ id: kolId }) },
     );
     expect(approved.status).toBe(200);
-    const after = await readLeaderboard({ window: "diario" });
+    const after = await readLeaderboard({ window: "1d" });
     expect(after.entries.map((e) => e.kol.slug)).toEqual(["invisible"]);
   });
 
@@ -259,7 +259,7 @@ describe("the tweet, over HTTP", () => {
     expect(kol.status).toBe("pending");
     expect(kol.tweet_verified_at).not.toBeNull();
     expect(kol.tweet_url).toBe("https://x.com/ejemplo/status/123");
-    expect((await readLeaderboard({ window: "diario" })).entries).toHaveLength(0);
+    expect((await readLeaderboard({ window: "1d" })).entries).toHaveLength(0);
   });
 
   it("refuses a tweet by another account, and marks nothing", async () => {

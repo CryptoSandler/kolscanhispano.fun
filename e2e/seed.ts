@@ -128,6 +128,46 @@ export async function seedLeaderboard(): Promise<void> {
       [kolId, today, SOL[index], USD[index], WINS[index], LOSSES[index]],
     );
 
+    /*
+      **And the same figure as a realized sell**, which is where the ranking
+      reads it from since 2026-09-03.
+
+      Every window is rolling now and a day bucket cannot be cut at an arbitrary
+      hour, so `leaderboard.ts`, `kol.ts` and `cabals.ts` all sum
+      `trade.realized_sol` — the per-sell amount `migrations/015` records.
+      Seeding only `pnl_daily` left every figure at zero, every surface as its
+      own empty state, and **44 of 74 Playwright cases failing on
+      `toBeVisible()`** — not 44 defects but one, seen from 44 angles.
+
+      `pnl_daily` is still written because the modal's calendar month reads it,
+      and because that is the state a real replay leaves: the same arithmetic
+      feeds both (`migrations/015`).
+
+      **Ten minutes ago, not at a day boundary.** A rolling window ends at the
+      instant the page renders, so a row dated today's midnight sits outside
+      `1D` for most of the day and a row dated later is in the future.
+    */
+    const realizedId = crypto.randomUUID();
+    const realizedSignature = inventSignature();
+    await query(
+      `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, slot, kol_id,
+                          wallet_id, mint, side, token_amount, sol_amount, price_usd, fee_sol,
+                          block_time, realized_sol, realized_usd)
+       VALUES ($1, decode($2,'hex'), decode($3,'hex'), 1, $4, $5, $6, $7, 'sell', 1,
+               $8::numeric, 0.0000071, 0, now() - interval '10 minutes', $8::numeric, $9::numeric)`,
+      [
+        realizedId,
+        blindIndex(realizedSignature, "signature").toString("hex"),
+        encrypt(realizedSignature, aadFor("trade", "signature", realizedId)).toString("hex"),
+        2000 + index,
+        kolId,
+        walletId,
+        mint,
+        SOL[index],
+        USD[index],
+      ],
+    );
+
     if (index < TRADES) {
       // Encrypted the way the parser writes it — AES-GCM under the AAD that
       // binds the value to this row — so the feed decrypts what production

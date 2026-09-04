@@ -149,7 +149,6 @@ import { loadEnvLocal } from "../src/lib/env";
 import { inventAddress, inventSignature } from "../src/lib/ids";
 // The same bounds the leaderboard, the API and the modal filter on (spec §4.9).
 // `windows.ts` imports nothing, so this costs no pool and no driver.
-import { windowBounds } from "../src/lib/windows";
 
 /** Every slug this script writes starts with it. Nothing else is ever touched. */
 const SLUG_PREFIX = "preview-";
@@ -478,17 +477,32 @@ function utcDayStart(instant: number, daysAgo: number): number {
  * happens to run.
  */
 export function placementDays(instant: number): Record<Placement, number> {
-  const now = new Date(instant);
-  const today = utcDayStart(instant, 0);
-  // Whole UTC days, so this is exact rather than rounded: `windowBounds`
-  // returns midnights and a UTC day is always 86,400,000 ms.
-  const daysBack = (from: Date) => (today - from.getTime()) / DAY_MS;
+  // The instant is read once, to say out loud that the answer does not depend
+  // on it: a rolling window is the same seven days on every date, which is the
+  // whole reason this function stopped resolving anything.
+  void instant;
+  /*
+    **Constant since 2026-09-03, and the constancy is the point.**
 
-  return {
-    today: 0,
-    week: daysBack(windowBounds("semanal", now).from),
-    month: daysBack(windowBounds("mensual", now).from),
-  };
+    This used to resolve each name against `windowBounds` at the run instant,
+    because a calendar window *moves*: `Semanal` is one day long on a Monday and
+    seven on a Sunday, so "place an episode inside the week but outside the day"
+    was a different number every day, and the four days that differ — a Monday,
+    a 1st, a Monday that is a 1st, an ordinary midweek day — were what the test
+    beside this function existed to pin.
+
+    A rolling window has no such day. `7D` is always the last seven days, so an
+    episode three days back is inside `7D` and outside `1D` on every date there
+    has ever been. Resolving it against the run instant now returns *fractional*
+    days — `windowBounds("7d").from` carries the current time of day, not a
+    midnight — which is how this surfaced.
+
+    The numbers are chosen away from both edges on purpose: 3 sits between 1 and
+    7 with a day of clearance either side, and 15 between 7 and 30 with a week.
+    A fixture that lands one hour inside a boundary is a fixture that expires the
+    way the calendar one did.
+  */
+  return { today: 0, week: 3, month: 15 };
 }
 
 /**

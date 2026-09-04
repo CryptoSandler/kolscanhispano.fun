@@ -69,10 +69,12 @@ function uiFiles(): string[] {
  * language rule. Comment bodies are stripped first, so a note explaining a
  * regionalism does not fail the check that enforces avoiding it.
  */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/.*$/gm, "$1 ");
+}
+
 function copyWords(source: string): string[] {
-  const withoutComments = source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1 ");
+  const withoutComments = stripComments(source);
   return [...withoutComments.matchAll(WORD)]
     .map((match) => match[0].toLowerCase())
     .filter((word) => VOSEO_SET.has(word));
@@ -244,5 +246,89 @@ describe("the ranked list has one name in the UI", () => {
 
   it("scans a meaningful number of files, so an empty glob cannot pass it", () => {
     expect(copyFiles().length).toBeGreaterThan(20);
+  });
+});
+
+
+/**
+ * # The anglicism list, and the spellings it fixes
+ *
+ * `docs/copy.md`, owner's decision 2026-09-03: the site's **sentences** are
+ * Spanish and its **terms** are English, from an explicit list, rather than
+ * everything being translated into words the audience does not use.
+ *
+ * This reads the list out of that document — the same discipline
+ * `design-tokens.test.ts` applies to the palette and `empty-states.test.ts` to
+ * the two-state copy — so the document is normative and a test carrying its own
+ * copy of the list cannot go quietly out of date.
+ *
+ * **What it can check and what it cannot.** It cannot check that an English word
+ * is on the list before it ships: that needs a Spanish dictionary, and a list of
+ * *banned* English words is always one word behind. What it can check is that a
+ * term the list names is spelled on screen the way the list spells it — so
+ * `Pnl`, `Defi` or `cabales` fail — which is what keeps the list and the screen
+ * from drifting apart once a term is on it. `docs/copy.md` says this in the same
+ * words, so the limitation is documented rather than implied.
+ */
+describe("the anglicisms are the ones docs/copy.md names, spelled its way", () => {
+  const COPY_MD = readFileSync(join(import.meta.dirname, "..", "..", "docs", "copy.md"), "utf8");
+
+  /** The backticked terms on the list's own line. */
+  function allowed(): string[] {
+    const block = COPY_MD.match(/^## The list\n\n([\s\S]*?)\n\n/m)?.[1] ?? "";
+    return [...block.matchAll(/`([^`]+)`/g)].flatMap((m) => m[1].split(" / "));
+  }
+
+  it("reads a list, so an empty parse cannot pass the checks below", () => {
+    const list = allowed();
+    expect(list.length).toBeGreaterThan(10);
+    for (const term of ["Trade", "Cabals", "PnL", "DeFi", "KOL", "wallet".replace("w", "W")]) {
+      expect(list, `docs/copy.md's list should carry ${term}`).toContain(term);
+    }
+  });
+
+  /**
+   * The two that have a wrong spelling a keyboard produces on its own: `PnL`
+   * autocorrects to `Pnl` and `DeFi` to `Defi`, and both are wrong in a way a
+   * reader of this product notices immediately.
+   */
+  it("never writes Pnl or Defi, in any page or component", () => {
+    const offenders: string[] = [];
+    for (const file of uiFiles()) {
+      const text = stripComments(readFileSync(file, "utf8"));
+      for (const [wrong, right] of [
+        ["Pnl", "PnL"],
+        ["PNl", "PnL"],
+        ["Defi", "DeFi"],
+        ["DEFi", "DeFi"],
+      ]) {
+        // Word-bounded, so `PnlCalendar` -- an identifier, not copy -- is not a
+        // finding. The component is named that on purpose; a reader never sees
+        // it, which is the same line the `leaderboard` scan above draws.
+        if (new RegExp(`(?<![A-Za-z])${wrong}(?![A-Za-z])`).test(text)) {
+          offenders.push(`${file.split("/src/").pop()}: ${wrong} should be ${right}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The forced translations the decision replaced, so they cannot come back by
+   * someone "fixing" the English on a surface.
+   *
+   * `Operar` and `En vivo` were the nav's two labels until 2026-09-03. They are
+   * not wrong Spanish — they are the wrong register, which is the thing a guard
+   * has to hold because a reviewer reading one file will not see it.
+   */
+  it("does not translate the terms the community says in English", () => {
+    const offenders: string[] = [];
+    for (const file of uiFiles()) {
+      const text = stripComments(readFileSync(file, "utf8"));
+      for (const forced of [">Operar<", ">En vivo<", "PnL por cadena", "cartera"]) {
+        if (text.includes(forced)) offenders.push(`${file.split("/src/").pop()}: ${forced}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

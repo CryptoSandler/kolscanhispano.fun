@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
+import { LEADERBOARD_FIATS } from "@/lib/leaderboard";
+import { LEADERBOARD_WINDOWS } from "@/lib/windows";
+import { BrandHomeLink } from "./brand-home-link";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { AffiliateSlot } from "./affiliate-slot";
 import { SiteNav } from "./site-nav";
@@ -19,6 +23,50 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   display: "swap",
 });
+
+/**
+ * The brand's contents, in one place because two things render them: the link
+ * that carries the reader's window forward, and the `Suspense` fallback that
+ * stands in for it while a prerendered route hydrates.
+ *
+ * The tile is at the mould's own measure — **40×40**, read from its DOM rather
+ * than estimated from a picture. The brief of 2026-09-03 said "≈64px"; the
+ * measurement is what that batch was told to follow, so it is 40 and this note
+ * is here so the number can be overruled knowingly.
+ *
+ * The glyph is Unicode — nobody's asset, exception (c) — and it is
+ * `aria-hidden`: the wordmark beside it says the name, and a screen reader
+ * announcing "flag of Spain" would add a claim the text does not make.
+ */
+function BrandInner() {
+  return (
+    <>
+      {/* Plain `<img>`, not `next/image`: it is a 19KB PNG rendered at a fixed
+          40×40 in the header of every page, so there is no layout to reserve,
+          no srcset worth generating and no lazy boundary to cross. The lint
+          rule that prefers `next/image` is about content images that vary.
+
+          `aria-hidden` for the same reason the glyph was: the wordmark beside
+          it says the name, and an alt text announcing "flag of Spain" would
+          add a claim the text does not make. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="brand-mark" src="/marca/espana.png" alt="" width={40} height={40} aria-hidden="true" />
+      <span className="wordmark">
+        KOLScan<span className="wordmark-accent"> Hispano</span>
+      </span>
+      <p className="brand-subtitle">Clasificación de traders hispanos</p>
+    </>
+  );
+}
+
+/** The same block as a fixed link, for the `Suspense` fallback. */
+function BrandBlock({ href }: { href: string }) {
+  return (
+    <Link className="brand" href={href}>
+      <BrandInner />
+    </Link>
+  );
+}
 
 export const metadata: Metadata = {
   title: "kolscanhispano.fun",
@@ -73,37 +121,35 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     */
     <html lang="es" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
-        <div className="shell">
-          {/*
+        <div className="topbar-rule">
+          <div className="shell shell-topbar">
+            {/*
             DESIGN.md, Layout: "Header: wordmark and subtitle left, nav centre,
             unit and window controls plus the wallet action right."
           */}
-          <header className="topbar">
-            <div className="brand">
-              {/* **A mark tile beside the wordmark**, which the mould has and we
-                  did not (`docs/parecido-2026-09-02.md` §1). Theirs is a 🇧🇷
-                  flag; ours cannot be — this site serves Spain and Latin
-                  America, so no single flag is honest here, and exception (c)
-                  forbids their file anyway. So: the two letters of the domain,
-                  drawn in the accent on `surface-2`, which is a mark and not a
-                  claim about a country. */}
-              <span className="brand-mark" aria-hidden="true">
-                kh
-              </span>
-              {/* DESIGN.md, Identity: "The wordmark is the domain in Inter 700,
-                  with **`.fun` in the accent** — the dot alone is invisible at
-                  20px, measured rather than assumed." Corrected in `b0f2a43`;
-                  this used to accent the `.` and nothing else. */}
-              <Link className="wordmark" href="/">
-                kolscanhispano<span className="wordmark-accent">.fun</span>
-              </Link>
-              <p className="brand-subtitle">Clasificación de traders hispanos</p>
-            </div>
-
-            <SiteNav />
-
-            <div className="topbar-right">
+            <header className="topbar">
               {/*
+                **The `Suspense` is required, not defensive.** Next 16:
+                *"During production builds, a static page that calls
+                `useSearchParams` from a Client Component must be wrapped in a
+                `Suspense` boundary, otherwise the build fails"*
+                (`node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-search-params.md`).
+                This is the root layout, so it wraps prerendered routes too.
+
+                The fallback is the same block as a plain `/` — the brand
+                renders identically and the link is simply the default window,
+                which is what it did before this component existed.
+              */}
+              <Suspense fallback={<BrandBlock href="/" />}>
+                <BrandHomeLink windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS}>
+                  <BrandInner />
+                </BrandHomeLink>
+              </Suspense>
+
+              <SiteNav />
+
+              <div className="topbar-right">
+                {/*
                 The wallet action's slot. Spec §6 makes `/registro` the only
                 page that ever connects a wallet, and it now exists — so this is
                 a real link, which is what the note that stood here promised
@@ -114,22 +160,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 not work." A label saying `próximamente` over a page that works
                 is the same Don't read backwards.
               */}
-              {/* The bordered pill with a chain glyph, as on the mould. It goes
-                  to `/registro`, never to a transaction — exception (b), which
-                  is what `no-money-path.test.ts` keeps true. The glyph is
-                  U+1F517, Unicode and nobody's asset. */}
-              <a className="registro" href="/registro">
-                <span aria-hidden="true">🔗</span> Entrar al padrón
-              </a>
-              {/*
+                {/* The user pill, at the mould's measure: `brand-hispano` at 20 %,
+                  `radius-md`, 16px.
+
+                  **It shows the connect action, not a session.** The brief
+                  described theirs with an avatar, a handle and a sign-out
+                  icon — that is their own logged-in state. Spec §6 gives this
+                  product no accounts and `/registro` is the only page that
+                  connects anything, so a pill with somebody's avatar in it
+                  would be a session this site cannot have and a control that
+                  does not work. Same shape, honest content. */}
+                <a className="registro" href="/registro">
+                  <span aria-hidden="true">🔗</span> Entrar al padrón
+                </a>
+                {/*
                 Spec §1.9: the affiliate slot is configurable from the admin and
                 empty at launch, where it renders nothing. The admin that
                 configures it is a later task; an empty slot is the correct
                 rendering of its launch state, not a placeholder.
               */}
-              <AffiliateSlot />
-            </div>
-          </header>
+                <AffiliateSlot />
+              </div>
+            </header>
+          </div>
+        </div>
+        <div className="shell">
           <main>{children}</main>
           <p className="footnote">
             Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados pasados no

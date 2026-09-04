@@ -1,6 +1,6 @@
 import { readKolDetail } from "@/lib/kol";
 import { rateLimited } from "@/lib/rate-limit";
-import { parseWindow } from "@/lib/windows";
+import { resolveWindow } from "@/lib/windows";
 
 export const runtime = "nodejs";
 // The window is relative to the current instant and the rows behind it change
@@ -24,6 +24,19 @@ export const dynamic = "force-dynamic";
  * parameter nor the slug is echoed into the response — the shape of what a
  * caller sent is not information this endpoint owes them, and both reach logs.
  *
+ * ## The response's shape, and the one field that changed meaning
+ *
+ * **`series` is the calendar's month since 2026-09-03**, not the window's span,
+ * and `calendar` is the month itself — `{ month, days, sells }`. The reason is
+ * that every window became rolling that day: a rolling window ends at an
+ * instant, so its first and last days are partial, and `pnl_daily` is keyed by
+ * `date`. A "daily series for the last 24 hours" is not a range this schema can
+ * state. `serialize.ts` carries the full note beside the field.
+ *
+ * No field was removed. Dropping `series` was the cleaner shape and it breaks
+ * whoever holds this URL, so the owner kept it and gave it the meaning it can
+ * carry.
+ *
  * A slug that names no approved KOL is a `404` with a body that does not say
  * which of "no such KOL" and "suspended" it was (spec §9). `readKolDetail`
  * makes that one answer rather than two.
@@ -45,10 +58,32 @@ export async function GET(
   if (limited) return limited;
 
   const { slug } = await params;
-  const window = parseWindow(new URL(request.url).searchParams.get("window"));
+  const url = new URL(request.url);
+  const search = url.searchParams;
+
+  // The same 308 the ranking's route answers, for the same reason: these were
+  // published URLs, and the window was renamed under whoever holds one.
+  const resolved = resolveWindow(search.get("window"));
+  if (resolved !== null && typeof resolved === "object") {
+    search.set("window", resolved.redirectTo);
+    return Response.redirect(url.toString(), 308);
+  }
+  const window = resolved;
+
+  /*
+    `month` is **not** whitelisted the way `window` is, and the difference is
+    deliberate. A window is a closed set of three names, so `?window=anual` is a
+    caller asking for something that does not exist and gets a `400`. A month is
+    an open range: `?month=1999-01` is a perfectly well-formed request for a
+    month this KOL did not trade in, and the honest answer is an empty
+    calendar. Only a value that is not a month at all falls back, and
+    `readKolDetail` is where that happens — it resolves the month it actually
+    read and puts it in the response, so a client can tell which one it got.
+  */
+  const month = search.get("month") ?? undefined;
   if (window === null) return new Response("bad request", { status: 400 });
 
-  const detail = await readKolDetail({ slug, window });
+  const detail = await readKolDetail({ slug, window, month });
   if (!detail) return new Response("not found", { status: 404 });
 
   return new Response(JSON.stringify(detail), {

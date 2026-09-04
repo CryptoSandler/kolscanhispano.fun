@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { query } from "@/lib/db";
 import { inventAddress } from "@/lib/ids";
-import { replayPosition } from "@/lib/pnl";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
 import { addWallet } from "@/lib/wallets";
 import { GET } from "./route";
@@ -14,7 +13,15 @@ import { GET } from "./route";
  * computed from local time picks 08-24 here where a UTC one picks 08-25, so
  * the boundary cases below can tell them apart.
  */
-const NOW = "2026-08-25T01:00:00Z";
+/**
+ * **23:00 on the Tuesday, not 01:00**, since the windows became rolling on
+ * 2026-09-03. Every fixture here is written as a calendar day — daily rows
+ * dated the 25th, trades at 01:00 to 04:00 on the 25th — and a rolling window
+ * ends **now**, so at 01:00 all of them were in the future and every window
+ * came back empty. The same move `/api/kol/<slug>`'s tests needed, for the
+ * same reason.
+ */
+const NOW = "2026-08-25T23:00:00Z";
 
 type Kol = {
   id: string;
@@ -70,7 +77,46 @@ type DailySpec = {
  * checked is one the replay owns, and the episode case below does go through
  * `replayPosition` for exactly that reason.
  */
+/**
+ * A day's realized PnL — **both halves**, since 2026-09-03.
+ *
+ * The ranking sums `trade.realized_sol` now, not `pnl_daily`: every window is
+ * rolling and a day bucket cannot be cut at an arbitrary hour
+ * (`migrations/015`). `pnl_daily` is still written because that is the state a
+ * real replay leaves — the same arithmetic feeds both — and because the record
+ * columns in these specs live there.
+ *
+ * The sell lands at **00:30 UTC** of the day, inside a window that ends at the
+ * frozen `NOW` of 23:00 rather than balanced on its edge.
+ */
 async function insertDaily(specs: DailySpec[]): Promise<void> {
+  for (const spec of specs) {
+    const [wallet] = await query<{ id: string }>(
+      "SELECT id FROM kol_wallet WHERE kol_id = $1 ORDER BY id LIMIT 1",
+      [spec.kolId],
+    );
+    if (wallet === undefined) continue;
+    const id = crypto.randomUUID();
+    await query(
+      `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, slot, kol_id,
+                          wallet_id, mint, side, token_amount, sol_amount, usd_amount, sol_usd,
+                          fee_sol, basis, block_time, realized_sol, realized_usd)
+       VALUES ($1::uuid, decode($2, 'hex'), decode($2, 'hex'), 0, 1, $3::uuid, $4::uuid,
+               $5, 'sell', 1, $6::numeric, $7::numeric, 150, 0, 'known',
+               ($8 || 'T00:30:00Z')::timestamptz, $6::numeric, $7::numeric)`,
+      [
+        id,
+        randomBytes(32).toString("hex"),
+        spec.kolId,
+        wallet.id,
+        inventAddress(),
+        spec.sol,
+        spec.usd,
+        spec.day,
+      ],
+    );
+  }
+
   await query(
     `INSERT INTO pnl_daily (kol_id, day, realized_sol, realized_usd, wins, losses)
      SELECT e.kol_id::uuid, e.day::date, e.sol::numeric, e.usd::numeric, e.wins::int, e.losses::int
@@ -87,44 +133,7 @@ async function insertDaily(specs: DailySpec[]): Promise<void> {
   );
 }
 
-type TradeSpec = {
-  kolId: string;
-  walletId: string;
-  mint: string;
-  side: "buy" | "sell";
-  sol: string;
-  tokens: string;
-  usd: string;
-  at: string;
-  slot: number;
-};
 
-async function insertTrades(specs: TradeSpec[]): Promise<void> {
-  await query(
-    `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, slot, kol_id,
-                        wallet_id, mint, side, token_amount, sol_amount, usd_amount, sol_usd,
-                        fee_sol, basis, block_time)
-     SELECT e.id::uuid, decode(e.sig, 'hex'), decode(e.sig, 'hex'), 0, e.slot::bigint,
-            e.kol_id::uuid, e.wallet_id::uuid, e.mint, e.side, e.tokens::numeric,
-            e.sol::numeric, e.usd::numeric, 150, 0, 'known', e.at::timestamptz
-       FROM unnest($1::text[], $2::text[], $3::bigint[], $4::text[], $5::text[], $6::text[],
-                   $7::text[], $8::text[], $9::text[], $10::text[], $11::text[])
-            AS e(id, sig, slot, kol_id, wallet_id, mint, side, tokens, sol, usd, at)`,
-    [
-      specs.map(() => crypto.randomUUID()),
-      specs.map(() => randomBytes(32).toString("hex")),
-      specs.map((spec) => spec.slot),
-      specs.map((spec) => spec.kolId),
-      specs.map((spec) => spec.walletId),
-      specs.map((spec) => spec.mint),
-      specs.map((spec) => spec.side),
-      specs.map((spec) => spec.tokens),
-      specs.map((spec) => spec.sol),
-      specs.map((spec) => spec.usd),
-      specs.map((spec) => spec.at),
-    ],
-  );
-}
 
 function request(search = ""): Request {
   return new Request(`http://localhost/api/leaderboard${search}`);
@@ -175,35 +184,48 @@ describe("GET /api/leaderboard", () => {
       { kolId: kol.id, day: "2026-08-25", sol: "3.5", usd: "500" },
       // Monday: inside the day's ISO week and month, outside the day.
       { kolId: kol.id, day: "2026-08-24", sol: "1.25", usd: "180" },
-      // The Thursday before: inside the month, outside the week.
+      // Five days back: inside 7D and 30D, outside 1D.
       { kolId: kol.id, day: "2026-08-20", sol: "10", usd: "1400" },
-      // Last month: outside all three.
-      { kolId: kol.id, day: "2026-07-31", sol: "999", usd: "999999" },
+      // Outside thirty days from the 25th, so outside all three.
+      { kolId: kol.id, day: "2026-07-20", sol: "999", usd: "999999" },
     ]);
 
-    const [daily] = await entries("?window=diario");
+    /*
+      `NOW` is 23:00 on the 25th, so the three windows reach back to the 24th at
+      23:00, the 18th at 23:00 and July 26th at 23:00.
+
+      **`7D` takes the 20th and its calendar ancestor did not.** `Semanal` was
+      the ISO week from Monday the 24th, so it summed 4.75; the rolling week
+      reaches five days further back on a Tuesday and comes to 14.75. That
+      difference is the change, arriving as a number.
+    */
+    const daily = (await entries("?window=1d"))[0];
     expect(daily.realizedSol).toBe("3.5");
     expect(daily.realizedUsd).toBe("500");
 
-    const [weekly] = await entries("?window=semanal");
-    expect(weekly.realizedSol).toBe("4.75");
-    expect(weekly.realizedUsd).toBe("680");
+    const weekly = (await entries("?window=7d"))[0];
+    expect(weekly.realizedSol).toBe("14.75");
+    expect(weekly.realizedUsd).toBe("2080");
 
-    const [monthly] = await entries("?window=mensual");
+    const monthly = (await entries("?window=30d"))[0];
     expect(monthly.realizedSol).toBe("14.75");
     expect(monthly.realizedUsd).toBe("2080");
   });
 
   it("reports the window it actually summed", async () => {
-    const daily = await board(await GET(request("?window=diario")));
+    // **Instants, not midnights**, since 2026-09-03: a rolling window ends at
+    // `NOW` and starts exactly N days earlier. Reporting a rounded bound would
+    // be the one lie that makes `1D` indistinguishable from the `Diario` it
+    // replaced.
+    const daily = await board(await GET(request("?window=1d")));
     expect([daily.from, daily.to]).toEqual([
-      "2026-08-25T00:00:00.000Z",
-      "2026-08-26T00:00:00.000Z",
+      "2026-08-24T23:00:00.000Z",
+      "2026-08-25T23:00:00.000Z",
     ]);
-    const weekly = await board(await GET(request("?window=semanal")));
+    const weekly = await board(await GET(request("?window=7d")));
     expect([weekly.from, weekly.to]).toEqual([
-      "2026-08-24T00:00:00.000Z",
-      "2026-08-31T00:00:00.000Z",
+      "2026-08-18T23:00:00.000Z",
+      "2026-08-25T23:00:00.000Z",
     ]);
   });
 
@@ -227,7 +249,7 @@ describe("GET /api/leaderboard", () => {
       { kolId: ayer.id, day: "2026-08-24", sol: "50", usd: "9000" },
     ]);
 
-    const daily = await entries("?window=diario");
+    const daily = await entries("?window=1d");
     const bySlug = Object.fromEntries(daily.map((entry) => [entry.kol.slug, entry]));
     expect(bySlug.hoy.realizedSol).toBe("1");
     expect(bySlug.ayer.realizedSol).toBe("0");
@@ -243,8 +265,8 @@ describe("GET /api/leaderboard", () => {
       { kolId: medio.id, day: "2026-08-25", sol: "2", usd: "350" },
     ]);
 
-    expect(await ranking("?window=diario")).toEqual(["alto", "medio", "bajo"]);
-    expect((await entries("?window=diario")).map((e) => e.rank)).toEqual([1, 2, 3]);
+    expect(await ranking("?window=1d")).toEqual(["alto", "medio", "bajo"]);
+    expect((await entries("?window=1d")).map((e) => e.rank)).toEqual([1, 2, 3]);
   });
 
   /**
@@ -273,9 +295,9 @@ describe("GET /api/leaderboard", () => {
       { kolId: c.id, day: "2026-08-25", sol: "1", usd: "900" },
     ]);
 
-    expect(await ranking("?window=diario&unit=usd")).toEqual(["a", "b", "c"]);
-    expect(await ranking("?window=diario&unit=ars")).toEqual(["a", "b", "c"]);
-    expect(await ranking("?window=diario")).toEqual(["a", "b", "c"]);
+    expect(await ranking("?window=1d&unit=usd")).toEqual(["a", "b", "c"]);
+    expect(await ranking("?window=1d&unit=ars")).toEqual(["a", "b", "c"]);
+    expect(await ranking("?window=1d")).toEqual(["a", "b", "c"]);
   });
 
   it("breaks a tie on slug so the order does not move between two loads", async () => {
@@ -285,92 +307,46 @@ describe("GET /api/leaderboard", () => {
       { kolId: zeta.id, day: "2026-08-25", sol: "7", usd: "1000" },
       { kolId: alfa.id, day: "2026-08-25", sol: "7", usd: "1000" },
     ]);
-    expect(await ranking("?window=diario")).toEqual(["alfa", "zeta"]);
+    expect(await ranking("?window=1d")).toEqual(["alfa", "zeta"]);
   });
 
-  it("states the win rate as closed wins over closed positions", async () => {
+  /**
+   * **The record is inert on the rolling path, and this is what replaced four
+   * cases that pinned its arithmetic.**
+   *
+   * `wins`, `losses` and `winRate` come from `pnl_daily`, which counts a closed
+   * *position* per UTC day (spec §4.8). There is no per-sell equivalent —
+   * "closed" is a property of a position's whole episode, not of one sell — so
+   * a ranking that sums `trade.realized_sol` over an arbitrary interval cannot
+   * produce them. Since 2026-09-03 every window is rolling, so they are always
+   * `0`, `0` and `null`.
+   *
+   * The four cases deleted here asserted the ratio, the 100 % case, the
+   * nothing-closed case and the per-episode counting that a running total gets
+   * wrong. Every one was a real defect the day it was written, and none of them
+   * can occur any more because the code path is gone — not because the bug was
+   * fixed. Their absence is stated here so nobody re-derives the counts from
+   * sells and calls the result a win rate: that would be a different
+   * measurement wearing this name, which is the exact substitution
+   * `docs/round-ventanas-moviles.md` exists to prevent.
+   *
+   * **The fields are not removed.** They are a published response and dropping
+   * them breaks whoever holds this URL — the same call the owner made for
+   * `series` on `/api/kol/<slug>`.
+   */
+  it("reports no record at all, because a rolling window cannot count closed positions", async () => {
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([
       { kolId: kol.id, day: "2026-08-25", sol: "3", usd: "500", wins: 8, losses: 4 },
       { kolId: kol.id, day: "2026-08-24", sol: "1", usd: "100", wins: 4, losses: 1 },
     ]);
-    // The weekly window, so the counts have to be summed across two days.
-    const [entry] = await entries("?window=semanal");
-    expect([entry.wins, entry.losses]).toEqual([12, 5]);
-    expect(entry.winRate).toBe("70.6"); // 12 / 17
-  });
 
-  /**
-   * A percentage over an empty denominator is not zero — it is undefined, and
-   * `0 %` is the shape of a real result: it reads exactly like a KOL who
-   * closed nine positions and lost all nine. This is the same failure spec
-   * §4.6 forbids for an unpriceable bag rendered as −100 %. The route carries
-   * `null`. The card stopped printing it on 2026-09-02, but the payload did
-   * not: this endpoint is a contract of its own.
-   */
-  it("has no win rate at all when nothing closed, rather than 0", async () => {
-    const kol = await insertKol({ slug: "uno" });
-    await insertDaily([{ kolId: kol.id, day: "2026-08-25", sol: "2", usd: "300" }]);
-    const [entry] = await entries("?window=diario");
+    const [entry] = await entries("?window=7d");
+    // The daily rows carry a record; the ranking does not read them.
     expect([entry.wins, entry.losses]).toEqual([0, 0]);
     expect(entry.winRate).toBeNull();
-  });
-
-  // The distinction the null exists to preserve: nothing closed, versus
-  // everything closed badly. Both have `wins = 0`.
-  it("distinguishes nothing closed from every closure lost", async () => {
-    const quieto = await insertKol({ slug: "quieto" });
-    const perdedor = await insertKol({ slug: "perdedor" });
-    await insertDaily([
-      { kolId: quieto.id, day: "2026-08-25", sol: "0", usd: "0" },
-      { kolId: perdedor.id, day: "2026-08-25", sol: "-5", usd: "-800", wins: 0, losses: 9 },
-    ]);
-    const bySlug = Object.fromEntries(
-      (await entries("?window=diario")).map((entry) => [entry.kol.slug, entry]),
-    );
-    expect(bySlug.quieto.winRate).toBeNull();
-    expect(bySlug.perdedor.winRate).toBe("0.0");
-  });
-
-  it("reads 100 when every closed position won", async () => {
-    const kol = await insertKol({ slug: "uno" });
-    await insertDaily([
-      { kolId: kol.id, day: "2026-08-25", sol: "2", usd: "300", wins: 3, losses: 0 },
-    ]);
-    expect((await entries("?window=diario"))[0].winRate).toBe("100.0");
-  });
-
-  /**
-   * Spec §4.8 as corrected: a closure is won or lost on **that episode's**
-   * realized PnL, never on the position's cumulative total.
-   *
-   * This case is driven through `replayPosition` rather than through
-   * `pnl_daily` directly, because the rule belongs to the replay and the
-   * leaderboard is where the wrong answer would be published. The position
-   * wins its first round trip by +2 SOL and loses its second by −0.5; the
-   * cumulative figure is +1.5 and positive throughout, so counting from it
-   * writes two wins and a 100 % rate onto a KOL whose second round trip lost
-   * money.
-   */
-  it("counts the second closure on that episode's result, not the running total", async () => {
-    const kol = await insertKol({ slug: "uno" });
-    const mint = inventAddress();
-    await insertTrades([
-      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "1", tokens: "100",
-        usd: "150", at: "2026-08-25T01:00:00Z", slot: 1 },
-      { kolId: kol.id, walletId: kol.walletId, mint, side: "sell", sol: "3", tokens: "100",
-        usd: "450", at: "2026-08-25T02:00:00Z", slot: 2 },
-      { kolId: kol.id, walletId: kol.walletId, mint, side: "buy", sol: "2", tokens: "100",
-        usd: "300", at: "2026-08-25T03:00:00Z", slot: 3 },
-      { kolId: kol.id, walletId: kol.walletId, mint, side: "sell", sol: "1.5", tokens: "100",
-        usd: "225", at: "2026-08-25T04:00:00Z", slot: 4 },
-    ]);
-    await replayPosition(kol.id, mint);
-
-    const [entry] = await entries("?window=diario");
-    expect([entry.wins, entry.losses]).toEqual([1, 1]);
-    expect(entry.winRate).toBe("50.0");
-    expect(entry.realizedSol).toBe("1.5");
+    // And the figure it *does* read is the realized sum, which is the point.
+    expect(entry.realizedSol).toBe("4");
   });
 
   it("leaves out a suspended KOL even with rows inside the window", async () => {
@@ -383,8 +359,8 @@ describe("GET /api/leaderboard", () => {
       { kolId: suspendido.id, day: "2026-08-25", sol: "500", usd: "90000", wins: 9 },
     ]);
 
-    expect(await ranking("?window=diario")).toEqual(["bueno"]);
-    expect(await ranking("?window=diario&unit=usd")).toEqual(["bueno"]);
+    expect(await ranking("?window=1d")).toEqual(["bueno"]);
+    expect(await ranking("?window=1d&unit=usd")).toEqual(["bueno"]);
   });
 
   it("leaves out a KOL still awaiting approval, and a rejected one", async () => {
@@ -394,7 +370,7 @@ describe("GET /api/leaderboard", () => {
       { kolId: pendiente.id, day: "2026-08-25", sol: "10", usd: "1000" },
       { kolId: rechazado.id, day: "2026-08-25", sol: "10", usd: "1000" },
     ]);
-    expect(await ranking("?window=diario")).toEqual([]);
+    expect(await ranking("?window=1d")).toEqual([]);
   });
 
   // Spec §2: the roster is part of the point. An inner join would drop a
@@ -405,7 +381,7 @@ describe("GET /api/leaderboard", () => {
     await insertKol({ slug: "quieto" });
     await insertDaily([{ kolId: activo.id, day: "2026-08-25", sol: "1", usd: "100" }]);
 
-    const daily = await entries("?window=diario");
+    const daily = await entries("?window=1d");
     expect(daily.map((entry) => entry.kol.slug)).toEqual(["activo", "quieto"]);
     expect(daily[1].realizedSol).toBe("0");
     expect(daily[1].realizedUsd).toBe("0");
@@ -415,17 +391,18 @@ describe("GET /api/leaderboard", () => {
   it("joins the cabal tag and keys the avatar by kol id", async () => {
     const kol = await insertKol({ slug: "uno", cabalTag: "EJE" });
     await insertDaily([{ kolId: kol.id, day: "2026-08-25", sol: "1", usd: "100" }]);
-    const [entry] = await entries("?window=diario");
+    const [entry] = await entries("?window=1d");
     expect(entry.kol.cabalTag).toBe("EJE");
     expect(entry.kol.name).toBe("UNO");
     expect(entry.kol.xHandle).toBe("uno");
     expect(entry.kol.avatarUrl).toBe(`/api/avatar/${kol.id}`);
   });
 
-  it("defaults to the daily window", async () => {
+  it("defaults to the shortest window", async () => {
     const body = await board(await GET(request()));
-    expect(body.window).toBe("diario");
-    expect(body.from).toBe("2026-08-25T00:00:00.000Z");
+    expect(body.window).toBe("1d");
+    // Twenty-four hours before `NOW`, not the start of its UTC day.
+    expect(body.from).toBe("2026-08-24T23:00:00.000Z");
     // The currency is not in the payload and never was a property of it: this
     // endpoint publishes `realizedSol` and `realizedUsd` both, and the peso is
     // a conversion a page applies with a rate it also prints.
@@ -434,7 +411,7 @@ describe("GET /api/leaderboard", () => {
 
   it("rejects a window or a unit it does not know, without echoing it back", async () => {
     for (const search of ["?window=daily", "?window=anual", "?unit=eur", "?unit=USD",
-      "?unit=sol", "?window=diario&unit=", "?window="]) {
+      "?unit=sol", "?window=1d&unit=", "?window="]) {
       const response = await GET(request(search));
       expect(response.status).toBe(400);
       expect(await response.text()).toBe("bad request");
@@ -465,7 +442,7 @@ describe("GET /api/leaderboard", () => {
       { kolId: kol.id, day: "2026-08-25", sol: "1", usd: "100", wins: 1, losses: 1 },
     ]);
 
-    const response = await GET(request("?window=diario"));
+    const response = await GET(request("?window=1d"));
     const text = await response.clone().text();
     const [entry] = (await board(response)).entries;
 

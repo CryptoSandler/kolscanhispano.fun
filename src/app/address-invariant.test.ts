@@ -73,7 +73,7 @@ import { addWallet, setWalletVisibility } from "@/lib/wallets";
 import { utcDayString } from "@/lib/windows";
 import { KolDetail } from "./kol-detail";
 import HomePage from "./page";
-import LeaderboardPage from "./leaderboard/page";
+import EnVivoPage from "./en-vivo/page";
 
 // Nothing here mounts, so `FeedLive`'s effects never run and its four-second
 // poll is never installed -- which is what lets the real client component be
@@ -380,20 +380,59 @@ beforeAll(async () => {
     ],
   );
 
+  /*
+    **And the ranking's figures land on the sells this fixture already made**,
+    rather than on new rows.
+
+    The ranking sums `trade.realized_sol` since 2026-09-03 — every window is
+    rolling and a day bucket cannot be cut at an arbitrary hour
+    (`migrations/015`) — so writing only `pnl_daily` left every row at zero and
+    the whole page as its own empty state. This file would then have swept a
+    page with no KOL on it and found no address, passing for the wrong reason;
+    the `describe` above exists to catch exactly that, and it did.
+
+    **The first fix inserted its own sells and broke the invariant instead.**
+    Every new row brought a new mint and a new signature, and the sweep below is
+    a *set comparison* — `findDisallowedBase58(surfaces)` against exactly the
+    signatures the spec publishes — so two inventions of this fixture's own
+    showed up as unexplained base58 on a public surface. The whole point of that
+    assertion is that nothing base58 appears which the test cannot name.
+
+    So the figures go onto the sells that are already here, whose mints and
+    signatures are already accounted for. `block_time` moves with them: a
+    rolling window ends **now**, and `at(5)` is days back.
+  */
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  for (const [kol, sol, usd] of [
+    [abierto, "18.42", "1802.40"],
+    [oculto, "-4.10", "-401.30"],
+    [mixto, "6.30", "615.90"],
+  ] as const) {
+    await query(
+      `UPDATE trade
+          SET realized_sol = $2::numeric, realized_usd = $3::numeric, block_time = $4::timestamptz
+        WHERE id = (SELECT id FROM trade WHERE kol_id = $1 AND side = 'sell' ORDER BY id LIMIT 1)`,
+      [kol.id, sol, usd, hourAgo],
+    );
+  }
+
+  // The home page **is** the ranking since 2026-09-03, and the feed moved to
+  // `/en-vivo`. Both are still swept: they are the two public surfaces that
+  // render a KOL, and this file's whole job is that no address reaches either.
   html =
-    renderToStaticMarkup(await HomePage()) +
-    renderToStaticMarkup(await LeaderboardPage({ searchParams: Promise.resolve({}) }));
+    renderToStaticMarkup(await HomePage({ searchParams: Promise.resolve({}) })) +
+    renderToStaticMarkup(await EnVivoPage());
 
   const [feed, leaderboard] = await Promise.all([
     readFeedPage(),
-    readLeaderboard({ window: "diario" }),
+    readLeaderboard({ window: "1d" }),
   ]);
   // Both modals, opened. `readKolDetail` is what the route calls, so this is
   // the payload the browser receives and `KolDetail` is what it renders from it.
   const details = await Promise.all([
-    readKolDetail({ slug: "kol-abierto", window: "diario" }),
-    readKolDetail({ slug: "kol-oculto", window: "diario" }),
-    readKolDetail({ slug: "kol-mixto", window: "diario" }),
+    readKolDetail({ slug: "kol-abierto", window: "1d" }),
+    readKolDetail({ slug: "kol-oculto", window: "1d" }),
+    readKolDetail({ slug: "kol-mixto", window: "1d" }),
   ]);
   modalHtml = details
     .map((detail) => renderToStaticMarkup(createElement(KolDetail, { detail: detail! })))
@@ -571,7 +610,7 @@ describe("no wallet address reaches the rendered page", () => {
    */
   it("counts public and private wallets exactly as the fixture built them", async () => {
     for (const kol of kols) {
-      const detail = await readKolDetail({ slug: kol.slug, window: "diario" });
+      const detail = await readKolDetail({ slug: kol.slug, window: "1d" });
       expect(detail, `no detail for ${kol.slug}`).not.toBeNull();
 
       const intendedPublic = kol.wallets.filter((wallet) => wallet.isPublic).length;
@@ -613,14 +652,39 @@ describe("no wallet address reaches the rendered page", () => {
 
     // And its slug is not reachable by guessing it: `readKolDetail` answers
     // `null`, which is the same answer a slug that never existed gets.
-    expect(await readKolDetail({ slug: PENDING_SLUG, window: "diario" })).toBeNull();
+    expect(await readKolDetail({ slug: PENDING_SLUG, window: "1d" })).toBeNull();
   });
 
   it("renders the private count on the detail, as a count and never a list", () => {
-    // `kol-mixto` has one of each, so its modal is the one that must show both.
-    expect(modalHtml).toContain("Wallets");
-    expect(modalHtml).toContain("Privadas");
-    expect(modalHtml).toContain("Públicas");
+    /*
+      `kol-mixto` has one of each, so its modal is the one that must show both.
+
+      **The shape changed on 2026-09-03 and the invariant did not.** The counts
+      were a `card-wallets` in the left column with `Públicas` and `Privadas`
+      as stat labels; they are a line in the header now, where the mould puts a
+      truncated address chip and where we may not (exception (a)). What this
+      test is about is unchanged and is the whole point: **a count, and never a
+      list.** The assertion below is on the sentence the header actually
+      renders, and the `not` is the invariant.
+    */
+    expect(modalHtml).toContain("wallet pública");
+    expect(modalHtml).toContain("privada");
+
+    /*
+      **And not a blanket base58 scan here**, which is what a first attempt at
+      this added and what the suite immediately rejected.
+
+      `kol-mixto` has a public wallet, so its modal legitimately links the
+      *signatures* of that wallet's trades — spec §7 publishes a signature for a
+      public wallet and withholds it for a hidden one, and a signature is a long
+      base58 run. Asserting "no base58 anywhere in this markup" therefore fails
+      on correct output, and would have been satisfied only by removing a link
+      the design requires.
+
+      The real sweep is `needlesFor` above: it looks for **the addresses this
+      fixture actually has**, in every encoding, rather than for a shape that
+      addresses and signatures share. This case is about the counts.
+    */
   });
 
   /**

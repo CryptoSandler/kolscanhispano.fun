@@ -50,20 +50,22 @@ for (const { name, viewport } of SIZES) {
     test.use({ viewport });
 
     /**
-     * The two surfaces the parity audit against `kolscanbrasil.io` compares
-     * first: the home page and the ranking, with the twelve-KOL seed behind
-     * them. `docs/parity-kolscanbrasil.md` reads these beside theirs.
+     * The surfaces the audit against `kolscanbrasil.io` reads first, with the
+     * twelve-KOL seed behind them. **The home page and the ranking are one
+     * page** since 2026-09-03, so there is one capture where there were two;
+     * the feed has its own now. `docs/parecido-2026-09-02.md` reads these
+     * beside theirs.
      */
-    test("la home, con el padrón sembrado", async ({ page }) => {
+    test("la home, que es la clasificación", async ({ page }) => {
       await page.goto("/");
       await expect(page.locator(".row-leaderboard").first()).toBeVisible({ timeout: 30_000 });
       await page.screenshot({ path: `${OUT}/home-${name}.png` });
     });
 
-    test("la clasificación completa", async ({ page }) => {
-      await page.goto("/leaderboard");
-      await expect(page.locator(".row-leaderboard").first()).toBeVisible({ timeout: 30_000 });
-      await page.screenshot({ path: `${OUT}/ranking-${name}.png` });
+    test("el feed, en su propia página", async ({ page }) => {
+      await page.goto("/en-vivo");
+      await expect(page.locator(".row-feed").first()).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/en-vivo-${name}.png` });
     });
 
     /**
@@ -72,7 +74,7 @@ for (const { name, viewport } of SIZES) {
      * it was quoted, all on the page.
      */
     test("la clasificación en pesos", async ({ page }) => {
-      await page.goto("/leaderboard?unit=ars");
+      await page.goto("/?unit=ars");
       await expect(page.locator(".row-leaderboard").first()).toBeVisible({ timeout: 30_000 });
       await page.screenshot({ path: `${OUT}/ranking-ars-${name}.png` });
     });
@@ -171,14 +173,17 @@ for (const { name, viewport } of SIZES) {
     });
 
     test("detalle del KOL", async ({ page }) => {
-      await page.goto("/leaderboard");
+      await page.goto("/");
       const dialog = page.locator("dialog.modal-kol");
       await page.locator(".row-leaderboard").first().locator(".rank-cell").click();
       await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
       await expect(dialog.locator(".modal-head")).toBeVisible({ timeout: 30_000 });
-      // The wallet card is the new part of this screen, so the shot waits for
-      // it rather than for the modal alone.
-      await expect(dialog.locator(".card-wallets")).toBeVisible({ timeout: 30_000 });
+      // The calendar is the biggest thing on this screen and the last to
+      // arrive, so the shot waits for it rather than for the modal alone. It
+      // waited for `.card-wallets` until 2026-09-03, when the wallet counts
+      // moved into the header and that selector stopped existing — a stale
+      // wait that turned into a 30-second timeout on every capture.
+      await expect(dialog.locator(".calendar, .calendar-empty")).toBeVisible({ timeout: 30_000 });
 
       await page.screenshot({ path: `${OUT}/detalle-${name}.png` });
     });

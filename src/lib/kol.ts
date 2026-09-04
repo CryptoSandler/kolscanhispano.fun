@@ -41,6 +41,7 @@ import {
   type KolSeriesPoint,
   type PublicKolDetail,
 } from "./serialize";
+import { monthRange, utcMonthString } from "./calendar";
 import { utcDayString, windowBounds, type LeaderboardWindow } from "./windows";
 
 /**
@@ -99,16 +100,24 @@ const WALLET_COUNTS = `
   (SELECT count(*)::int FROM kol_wallet w
     WHERE w.kol_id = k.id AND w.status = 'active' AND NOT w.is_public) AS private_wallets`;
 
+/**
+ * The detail's identity and its window figures, summing the per-sell amounts
+ * `migrations/015` records. The `pnl_daily` statement that stood here until
+ * 2026-09-03 went with the calendar windows: a day bucket cannot be cut at an
+ * arbitrary hour, so there is nothing left for it to answer.
+ */
 const DETAIL_SQL = `
   SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets,
          c.tag AS cabal_tag,
          ${WALLET_COUNTS},
-         COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
-         COALESCE(SUM(d.realized_usd), 0) AS realized_usd
+         COALESCE(SUM(t.realized_sol), 0) AS realized_sol,
+         COALESCE(SUM(t.realized_usd), 0) AS realized_usd
     FROM kol k
     LEFT JOIN cabal c ON c.id = k.cabal_id
-    LEFT JOIN pnl_daily d
-           ON d.kol_id = k.id AND d.day >= $2::date AND d.day < $3::date
+    LEFT JOIN trade t
+           ON t.kol_id = k.id
+          AND t.realized_sol IS NOT NULL
+          AND t.block_time >= $2::timestamptz AND t.block_time < $3::timestamptz
    WHERE k.slug = $1 AND k.status = 'approved'
    GROUP BY k.id, c.tag`;
 
@@ -143,6 +152,22 @@ const SERIES_SQL = `
    ORDER BY d.day ASC`;
 
 /**
+ * How many sells the month carries — the last figure in the calendar's summary
+ * row, and the only one there that a series of daily totals cannot produce.
+ *
+ * Sells rather than trades, because the calendar is about realized PnL and
+ * spec §4.7 realizes on the sell: a month of buying closes nothing and the row
+ * should say so.
+ */
+const MONTH_SELLS_SQL = `
+  SELECT count(*)::int AS sells
+    FROM trade t
+   WHERE t.kol_id = $1::uuid
+     AND t.side = 'sell'
+     AND t.block_time >= $2::timestamptz
+     AND t.block_time < $3::timestamptz`;
+
+/**
  * What `DETAIL_SQL` alone produces. The two activity columns come from a
  * different table and are joined on in {@link readKolDetail}; typing them out
  * of this row is what stops `query<KolDetailRow>` from asserting the query
@@ -152,6 +177,7 @@ type IdentityRow = Omit<KolDetailRow, "trade_count" | "volume_sol">;
 
 type ActivityRow = { trade_count: number; volume_sol: string };
 type SeriesRow = { day: string; realized_sol: string };
+type SellsRow = { sells: number };
 
 /**
  * Daily realized PnL, kept **and** accumulated.
@@ -173,6 +199,16 @@ function accumulate(rows: SeriesRow[]): KolSeriesPoint[] {
 export type KolDetailQuery = {
   slug: string;
   window: LeaderboardWindow;
+  /**
+   * Which calendar month the PnL calendar shows, `YYYY-MM`.
+   *
+   * **It is deliberately independent of the window.** Since 2026-09-03 the
+   * calendar is a month the reader can page through while the window governs
+   * everything below it — the owner's brief, overruling
+   * `docs/round-ventanas-moviles.md` §3.4. An unreadable value falls back to
+   * the current UTC month rather than erroring: it arrives from a query string.
+   */
+  month?: string;
   /** Injectable so a caller can pin the window; defaults to the current instant. */
   now?: Date;
 };
@@ -185,29 +221,51 @@ export type KolDetailQuery = {
 export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolDetail | null> {
   if (options.slug.length === 0 || options.slug.length > MAX_SLUG_LENGTH) return null;
 
-  const bounds = windowBounds(options.window, options.now ?? new Date());
+  const at = options.now ?? new Date();
+  const bounds = windowBounds(options.window, at);
   const from = utcDayString(bounds.from);
   const to = utcDayString(bounds.to);
 
-  const [row] = await query<IdentityRow>(DETAIL_SQL, [options.slug, from, to]);
+  // An unrecognised month is the current one, not an error: it reaches here
+  // from `?month=` and a stale link should still open the modal.
+  const month = monthRange(options.month ?? "") === null ? utcMonthString(at) : options.month!;
+  const monthSpan = monthRange(month)!;
+
+  // ISO instants: the window is an interval, not a span of days. The calendar
+  // card below is unaffected — it spans a month the reader chose, and
+  // `monthSpan` is always whole days.
+  const windowFrom = bounds.from.toISOString();
+  const windowTo = bounds.to.toISOString();
+
+  const [row] = await query<IdentityRow>(DETAIL_SQL, [
+    options.slug,
+    windowFrom,
+    windowTo,
+  ]);
   if (!row) return null;
 
   // Three reads over three different tables, none of which needs another's
   // result. In sequence they would be three Neon round trips on the way to
   // opening one modal.
-  const [activity, series, trades] = await Promise.all([
+  const [activity, trades, monthSeries, monthSells] = await Promise.all([
     query<ActivityRow>(ACTIVITY_SQL, [
       row.kol_id,
       bounds.from.toISOString(),
       bounds.to.toISOString(),
     ]),
-    query<SeriesRow>(SERIES_SQL, [row.kol_id, from, to]),
     readKolTrades({
       kolId: row.kol_id,
       from: bounds.from,
       to: bounds.to,
       limit: KOL_TRADES_LIMIT,
     }),
+    // The calendar's own month, which is not the window's span any more.
+    query<SeriesRow>(SERIES_SQL, [row.kol_id, monthSpan.from, monthSpan.to]),
+    query<SellsRow>(MONTH_SELLS_SQL, [
+      row.kol_id,
+      `${monthSpan.from}T00:00:00Z`,
+      `${monthSpan.to}T00:00:00Z`,
+    ]),
   ]);
 
   return serializeKolDetail({
@@ -219,7 +277,28 @@ export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolD
     window: options.window,
     from,
     to,
-    series: accumulate(series),
+    /*
+      **`series` is the calendar's month since 2026-09-03**, not the window's
+      span — the same days `calendar.days` carries, with the running total
+      `accumulate` adds.
+
+      It read `pnl_daily` between the window's two bounds until then, and that
+      stopped meaning anything when the windows became rolling: a rolling window
+      starts and ends at an *instant*, so its edges are partial days, and a table
+      keyed by `date` cannot answer for them. The field would have been neither
+      the window nor a month — a range nobody could state.
+
+      The alternative was removing it, which is the honest shape (nothing on
+      screen has read it since the calendar became a month) and a breaking change
+      to a published response. The owner chose to keep it and give it the meaning
+      it can actually carry.
+    */
+    series: accumulate(monthSeries),
     trades,
+    calendar: {
+      month,
+      days: monthSeries.map((point) => ({ day: point.day, dailySol: point.realized_sol })),
+      sells: monthSells[0]?.sells ?? 0,
+    },
   });
 }

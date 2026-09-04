@@ -173,3 +173,41 @@ answers 404 for ever. That is one read per roster mutation, and spec §5.4 carri
 Helius also auto-disables failing webhooks on the free plan (spec §5.1). Running
 `npx tsx scripts/sync-helius-webhook.ts` is the cheapest way to ask whether the webhook is still
 there and still holds the roster.
+
+## La cuota de transferencia de Neon, y qué se verificó de ella
+
+**2026-09-04.** El proyecto `arrival` empezó a devolver `exceeded the data transfer quota`
+(Postgres `53000`). La pregunta inmediata era si el límite es del proyecto o de la **cuenta**,
+porque de eso depende que este repositorio tenga o no gate.
+
+**Medido, con el comando al lado:**
+
+    npx tsx .cuota.mts     # una conexión y un `SELECT count(*) FROM kol` por base
+
+    production  OK  1214ms  kol=3
+    preview     OK  1242ms  kol=13
+    tests       OK  1793ms  kol=12
+
+Las tres bases de `kolscanhispano` contestaron normalmente, con latencias corrientes y sin
+`53000`, mientras `arrival` estaba bloqueado. **El gate sigue siendo posible.**
+
+**Medido también:** la organización `org-old-dew-58374959` está en plan **`free`**
+(`GET /api/v2/organizations/<org>`). En ese plan los límites suelen ser de la organización y no
+del proyecto, que es la razón de la pregunta.
+
+**No verificado, y por eso no se escribe como hecho:** que la transferencia sea *compartida por
+la cuenta*. Los dos endpoints de consumo — `/consumption_history/account` y
+`/consumption/projects` — devuelven **404** con el token de `neonctl`, así que no hay forma de
+leer el reparto desde acá. Y la evidencia disponible apunta en contra de un bloqueo de cuenta ya
+en efecto: si el corte fuese de la cuenta y estuviera agotado, las tres bases de arriba habrían
+fallado igual que `arrival`, y no fallaron.
+
+**Las dos lecturas que quedan abiertas**, y sólo el dashboard de Neon las separa: o el límite es
+por proyecto, o es de la cuenta y todavía no se agotó — con `arrival` disparando primero por ser
+quien consume. La segunda es la peligrosa, porque significa que este repositorio puede quedarse
+sin base sin haber gastado nada propio.
+
+**Qué hacer con esto:** antes de una tanda que dependa del gate, correr la comprobación de arriba.
+Cuesta tres segundos y distingue "la base está lenta" de "no hay base". Si alguna vez las tres
+devuelven `53000`, no hay gate posible con Neon hasta que el ciclo reinicie, y eso se reporta y se
+frena en vez de intentar rodearlo.

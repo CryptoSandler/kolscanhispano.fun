@@ -24,7 +24,22 @@ import { addWallet, setWalletVisibility } from "@/lib/wallets";
 import { GET } from "./route";
 
 /** The same Tuesday 01:00 UTC `/api/leaderboard`'s suite pins, and for the same reason. */
-const NOW = "2026-08-25T01:00:00Z";
+/**
+ * **23:00 on the Tuesday, not 01:00**, since the windows became rolling on
+ * 2026-09-03.
+ *
+ * Every fixture in this file is written as a calendar day: trades at 02:00 and
+ * 05:00 on the 25th, daily rows dated the 25th. Under `Diario` — the UTC day —
+ * an instant of 01:00 was fine, because the window ran to the end of the day.
+ * A rolling `1D` ends **now**, so at 01:00 every one of those fixtures was in
+ * the future and every window came back empty.
+ *
+ * Moving the clock to the end of the same day keeps every existing timestamp
+ * meaningful and inside `1D`, and keeps the 24th outside it — which is what the
+ * cases here actually assert. The alternative was rewriting sixteen timestamps
+ * to say the same thing.
+ */
+const NOW = "2026-08-25T23:00:00Z";
 
 type Kol = {
   id: string;
@@ -73,9 +88,50 @@ async function insertKol(options: {
   return { id, slug: options.slug, walletId, address };
 }
 
+/**
+ * A day's realized PnL for a KOL — **both halves**, since 2026-09-03.
+ *
+ * The modal's window figures come from `trade.realized_sol` now, not from
+ * `pnl_daily`: every window is rolling and a day bucket cannot be cut at an
+ * arbitrary hour (`migrations/015`). `pnl_daily` still backs the calendar
+ * card's month series, so both are written — which is also the state a real
+ * replay leaves, because the same arithmetic feeds them.
+ *
+ * The sell lands at **00:30 UTC** of the day, comfortably inside a window that
+ * ends at the frozen `NOW` rather than balanced on its edge.
+ */
 async function insertDaily(
   specs: { kolId: string; day: string; sol: string; usd: string; wins?: number; losses?: number }[],
 ): Promise<void> {
+  for (const spec of specs) {
+    const [wallet] = await query<{ id: string }>(
+      "SELECT id FROM kol_wallet WHERE kol_id = $1 LIMIT 1",
+      [spec.kolId],
+    );
+    if (wallet === undefined) continue;
+    const id = crypto.randomUUID();
+    const signature = inventSignature();
+    await query(
+      `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
+                          mint, side, token_amount, sol_amount, usd_amount, fee_sol, block_time,
+                          realized_sol, realized_usd)
+       VALUES ($1::uuid, decode($2, 'hex'), decode($3, 'hex'), 0, $4::uuid, $5::uuid,
+               $6, 'sell', 1, $7::numeric, $8::numeric, 0, ($9 || 'T00:30:00Z')::timestamptz,
+               $7::numeric, $8::numeric)`,
+      [
+        id,
+        blindIndex(signature, "signature").toString("hex"),
+        encrypt(signature, aadFor("trade", "signature", id)).toString("hex"),
+        spec.kolId,
+        wallet.id,
+        inventAddress(),
+        spec.sol,
+        spec.usd,
+        spec.day,
+      ],
+    );
+  }
+
   await query(
     `INSERT INTO pnl_daily (kol_id, day, realized_sol, realized_usd, wins, losses)
      SELECT e.kol_id::uuid, e.day::date, e.sol::numeric, e.usd::numeric, e.wins::int, e.losses::int
@@ -158,48 +214,65 @@ afterEach(() => {
 });
 
 describe("GET /api/kol/<slug>", () => {
-  it("sums the same pnl_daily window the leaderboard row sums", async () => {
-    // The property that matters is not the arithmetic -- `/api/leaderboard`
-    // already pins that -- but that the modal and the row cannot disagree. Both
-    // read `pnl_daily` through `windowBounds`, so the same three windows cut
-    // the same days.
+  it("sums the same window the leaderboard row sums", async () => {
+    /*
+      The property that matters is not the arithmetic — `/api/leaderboard`
+      already pins that — but that the modal and the row cannot disagree. Both
+      read `trade.realized_sol` through `windowBounds`, so the same three
+      windows cut the same sells.
+
+      **The expected figures changed on 2026-09-03 and the fixture did not**,
+      which is the clearest statement of what the windows now mean. `NOW` is
+      23:00 on Tuesday the 25th:
+
+        `1D`  reaches back to Monday 23:00 → the 25th only          → 3.5
+        `7D`  reaches back to the 18th 23:00 → the 25th, 24th, 20th → 14.75
+        `30D` reaches back to July 26th → all but the July 31st row → 14.75
+
+      Under the calendar windows `7D`'s ancestor was the ISO week from Monday
+      the 24th, so it took the 25th and the 24th and came to 4.75, and the
+      August 20th row belonged to `Mensual` alone. The rolling week reaches
+      further back than the ISO week does on a Tuesday — which is precisely the
+      difference `docs/round-ventanas-moviles.md` §1 said would not be visible
+      to a reader, and is very visible here.
+    */
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([
       { kolId: kol.id, day: "2026-08-25", sol: "3.5", usd: "500" },
       { kolId: kol.id, day: "2026-08-24", sol: "1.25", usd: "180" },
       { kolId: kol.id, day: "2026-08-20", sol: "10", usd: "1400" },
-      { kolId: kol.id, day: "2026-07-31", sol: "999", usd: "999999" },
+      // Outside 30 days from the 25th, so it must never appear in any window.
+      { kolId: kol.id, day: "2026-07-20", sol: "999", usd: "999999" },
     ]);
 
-    expect((await detail("uno", "?window=diario")).realizedSol).toBe("3.5");
-    expect((await detail("uno", "?window=semanal")).realizedSol).toBe("4.75");
-    expect((await detail("uno", "?window=mensual")).realizedSol).toBe("14.75");
-    expect((await detail("uno", "?window=mensual")).realizedUsd).toBe("2080");
+    expect((await detail("uno", "?window=1d")).realizedSol).toBe("3.5");
+    expect((await detail("uno", "?window=7d")).realizedSol).toBe("14.75");
+    expect((await detail("uno", "?window=30d")).realizedSol).toBe("14.75");
+    expect((await detail("uno", "?window=30d")).realizedUsd).toBe("2080");
   });
 
   it("reports back the window it summed", async () => {
     await insertKol({ slug: "uno" });
-    expect((await detail("uno", "?window=semanal")).window).toBe("semanal");
+    expect((await detail("uno", "?window=7d")).window).toBe("7d");
     // The modal uses it to discard a response that arrives after the reader has
     // moved to another segment, so it has to be the *answered* window and not
     // an echo of the request.
-    expect((await detail("uno")).window).toBe("diario");
+    expect((await detail("uno")).window).toBe("1d");
   });
 });
 
 describe("card-calendario-pnl's series", () => {
-  it("accumulates the daily figures, ending exactly on the window total", async () => {
+  it("accumulates the calendar month's figures, and says the same days it paints", async () => {
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([
       { kolId: kol.id, day: "2026-08-24", sol: "1.25", usd: "180" },
       { kolId: kol.id, day: "2026-08-25", sol: "-0.5", usd: "-70" },
     ]);
 
-    const body = await detail("uno", "?window=semanal");
+    const body = await detail("uno", "?window=7d");
     // Each day carries its own figure **and** the running total: the calendar
-    // paints the first and the header is the last of the second, and a calendar
-    // that recovered the daily figure by differencing could not tell a flat day
-    // from a missing one.
+    // paints the first and a calendar that recovered the daily figure by
+    // differencing could not tell a flat day from a missing one.
     expect(body.series).toEqual([
       { day: "2026-08-24", dailySol: "1.25", cumulativeSol: "1.25" },
       // `dailySol` is the string Postgres emitted for the `numeric`, untouched
@@ -207,9 +280,23 @@ describe("card-calendario-pnl's series", () => {
       // with `decimal.ts`; normalising it here would be a second formatter.
       { day: "2026-08-25", dailySol: "-0.5", cumulativeSol: "0.75" },
     ]);
-    // The header prints `realizedSol` and the running total ends on it. One
-    // number said twice must not be two numbers.
-    expect(body.series.at(-1)?.cumulativeSol).toBe(body.realizedSol);
+
+    /*
+      **`series` and `calendar.days` are the same days**, which is the property
+      that replaced "the running total ends on the window total".
+
+      That old identity was true while `series` spanned the window; since
+      2026-09-03 it spans the calendar **month** and the window is rolling, so
+      the two coincide only when the month happens to contain exactly the
+      window's days. Asserting it would pin a coincidence. What must hold is
+      that the two fields describing one card never disagree.
+    */
+    expect(body.series.map((point) => point.day)).toEqual(
+      body.calendar.days.map((day) => day.day),
+    );
+    expect(body.series.map((point) => point.dailySol)).toEqual(
+      body.calendar.days.map((day) => day.dailySol),
+    );
   });
 
   it("dates each point by the UTC calendar day, not the runner's", async () => {
@@ -223,15 +310,39 @@ describe("card-calendario-pnl's series", () => {
     ]);
   });
 
-  it("is empty when nothing closed in the window, rather than a zeroed point", async () => {
-    // DESIGN.md: "Absence is rendered as absence, never as a zero", and its
-    // two-states table gives this case its own empty state
-    // (`Sin operaciones cerradas en este período.`). A zero point would draw a
-    // flat line through a period in which nothing happened.
+  it("is empty when the month closed nothing, rather than a zeroed point", async () => {
+    /*
+      DESIGN.md: "Absence is rendered as absence, never as a zero", and its
+      two-states table gives this case its own empty state
+      (`Sin operaciones cerradas en este período.`). A zero point would draw a
+      flat calendar through a month in which nothing happened.
+
+      **The span is the month, not the window**, since 2026-09-03 — a rolling
+      window has partial days at both ends and `pnl_daily` is keyed by `date`.
+      So the empty case is a month with no rows, and the case below it is the
+      one worth keeping apart: a day *outside* the window still paints its cell,
+      because the calendar is not the window and never claimed to be.
+    */
+    await insertKol({ slug: "uno" });
+    const body = await detail("uno", "?window=1d");
+    expect(body.series).toEqual([]);
+    expect(body.calendar.days).toEqual([]);
+    expect(body.realizedSol).toBe("0");
+  });
+
+  it("paints a day the calendar's month covers even when the window does not", async () => {
+    // The 20th is inside August and outside the last 24 hours. The card shows
+    // it; the header's figure does not count it. Two periods on one screen, and
+    // the month's own total on the card is what keeps them apart —
+    // `docs/round-ventanas-moviles.md` §5 and `kol-detail.tsx`.
     const kol = await insertKol({ slug: "uno" });
     await insertDaily([{ kolId: kol.id, day: "2026-08-20", sol: "5", usd: "700" }]);
-    expect((await detail("uno", "?window=diario")).series).toEqual([]);
-    expect((await detail("uno", "?window=diario")).realizedSol).toBe("0");
+
+    const body = await detail("uno", "?window=1d");
+    expect(body.series).toEqual([
+      { day: "2026-08-20", dailySol: "5", cumulativeSol: "5" },
+    ]);
+    expect(body.realizedSol).toBe("0");
   });
 });
 
@@ -246,12 +357,12 @@ describe("card-stats", () => {
       { kol, mint, side: "buy", sol: "9", tokens: "50", usd: "1800", at: "2026-08-24T22:00:00Z" },
     ]);
 
-    const daily = await detail("uno", "?window=diario");
+    const daily = await detail("uno", "?window=1d");
     expect(daily.tradeCount).toBe(2);
     // Turnover, not a net: a buy spends SOL and a sell receives it.
     expect(daily.volumeSol).toBe("6.5");
 
-    const weekly = await detail("uno", "?window=semanal");
+    const weekly = await detail("uno", "?window=7d");
     expect([weekly.tradeCount, weekly.volumeSol]).toEqual([3, "15.5"]);
   });
 
@@ -273,7 +384,7 @@ describe("list-defi-trades", () => {
       { kol, mint, side: "buy", sol: "9", tokens: "5", usd: "1350", at: "2026-08-24T05:00:00Z" },
     ]);
 
-    const body = await detail("uno", "?window=diario");
+    const body = await detail("uno", "?window=1d");
     expect(body.trades.map((t) => t.blockTime)).toEqual([
       "2026-08-25T05:00:00.000Z",
       "2026-08-25T02:00:00.000Z",
@@ -436,10 +547,25 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
     const text = await response.clone().text();
     const body = (await response.json()) as PublicKolDetail;
 
+    /*
+      **`calendar` joined the shape on 2026-09-03**, and this line is where a
+      change to the published contract has to be made on purpose rather than
+      absorbed. It carries the PnL calendar's own month — `{ month, days, sells }`
+      — because the card stopped spanning the window and became a month the
+      reader pages through.
+
+      It is checked field by field below for the same reason the rest of this
+      case exists: `readKolDetail` spreads an identity row into the serializer,
+      so the only thing between a column and a public field is the serializer
+      naming its fields one at a time.
+    */
     expect(Object.keys(body).sort()).toEqual(
-      ["from", "kol", "privateWallets", "publicWallets", "realizedSol", "realizedUsd", "series",
-       "to", "tradeCount", "trades", "volumeSol", "window"].sort(),
+      ["calendar", "from", "kol", "privateWallets", "publicWallets", "realizedSol", "realizedUsd",
+       "series", "to", "tradeCount", "trades", "volumeSol", "window"].sort(),
     );
+    expect(Object.keys(body.calendar).sort()).toEqual(["days", "month", "sells"].sort());
+    // A month the server resolved, never the parameter echoed back.
+    expect(body.calendar.month).toMatch(/^\d{4}-\d{2}$/);
     expect(Object.keys(body.kol).sort()).toEqual(
       ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "xHandle"].sort(),
     );

@@ -50,16 +50,16 @@ target is what is live, and §6 is now marked stale.
 
 | | Ellos | Nosotros | Estado |
 |---|---|---|---|
-| Mark | 🇧🇷 flag tile + `KOLScan **Brasil**`, "Brasil" in blue | `kolscanhispano**.fun**`, `.fun` in cyan | **rehacer**: flag tile + two-tone wordmark, our name and a hispanic mark of our own (exception c: drawn by hand, not their file) |
+| Mark | 🇧🇷 flag tile + `KOLScan **Brasil**`, "Brasil" in blue | 🇪🇸 tile + `kolscanhispano**.fun**`, `.fun` in cyan | **listo** (2026-09-03). The tile held `kh` for a day: no single flag is honest for a site serving Spain *and* Latin America, and that objection was overruled by the owner rather than answered. It is the one that returns the first time a reader in Bogotá asks whose site this is |
 | Subtitle | `Ranking de Traders Brasileiros`, grey, under the mark | `Clasificación de traders hispanos` | **listo** |
 | Nav | `● Trade` (green live dot) · `Cabals`, right | `En vivo` · `Clasificación` · `Cabals` · `Operar`, centre | **listo salvo la alineación**: both their pages exist here since 2026-09-02. The green live dot is not copied — green is direction of money in this system |
-| Wallet | `🔗 Conectar Wallet`, bordered pill, right | `Entrar al padrón`, plain link | **cambiar**: same pill, same chain glyph. Exception (b): it opens `/registro`, never a transaction |
-| Header height / rule | ~84px, hairline under | ~76px, hairline under | **medir y ajustar** |
+| Wallet | `🔗 Conectar Wallet`, bordered pill, right | `🔗 Entrar al padrón`, bordered pill, right | **listo** (2026-09-02). Exception (b): it opens `/registro`, never a transaction |
+| Header height / rule | ~84px, hairline under | ~84px, hairline under | **listo** (2026-09-02) |
 
 ## 2. Home = the ranking
 
-Their home **is** the leaderboard: no hero, no feed, no value props. Ours has a live feed
-above the ranking.
+Their home **is** the leaderboard: no hero, no feed, no value props. **Ours too, since
+2026-09-03** — the feed moved to `/en-vivo` and `/leaderboard` redirects to `/`.
 
 | | Ellos | Nosotros | Estado |
 |---|---|---|---|
@@ -67,7 +67,7 @@ above the ranking.
 | Controls | `USD·BRL` then `Daily·Weekly·Monthly`, right of the title, two pill groups | `DIARIO·SEMANAL·MENSUAL` and `USD·ARS`, right of the title | **listo** (2026-09-02). `/cabals` carries the window group alone: no figure there is in a fiat the reader chose |
 | Currency | `USD · BRL` | `SOL · USD` | **decidido, con ronda escrita**: `docs/round-ars.md`. A display conversion over the stored USD, at one dated public rate, with the source printed. **Which rate stays the owner's open decision** |
 | Rows | Cards, gap between them, rounded, no header row | Cards, 6px gap, `radius-md`, no header row | **listo** (2026-09-02) |
-| Live feed | none | `En vivo` on the home page | **se queda, y es nuestro.** `docs/references.md` §5: the feed on the home page is the choice that makes the site read as alive in the first three seconds. Open for the owner |
+| Live feed | none | `En vivo` at `/en-vivo` | **resuelto por el dueño, 2026-09-03**: the home page is the ranking, as on the mould, and the feed keeps its own route rather than being deleted — which is where kolscan.io puts theirs |
 
 ## 3. The ranking row
 

@@ -16,16 +16,23 @@
  */
 
 :root {
-  /* DESIGN.md: "`canvas #0f1113` under everything ... Panels at `surface-1`,
+  /* DESIGN.md: "`canvas #111315` under everything ... Panels at `surface-1`,
      hover `surface-2`, selected `surface-3`." */
-  --canvas: #0f1113;
+  /* **#111315 and #ededed, the mould's own two**, measured on its `body` at
+     1440 on 2026-09-03. Ours were `#0f1113` and `#eef1f3` — two units darker
+     under everything and a hair cooler on every character. Small on a swatch
+     and not on a full page of text. `DESIGN.md`'s contrast table moved with
+     them: `ink` reads 15.07 against `surface-1`, and the four cabal tints,
+     which are measured against the canvas, drop to 6.84–11.04 and all still
+     clear AA. */
+  --canvas: #111315;
   --surface-1: #16191c;
   --surface-2: #1c2024;
   --surface-3: #23272c;
   --hairline: #2a2f35;
   --hairline-strong: #39404a;
 
-  --ink: #eef1f3;
+  --ink: #ededed;
   --ink-muted: #a5adb5;
   --ink-subtle: #7e878f;
 
@@ -52,9 +59,11 @@
      glyph in the matching `podium-N`." Named exactly as the document names
      them, which is why `design-tokens.test.ts`'s rename table needs no new
      entry for them. */
-  --podium-1: #4ade80;
-  --podium-2: #fbbf24;
-  --podium-3: #7dd3fc;
+  /* The mould's own three, measured on its DOM 2026-09-03. DESIGN.md's palette
+     block is the source and `design-tokens.test.ts` holds the two together. */
+  --podium-1: #009b3a;
+  --podium-2: #fedf00;
+  --podium-3: #002776;
   --podium-1-wash: #12251a;
   --podium-2-wash: #26200f;
   --podium-3-wash: #101f2b;
@@ -68,6 +77,11 @@
      than `surface-1`, because that is the chip's own background and the
      document says so beside its contrast table. Named exactly as the document
      names them, so the guardian's rename table needs no entry. */
+  /* The mould's own slate, adopted for the wordmark's second tone and the tail
+     of the podium gradient. It enters the system the way DESIGN.md requires —
+     with its measured ratio in the contrast table, 4.93 against `surface-1`. */
+  --brand-hispano: #598db0;
+
   --cabal-a: #a78bfa;
   --cabal-b: #f472b6;
   --cabal-c: #fdba74;
@@ -75,7 +89,7 @@
 
   /* DESIGN.md: "**Rows are 56px** — enough for a 36px circular avatar, the
      bold name, and the handle or `Wallets ocultas` beneath it." */
-  --row-height: 68px;
+  --row-height: 76px;
   --gutter: 16px;
   --panel-padding: 16px;
   /* Vertical rhythm between stacked blocks. DESIGN.md's `gutter` is the
@@ -211,7 +225,13 @@ a {
    the space between them (`docs/parecido-2026-09-02.md` §2). The document's
    ceiling is unchanged and still true. */
 .shell {
-  max-width: 992px;
+  /* **1024, so the content column is 992.** `max-width` bounds the border box
+     and the gutters are inside it, so a 992 shell was giving its rows 960 at
+     x=240; the mould's are 992 at x=224, measured on its own DOM at 1440. The
+     column the brief names is the *content*, not the box around it, so the box
+     is the column plus its two gutters. Below 1024 nothing changes: the shell
+     is narrower than its maximum and the gutters keep doing their job. */
+  max-width: calc(992px + 2 * var(--gutter));
   margin: 0 auto;
   padding: 0 var(--gutter) 16px;
 }
@@ -222,17 +242,49 @@ a {
    mould's arrangement, and DESIGN.md's Layout paragraph moved with it on
    2026-09-02. ~84px of header against the 76 it had: the padding is what
    carries the difference, and the mark tile sets the floor. */
+/* 85px, and the divider runs the full width of the viewport rather than the
+   container — both read from the mould's DOM at 1440. The rule is drawn by the
+   shell's own border so it can escape the 992px column. */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--gutter);
-  padding: 18px 0;
-  border-bottom: 1px solid var(--hairline);
+  /* **`min-height`, not `height`.** It was a fixed 85px, which is right at 1440
+     where the three parts fit on one line and wrong at 390 where they wrap onto
+     three: the box kept its 85px, the content overflowed it, and the wallet
+     pill was drawn on top of the page title below. Found by reading the 390
+     capture on 2026-09-03; no test catches a header painting over a heading.
+     The 85px measured off the mould is a floor, which is all it was ever
+     meant to be — `align-items: center` still centres a single row in it. */
+  min-height: 85px;
   flex-wrap: wrap;
+  padding: 10px 0;
 }
 
+/* The rule sits **inside** the 85, as theirs does: the header measured 86 here
+   against their 85, and the extra pixel was this border adding to the height
+   rather than being part of it. */
+.topbar-rule {
+  border-bottom: 1px solid var(--hairline);
+  box-sizing: border-box;
+}
+
+.topbar-rule .topbar {
+  min-height: 84px;
+}
+
+/* The header's own column: the same 992px, without the shell's bottom padding
+   so the rule sits on the header rather than under a gap. */
+.shell-topbar {
+  padding-bottom: 0;
+}
+
+/* An `<a>` since 2026-09-03 (`BrandHomeLink`), so it states the two things a
+   link inherits and a `div` never needed. */
 .brand {
+  color: inherit;
+  text-decoration: none;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas:
@@ -244,22 +296,24 @@ a {
   min-width: 0;
 }
 
-/* The mark tile the mould has and this site did not. Theirs is a flag; ours
-   cannot be one — no single country's flag is honest for a site that serves
-   Spain and Latin America — so it is the domain's two letters, in the accent,
-   on the chip's own ground. It is a mark, not a claim. */
+/* The mark tile, at the mould's exact treatment: **40×40, `border-radius: 0`,
+   `object-fit: contain`** — all three read off its own `<img>` on 2026-09-03.
+   `contain` and not `cover`, so the whole flag shows rather than a crop of its
+   middle; theirs does the same with `brazil-flag.png`.
+
+   It was the domain's two letters, then the 🇪🇸 glyph, and it is now an image
+   the owner supplied: `public/marca/espana.png`, copied from his own
+   `survives.fun` project (`app/public/flags/spain.png`). Provenance matters
+   here because exception (c) of DESIGN.md's clone rule is *no asset of theirs*
+   — this is the owner's own file, not the mould's, and it is a plain flag
+   render rather than the stylised country art the brief described. */
 .brand-mark {
   grid-area: mark;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  color: var(--accent);
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: -0.5px;
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: 0;
+  object-fit: contain;
 }
 
 .wordmark {
@@ -275,10 +329,18 @@ a {
    assumed." The document fixes the family and the weight; the size is not one
    of its typography roles, so it is set here at the headline's measure — the
    wordmark is a heading, not a display figure. */
+/* 24/700, the mould's measure: "KOLScan" in white and the second word in its
+   slate. */
 .wordmark {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 700;
-  letter-spacing: -0.4px;
+  color: #fff;
+  /* **Their wordmark has no tracking and a 32px line box.** Ours carried
+     `-0.4px` from the previous identity — a display face's negative tracking on
+     a 24px word — and a 34.8 line box, which put the subtitle two pixels lower
+     than theirs and tightened the name a hair. Both measured 2026-09-03. */
+  letter-spacing: normal;
+  line-height: 32px;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -288,13 +350,20 @@ a {
    nothing at 20px. The accent lands on the mark — which is not a figure — and
    nowhere else in this header. */
 .wordmark-accent {
-  color: var(--accent);
+  color: var(--brand-hispano);
 }
 
 .brand-subtitle {
-  color: var(--ink-muted);
-  font-size: 13px;
-  line-height: 1.2;
+  /* All three measured on theirs 2026-09-03: **14px in a 20px line box, in
+     `rgb(107,114,128)`.** It was 13px at 1.2 in `--ink-muted` — a pixel short,
+     a line box three pixels tight, and a grey fifty-odd units lighter, which
+     together made the header read smaller and busier than the mould's at the
+     same viewport. The raw grey for the same reason the row's quiet text uses
+     one: the palette has nothing at this level and a colour invented for one
+     line would owe `DESIGN.md`'s table a row nobody measured. */
+  font-size: 14px;
+  line-height: 20px;
+  color: rgb(107 114 128);
 }
 
 /* Right, beside the wallet action, as on the mould. `margin-left: auto` in a
@@ -311,6 +380,18 @@ a {
    indicator — DESIGN.md lists them, and the current nav item is not on the
    list. Ink against ink-muted says the same thing without spending the accent
    a second time in the same header. */
+/* The mould's live dot. DESIGN.md's one exception to green meaning money,
+   dated 2026-09-03 and scoped to this dot: it carries no figure. */
+.nav-live {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--gain);
+  vertical-align: middle;
+}
+
 .nav-link {
   color: var(--ink-muted);
   text-decoration: none;
@@ -342,11 +423,12 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
-  border: 1px solid var(--hairline-strong);
+  padding: 9px 14px;
+  border: 0;
   border-radius: var(--radius-md);
-  color: var(--ink);
-  font-size: 13px;
+  background: color-mix(in srgb, var(--brand-hispano) 20%, transparent);
+  color: #fff;
+  font-size: 16px;
   white-space: nowrap;
   text-decoration: none;
   transition:
@@ -355,8 +437,7 @@ a {
 }
 
 .registro:hover {
-  border-color: var(--accent);
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--brand-hispano) 32%, transparent);
 }
 
 .registro:focus-visible {
@@ -385,8 +466,18 @@ a {
   background: var(--surface-2);
 }
 
+/* **34px under the header, measured on the mould at 1440 on 2026-09-03.**
+   It was `--stack` (12), and with the shell's own padding that came to 13.5 —
+   twenty pixels tighter than theirs. Together with the gap below the title it
+   put our first row 31px above theirs at the same viewport, which is most of
+   what "the rows look smaller" was: not a size, a rhythm. The overlay in
+   `evidencia/kolscanhispano/2026-09-03-tamanos/` is where that was read. */
 .page-head {
-  margin-top: var(--stack);
+  /* **30, so the measured gap is 34.** The row is `align-items: end`, so the
+     32px title sits 4px below the container's top to share a baseline with the
+     36px control group beside it — the number that has to match theirs is the
+     one a reader sees, which is header-bottom to title-top. Verified: 34.0. */
+  margin-top: 30px;
 }
 
 /* The title and the page's controls on one row (`docs/clone-map.md` §2), the
@@ -409,6 +500,29 @@ a {
   .page-head.is-row {
     align-items: stretch;
   }
+}
+
+/* The mould's title: 24/700 white, on the controls row. `display-lg` is 30px
+   and stays for pages that are not the ranking. */
+.page-title {
+  font-family: var(--font-body);
+  font-size: 24px;
+  font-weight: 700;
+  /* Their title box is 32px tall around a 24px face; ours was 35, inheriting
+     `body`'s 1.45. Three pixels, and they push every row below it down. */
+  line-height: 1.33;
+  color: #fff;
+  letter-spacing: -0.4px;
+}
+
+/* The qualifiers, at the foot of the page and small — DESIGN.md carries why
+   they left the top of the list. */
+.page-note {
+  margin-top: var(--stack);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink-subtle);
 }
 
 .page-subtitle {
@@ -478,9 +592,10 @@ a {
 
 /* ---------- segmented ---------- */
 
-/* DESIGN.md `segmented`: "`Diario · Semanal · Mensual` and `SOL · USD` as pill
-   segments; selected segment `surface-3` with cyan text. All three windows are
-   real aggregations; none is a disabled stub." Links rather than buttons —
+/* DESIGN.md `segmented`: "`Diario · Semanal · Mensual` and `USD · ARS` as
+   **two dark boxes**, copied from the mould's DOM on 2026-09-03 ... All three
+   windows are real aggregations; none is a disabled stub." Links rather than
+   buttons —
    every combination is a URL, so the state survives a reload and the control
    ships no script of its own. */
 .controls {
@@ -490,12 +605,20 @@ a {
   flex-wrap: wrap;
 }
 
+/* **Two dark boxes, copied from the mould's own DOM** (measured at 1440 on
+   2026-09-03): track `rgba(89,141,176,.1)` — the brand blue at 10% — an 8px
+   radius, and *no* padding and *no* gap, so the segments run edge to edge
+   inside it and the selected one paints the full height of the box. Ours were
+   2px-padded pills on `surface-2`, which read as a different control at a
+   glance. `overflow: hidden` is what keeps the square segments inside the
+   rounded track. */
 .segmented {
   display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-2);
-  border-radius: var(--radius-pill);
+  gap: 0;
+  padding: 0;
+  background: color-mix(in srgb, var(--brand-hispano) 10%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 /* **This class has to render identically on an `<a>` and on a `<button>`, and
@@ -515,12 +638,10 @@ a {
    `normal` and a link inherits from `body` — a 3px height difference between
    the header's pills and the modal's.
 
-   DESIGN.md's `segmented` fixes only the selected segment: *"selected segment
-   `surface-3` with cyan text."* It says nothing about the unselected one, so
-   `transparent` is not quoted from it — it is what the header has always
-   rendered, and it lets the segment be the `surface-2` track it sits on rather
-   than a third surface the palette does not name. Recorded in the report as a
-   gap in the document. */
+   DESIGN.md now fixes both faces — *"the **selected** segment is the same blue
+   at **30% with white text** ... and the unselected one is `ink-muted` on the
+   bare track"* — so `transparent` here is the document's "bare track" and no
+   longer an undocumented choice. The gap the old comment recorded is closed. */
 /* Normal case, not `label`'s uppercase: the mould writes `Diário Semanal
    Mensal`, and a toggle is a word a reader picks rather than a heading over
    something (`docs/parecido-2026-09-02.md` §2). */
@@ -530,12 +651,14 @@ a {
   border: 0;
   font: inherit;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--ink-muted);
   text-decoration: none;
-  padding: 5px 12px;
-  border-radius: var(--radius-pill);
+  /* 14/500 in `8px 16px`, which is what makes the box 36px tall on the mould.
+     The segment carries no radius of its own: the track is what is rounded. */
+  padding: 8px 16px;
+  border-radius: 0;
   transition:
     color var(--hover),
     background var(--hover);
@@ -572,9 +695,16 @@ a {
   }
 }
 
+/* The selected segment on the mould is the same blue at 30% with white text —
+   not a cyan word on a third surface. This is the one place the ranking used
+   `--accent`, and dropping it here is deliberate: DESIGN.md now describes a
+   clone, and the owner's brief names this control *"resaltado exactamente como
+   los suyos"*. Measured over `--canvas`: the track lands on
+   `rgb(22,29,35)` and the selected segment on `rgb(42,63,77)`, giving `#fff`
+   **10.96:1** and the unselected `--ink-muted` **7.46:1**. */
 .segment.is-selected {
-  background: var(--surface-3);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--brand-hispano) 30%, transparent);
+  color: #fff;
 }
 
 /* `día UTC`, and the USD caveat. Above the figures they qualify, never behind
@@ -608,6 +738,46 @@ a {
 
 .state-empty-note {
   color: var(--ink-muted);
+}
+
+/* **`is-card` carries the row's own chrome, and only the ranking asks for it.**
+   The ranking lost its surrounding `.panel` when the rows moved onto the canvas
+   at the mould's measure, so its empty state was left as three lines of naked
+   text where a list of cards had been — which reads as a page that failed to
+   render rather than as a period with nothing in it.
+
+   It is a modifier and not a change to `.state-empty` because four other
+   surfaces share that class — the feed, the cabal board, the modal's calendar
+   and the modal's failed load — and **every one of them is already inside a
+   `.panel` or a dialog**. Putting the border on the shared class would have
+   drawn a second frame inside the first on all four. Checked on 2026-09-03:
+   `en-vivo/page.tsx:40` and `cabals/page.tsx:61` both still wrap theirs.
+
+   Same border, same 8px radius as a `.board > li`, because it stands exactly
+   where one would. */
+.state-empty.is-card {
+  padding: 20px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.state-empty.is-card .state-empty-lead {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* The other two windows, as the links `EmptyWindow` explains. `panel-link`'s
+   small uppercase is the shape this system already has for "somewhere else to
+   go from here", and the gap keeps two of them reading as a pair rather than
+   as a sentence that lost its spaces. */
+.state-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 4px;
 }
 
 /* ---------- leaderboard ---------- */
@@ -713,7 +883,7 @@ a {
 .board {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -721,14 +891,38 @@ a {
 
 /* The card itself, shared by both boards this product ranks — KOLs and cabals.
    Only the tracks differ between them. */
+/* **A row outside the podium has no chrome at all on the mould**, and this is
+   the measurement that changed the page most. Read off its DOM at 1440 and
+   again at 2473 on 2026-09-03: a non-podium row is
+   `background: rgba(0,0,0,0)`, no gradient, no border. Only the top three are
+   tinted, and the border they carry is the 4px bar on the left. Ours drew a
+   bordered card behind every row, which is why the list read heavier than
+   theirs at the same widths.
+
+   `padding: 16px 20px` is theirs too — the content box comes to 44px, which is
+   exactly the avatar, and `box-sizing: border-box` keeps the row at 76.
+
+   The radius stays: it is what shapes the podium gradient's corners, and it
+   costs nothing on a row with no background to round. */
 .board > li {
   display: grid;
   align-items: center;
-  gap: 0 8px;
+  /*
+    **No column gap, measured 2026-09-03.** Theirs puts the rank numeral at the
+    padding edge (`x=244` on a 224 row with 20px of padding) and the avatar
+    immediately after the 48px rank track (`x=292`); ours had an 8px gap there,
+    so the numeral sat at 264 and the avatar at 300 — twenty and eight pixels
+    right of theirs, on every row. The columns carry their own spacing: the
+    identity block has its 8px between name, chip and handle, and the two figure
+    tracks are fixed widths that already include their room.
+  */
+  gap: 0;
   min-height: var(--row-height);
-  padding: 0 8px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  /* No radius on a plain row — theirs is `0`, and with no background to round
+     it never showed either way. The podium rows take it below, where it shapes
+     the gradient's corners and the 4px bar's ends. */
+  border-radius: 0;
 }
 
 .board .row-leaderboard {
@@ -756,8 +950,11 @@ a {
   white-space: nowrap;
 }
 
+/* Left, at the padding edge, which is where the mould's numeral and medal both
+   sit. It was centred in its 48px track. */
 .rank-cell {
   grid-area: rank;
+  text-align: left;
 }
 .identity {
   grid-area: kol;
@@ -767,6 +964,14 @@ a {
 }
 .board .secondary {
   grid-area: usd;
+  /* **The one place the row still needs a gap.** `gap: 0` on the card matches
+     the mould's rank and identity columns, and it cost this pair a separator:
+     both figures are right-aligned in fixed tracks, so a long SOL amount fills
+     its track and lands against the parenthesis — `+12,10 SOL(+US$2.803,68)`,
+     read in the 1440 capture on 2026-09-03. Theirs never collides because its
+     four chain columns are wider than anything they hold; ours has one figure
+     in a track sized for it. */
+  padding-left: 10px;
 }
 
 /* The narrow card, and the whole reason for this rewrite: the row **wraps**
@@ -940,19 +1145,45 @@ a {
    taken is their full-colour 🏆🥈🥉, because DESIGN.md fixes "three tints, not
    three metals" and an emoji cannot carry the tint.
 
-   The bar is a `box-shadow: inset` on the card rather than a `border-left`, so
-   it costs no layout and every card — podium or not — keeps the same inner
-   width. It sat on the first *cell* while this was a table; on the card it can
-   run the full height, which is what it does on the mould. */
+   **It is a real `border-left` since 2026-09-03, not an inset shadow.** The
+   shadow was chosen so every card — podium or not — kept the same inner width;
+   measured on the mould the same day, theirs does **not**: its podium row is
+   `992 @ x=224` with a `border-left: 4px`, so its content box is `988 @ x=228`
+   while a plain row's is 992. Ours matched the outer box and started its content
+   4px to the left of theirs on exactly the three rows a reader looks at first.
+   A border costs layout, and here the layout it costs is the point. */
 .row-leaderboard.is-podium-1 {
-  background: linear-gradient(90deg, var(--podium-1-wash) 0%, transparent 78%);
-  box-shadow: inset 3px 0 0 0 var(--podium-1);
+  /* 25%, which is theirs for this rank — the three alphas differ and are
+     not a ramp: .25, .15 and .20 in rank order, read off their DOM. */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--podium-1) 25%, transparent),
+    color-mix(in srgb, var(--brand-hispano) 15%, transparent)
+  );
+  border-left: 4px solid var(--podium-1);
+  border-radius: 8px;
 }
 .row-leaderboard.is-podium-2 {
-  box-shadow: inset 3px 0 0 0 var(--podium-2);
+  /* 15%, which is theirs for this rank — the three alphas differ and are
+     not a ramp: .25, .15 and .20 in rank order, read off their DOM. */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--podium-2) 15%, transparent),
+    color-mix(in srgb, var(--brand-hispano) 15%, transparent)
+  );
+  border-left: 4px solid var(--podium-2);
+  border-radius: 8px;
 }
 .row-leaderboard.is-podium-3 {
-  box-shadow: inset 3px 0 0 0 var(--podium-3);
+  /* 20%, which is theirs for this rank — the three alphas differ and are
+     not a ramp: .25, .15 and .20 in rank order, read off their DOM. */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--podium-3) 20%, transparent),
+    color-mix(in srgb, var(--brand-hispano) 15%, transparent)
+  );
+  border-left: 4px solid var(--podium-3);
+  border-radius: 8px;
 }
 
 .row-leaderboard.is-podium-2 {
@@ -975,16 +1206,18 @@ a {
 /* The rank cell holds exactly one thing — a medal on the podium, a plain
    numeral below it — centred in a track wide enough for either, so the two
    never change the card's shape between windows. */
+/* **`flex-start`, not `center`.** The medal and the numeral both sit at the
+   padding edge on the mould — measured `x=244` on a row whose content box
+   starts at 244 — and centring them in the 48px track put ours twenty pixels
+   right of theirs on every row from four down. The earlier `text-align: left`
+   two hundred lines up could not win against a flex container's justification;
+   this is the rule that decides it. */
 .rank-cell {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
-/* `docs/clone-map.md` §3: "plain numeral, grey". */
-.rank-num {
-  color: var(--ink-subtle);
-}
 
 /* 🏆🥈🥉 since 2026-09-02. The emoji brings its own colour, which is why the
    box states no `color` and why nothing else in this stylesheet does either —
@@ -992,7 +1225,7 @@ a {
    figure. `line-height: 1` keeps a 56px card 56px tall whatever the system
    emoji face's own metrics are. */
 .medal {
-  font-size: 17px;
+  font-size: 30px;
   line-height: 1;
 }
 
@@ -1003,7 +1236,9 @@ a {
 .identity {
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* 16px between the avatar and the name, measured on the mould: its avatar
+     ends at 336 and its name starts at 352. Ours was 10. */
+  gap: 16px;
   min-width: 0;
 }
 
@@ -1016,9 +1251,77 @@ a {
    both unreadable, while a shortened name is still a name. */
 .identity-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* 18/600 white, the mould's measure. `name` in the type scale is 15/700, which
+   is what every other surface still uses. */
+.board .identity-line > .name {
+  font-size: 18px;
+  font-weight: 600;
+  /* Their line box is 28px around this 18px face; ours inherited `.name`'s 1.2
+     and came to 21.6. It shows as the identity sitting higher in the row than
+     theirs even when both rows are 76 tall. */
+  line-height: 28px;
+  color: #fff;
+}
+
+/* 14px, and italic — theirs is upright, ours is not: DESIGN.md fixes
+   `Wallets ocultas` as `hidden`, grey italic, "the reference sets it apart from
+   a real identifier by style, and so do we". */
+.board .hidden-wallets {
+  font-size: 14px;
+  /* 20px line box and `rgb(107,114,128)`, both measured on theirs. Ours was
+     16.8 and `--ink-subtle` (`#7e878f`), which is nineteen units lighter — the
+     phrase read as a peer of the handle rather than as the quieter thing it is
+     meant to be. The raw value is used here rather than a token because the
+     palette has no grey at this level and inventing one for a single phrase
+     would put an unmeasured colour in `DESIGN.md`'s table. */
+  line-height: 20px;
+  color: rgb(107 114 128);
+}
+
+/* No hairline around the row's avatar: theirs is a bare 44px circle with a
+   tinted ground, and our 1px border was taking two of those pixels off the
+   image inside it — measured 42 against their 44 on 2026-09-03. */
+.board .avatar {
+  border: 0;
+  /* The tint theirs shows behind the image — `rgba(89,141,176,.3)`, the brand
+     blue — so a slow or missing avatar is a coloured circle rather than a hole.
+     Ours had the palette's own gradient; this is the mould's. */
+  background: color-mix(in srgb, var(--brand-hispano) 30%, transparent);
+}
+
+/* **The radius goes on the image, not only on the box that clips it.** Theirs
+   is `9999px` on the `<img>`; ours was `0` and looked round only because the
+   span around it hides its overflow — correct today, and square the moment that
+   span loses `overflow: hidden`. Measured 2026-09-03. */
+.board .avatar img {
+  border-radius: var(--radius-pill);
+}
+
+/* The secondary identity at the mould's size. `Wallets Ocultas` measures
+   14/400 italic there, and the handle stands in the slot beside it, so both are
+   one size rather than two. */
+.board .handle {
+  font-size: 14px;
+}
+
+/* The `𝕏` the mould puts between the chip and the address slot. It is the link
+   here, and the handle beside it is text — the row is the modal's trigger, and
+   `KolRow` excludes anything inside an `<a>`. */
+.x-glyph {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-subtle);
+  text-decoration: none;
+  flex: none;
+}
+
+.x-glyph:hover {
+  color: var(--ink);
 }
 
 .identity-line > .name {
@@ -1071,6 +1374,25 @@ a {
   text-align: right;
 }
 
+/* **The ranking's two figures are set in Inter, not in the mono face**, at
+   18px: 600 for the SOL amount, 400 for the fiat beside it, both read from the
+   mould's DOM. DESIGN.md carries the departure from "every figure is tabular"
+   and its reason — a row read across is a sentence, a column read down is a
+   table, and only the second needs its digits to line up. */
+.board .pnl {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.board .secondary {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
 /* DESIGN.md `numeric-lg`, and the one figure on the row that carries a sign
    colour. */
 .num-lg {
@@ -1088,6 +1410,34 @@ a {
   font-size: 13px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* **After `.num`, because `.num` is what was beating it.** The rank cell is
+   `class="num rank-num"`, the two rules had equal specificity and `.num` was
+   declared 180 lines later, so the numeral rendered at JetBrains Mono 13/500
+   instead of Inter 20/400 — for a whole batch, while a comment three hundred
+   lines up claimed 20/400 and the overlay showed otherwise.
+
+   **This is the fourth time in this file.** The cabals podium, the feed row and
+   the controls group were all media queries written above their base; this one
+   is not a media query, which is why it did not look like the same mistake. The
+   rule is the same: a narrow override goes after what it overrides.
+
+   `docs/clone-map.md` §3: "plain numeral, grey", at the mould's **20/400**,
+   measured 2026-09-03 — it was 18 here, taken from a picture. Their grey is
+   `rgb(156,163,175)`; `--ink-muted` is `#a5adb5`, nine units lighter, and the
+   token is used rather than the raw value because every other grey on this page
+   is one and a second source for "muted" is worth more than nine units. */
+.rank-num {
+  font-family: var(--font-body);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 28px;
+  /* `rgb(107,114,128)`'s lighter neighbour, and the raw value for the same
+     reason `Wallets ocultas` uses one: the palette has no grey at this level,
+     and `--ink-muted` is nine units lighter, which reads as a numeral competing
+     with the handle beside it. */
+  color: rgb(156 163 175);
 }
 
 .gain {
@@ -1259,14 +1609,21 @@ a {
 
    Which of the four a cabal gets is decided by `src/lib/cabal.ts`, from the
    tag alone, so the same cabal keeps its colour across renders and reloads. */
+/* The mould's geometry — **12px in `2px 8px` on a 4px radius**, measured
+   2026-09-03 — and deliberately **not** its ink. Theirs prints `#fff` on the
+   tag colour; on the gold tag that is `rgb(255,255,255)` over `rgb(217,171,8)`,
+   which measures 1.9:1 and fails WCAG AA outright. DESIGN.md's contrast table
+   puts `canvas` on the tint for exactly this reason and measures 6.95:1 on the
+   worst of the four. Accessibility is one of the four things `CLAUDE.md` never
+   lets a shortcut touch, so the clone copies the box and keeps the ink. */
 .chip-cabal {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  border-radius: 4px;
   color: var(--canvas);
 }
 
@@ -1332,11 +1689,16 @@ a.row-age:hover {
      scroll — legal by DESIGN.md's Responsive rule and still a row that reads as
      cut. 860 gives the right column 483px, which is the row plus room, and it
      is inside Layout's 1280px maximum with the gutters. */
-  /* 745px, the mould's measure. It was 860 to fit the trade row's fixed
-     columns beside the figures; the row's own container scrolls, and the wider
-     card was buying that at the cost of a modal noticeably larger than theirs
-     (`docs/parecido-2026-09-02.md` §3). */
-  width: min(745px, calc(100vw - 32px));
+  /* **768px, and 745 is the same measurement.** Read off the mould's own
+     scrolling card at 1440 on 2026-09-03: `getBoundingClientRect().width` is
+     768 and its content box is 745, the 23px between them being its scrollbar.
+     Both numbers have been quoted at this card in different batches and neither
+     was wrong; this is the border box, so it is 768.
+
+     It was 860 before that, to fit the trade row's fixed columns beside the
+     figures — the row's own container scrolls, and the wider card was buying
+     that at the cost of a modal noticeably larger than theirs. */
+  width: min(768px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   padding: 0;
   border: 1px solid var(--hairline);
@@ -1506,11 +1868,16 @@ a.row-age:hover {
 
    The right padding is the close control's box: without it the PnL would run
    underneath it at a narrow width. */
+/* **The mould's header, measured on its DOM at 1440 on 2026-09-03**: a flex row
+   with a 16px gap, `20px 20px 16px` of padding, a 56px round avatar and three
+   lines of identity beside it. `align-items: flex-start` because a three-line
+   block beside a 56px circle centres badly — theirs sits the avatar with the
+   first line, not with the middle one. */
 .modal-head {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 40px var(--stack) 0;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 40px 16px 20px;
   border-bottom: 1px solid var(--hairline);
   /* The PnL drops to its own line before the identity has to give anything up.
      DESIGN.md sets no breakpoint ("between them the layout is fluid"), so this
@@ -1524,7 +1891,7 @@ a.row-age:hover {
 .modal-identity {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
   /* 180px is the basis that makes the wrap above happen at the right moment:
      wide enough for a name and a full 15-character handle, narrow enough that
@@ -1568,7 +1935,42 @@ a.row-age:hover {
   flex: none;
 }
 
-.modal-pnl {
+/* **The PnL moved into the second line on 2026-09-03** (the mould's header),
+   so it is a figure beside the handle rather than a stacked pair pinned to the
+   right edge. The old block is below and no longer reached by this class. */
+.modal-identity .modal-pnl {
+  font-size: 18px;
+  font-weight: 600;
+  flex: none;
+}
+
+/* The three marks on the first line, and the wallet line under the handle. */
+.modal-identity .identity-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.modal-identity .identity-third {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Where the mould prints a truncated address chip. Ours says how much of the
+   operation is on show instead — exception (a), no address ever — in the chip's
+   own shape so the line reads as theirs does. */
+.wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ink-subtle);
+}
+
+.modal-pnl-stacked {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -1613,16 +2015,129 @@ a.row-age:hover {
    tokens: DESIGN.md's contrast table is a claim about a fixed set of colours,
    and a mixed-down background carrying no text is not a foreground that owes
    the table a row. The cell prints no figure — its `aria-label` does. */
+/* **Seven equal columns across the card, 4px apart** — the mould's own grid,
+   measured at 1440 on 2026-09-03 as `repeat(7, 95.42px)` inside a 692px block,
+   which is `1fr` with a 4px gap.
+
+   It was `repeat(7, 32px)` until then, and the reason that rule existed is
+   gone with the window: a single-day *window* stretched to `1fr` rendered one
+   95px square, so the cells were pinned. The card spans a **month** now, always
+   28 to 31 cells, so there is no degenerate span left to defend against and the
+   columns can take the width the mould gives them — which is what makes room
+   for the amount inside the cell. */
 .calendar {
   display: grid;
-  /* **Fixed cells, not `1fr`.** Stretched across the card a single-day window
-     rendered one 95px green square — read in the capture, and the reason this
-     is stated rather than left to a `1fr` that happens to look right at one
-     window. A calendar cell is a cell at every span: 32px whether the grid
-     holds one day or thirty-one. */
-  grid-template-columns: repeat(7, 32px);
-  justify-content: start;
+  grid-template-columns: repeat(7, 1fr);
   gap: 4px;
+}
+
+/* **The calendar sits on a ground of its own**, which is the mould's:
+   `rgba(34,38,42,.55)` on an 8px radius with 16px of padding, measured on its
+   `<section>` at 1440. Every other block in the modal is flat on the card, and
+   this one is not — it is the biggest thing in the modal and the only one with
+   an internal grid, so the ground is what separates the grid from the page. */
+.card-calendar {
+  background: color-mix(in srgb, var(--surface-3) 55%, transparent);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+/* The card's head: the block's name with the month's total under it on the
+   left, the month control on the right. 48px tall with a 12px gap, measured. */
+.calendar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.calendar-total {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.calendar-month {
+  font-size: 14px;
+  color: var(--ink-muted);
+  min-width: 120px;
+  text-align: center;
+}
+
+.calendar-arrow {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--hover);
+}
+
+.calendar-arrow:hover {
+  color: var(--ink);
+}
+
+/* The row under the grid — days each way, best day, streak, sells. `11px` and
+   `rgb(107,114,128)` on the mould; `--ink-subtle` is this palette's answer to
+   that grey. The gain and loss words keep the money colours because that is
+   exactly what they count. */
+/* **The calendar at 390.** Seven columns is not negotiable — it is a calendar —
+   so what gives is the cell: the amount goes, the day number stays, and the
+   grid fits in a 358px card with room for the card's own padding.
+
+   Read off `viewport.spec.ts` on 2026-09-03: the 44px floor and the 11px
+   figure were measured at 1440 and carried straight down, so the modal's own
+   grid was 364px wide inside a 358px card and the whole dialog scrolled
+   sideways. DESIGN.md, Responsive: "Clipping is not a compact layout, it is a
+   bug" — and neither is a dialog that slides.
+
+   The figure is not lost: the cell's `aria-label` carries the day and the
+   amount in full, and the card's own total is above the grid. */
+@media (max-width: 640px) {
+  .calendar-cell {
+    min-height: 34px;
+    padding: 3px 4px;
+  }
+
+  .calendar-amount {
+    display: none;
+  }
+
+  .calendar-day {
+    font-size: 11px;
+  }
+}
+
+.calendar-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  /* 11px grey, normal case and normal tracking: it overrides `label`'s
+     uppercase because the mould's row is a sentence of facts, not a heading —
+     `melhor +R$149.6k · seq 2d · 1.478 vendas`. */
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink-subtle);
 }
 
 .calendar-weekday {
@@ -1630,13 +2145,73 @@ a.row-age:hover {
   color: var(--ink-subtle);
 }
 
+/* A cell is a small card now, not a square of colour: the day number in the
+   corner and the amount under it, which is the mould's calendar. `aspect-ratio`
+   is gone — at `1fr` across 692px a square cell would be 95px tall and the
+   month would not fit the card. 44px is theirs. */
 .calendar-cell {
-  display: block;
-  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  /* `min-width: 0` so a `1fr` track may go below its content's intrinsic size:
+     without it the seven cells claim their widest child and the grid refuses to
+     shrink, which is what pushed the modal past 390. */
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
-  /* A day the window covers with nothing behind it. Visible as a slot, so the
-     shape of the month is readable, and unmistakable for a figure. */
-  background: var(--surface-2);
+  overflow: hidden;
+  /* **A quiet day is a number, not a slot.** It was `surface-2` so the shape of
+     the month stayed readable when a cell was a 14px square with nothing in it;
+     the cell prints its day number now, which does that job better, and the
+     mould leaves its empty days on the card's own ground. Thirty boxes behind
+     thirty numbers is a grid competing with the one figure on it. */
+  background: transparent;
+}
+
+/* The day of the month, in the cell's corner. Small and quiet: it locates the
+   figure, it is not the figure. */
+.calendar-day {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-subtle);
+}
+
+/* The amount inside the cell, which is what makes this a calendar rather than
+   a heatmap. It never wraps and never spills: a long figure is clipped by the
+   cell's own `overflow`, and the `aria-label` on the cell carries it in full. */
+.calendar-amount {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* **A painted cell prints its figure in ink, never in the colour it is painted
+   with.** `.gain` and `.loss` set `color`, and the cell carries one of them to
+   choose its background — so the amount inherited green on green and the cell
+   photographed as an empty square. Found by reading the capture on 2026-09-03,
+   which is the third time this batch that a colour rule was only visible in a
+   picture.
+
+   `--canvas` on the two dark levels and `--ink` on the faint one: the paint at
+   25% is still nearly the surface it was mixed into, so light text belongs
+   there and dark text does not. */
+.calendar-cell.gain,
+.calendar-cell.loss {
+  color: var(--ink);
+}
+
+.calendar-cell.level-2,
+.calendar-cell.level-3 {
+  color: var(--canvas);
+}
+
+.calendar-cell.level-2 .calendar-day,
+.calendar-cell.level-3 .calendar-day {
+  color: inherit;
+  opacity: 0.75;
 }
 
 .calendar-cell.gain.level-1 {
@@ -1693,8 +2268,13 @@ a.row-age:hover {
   display: grid;
   /* Not halves: the left column holds three short figure cards and the right
      holds a list whose row has 461px of fixed columns. Splitting them evenly
-     starved the half that needed the width. */
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+     starved the half that needed the width.
+     **9:14 since 2026-09-03, up from 5:7.** At 5:7 the right column came out
+     408px against a row wanting 418, and the ten pixels were taken out of the
+     token symbol — `$COMETA` printed `$COM…`, which is the one field in the row
+     a reader needs whole. 9:14 gives it 425px with the left column still ahead
+     of its own content, which was sitting on visible slack. */
+  grid-template-columns: minmax(0, 9fr) minmax(0, 14fr);
   gap: var(--stack);
   align-items: start;
 }
@@ -1789,6 +2369,28 @@ a.row-age:hover {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* **Above 640 the row shrinks instead of scrolling**, which is the other half
+   of the paragraph on `.row-trade`.
+
+   `min-width: max-content` was written for 390, where the row wants 337px in a
+   326px card and truncating would drop whole fields. It applied at every width,
+   though, and when the modal body became two columns the right one came out
+   408px against a row wanting 418 — a 10px deficit, enough to cut the tail off
+   every `PRIVADO` chip at 1440 with no visible affordance to scroll for it.
+   Read off the capture on 2026-09-03; measured `418 - 408 = 10`.
+
+   The deficit itself is gone — `.modal-columns` now splits 9:14 and the column
+   holds 425px — so this rule is the **backstop**: if the row's fixed columns
+   ever grow past what the split gives them, the symbol truncates with an
+   ellipsis instead of a chip being silently cut off the end. Below 640 the
+   `max-content` rule stands and nothing is dropped at all. Later than the base
+   rule, per the convention above. */
+@media (min-width: 641px) {
+  .row-trade {
+    min-width: 0;
+  }
 }
 
 .trade-usd {
@@ -2059,15 +2661,10 @@ a.row-moment:hover {
   outline-offset: 2px;
 }
 
-/* The KOL detail's wallet counts (`card-wallets`), which reuse `.stat`. */
-.wallet-counts {
-  display: flex;
-  gap: var(--stack);
-  flex-wrap: wrap;
-}
-
-.wallet-counts .num svg {
-  margin-right: 4px;
+/* The padlock beside the private count, on the header's wallet line. It was
+   `.wallet-counts .num svg` while the counts were a card of their own; the card
+   went into the header on 2026-09-03 and the rule came with it. */
+.wallet-chip svg {
   vertical-align: -1px;
   color: var(--ink-subtle);
 }

@@ -6,6 +6,7 @@
  * a join that fans out, a filter that runs too late, a count that counts the
  * wrong rows. `docs/clone-map.md` §6 is the surface this feeds.
  */
+import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readCabals } from "./cabals";
 import { query } from "./db";
@@ -29,6 +30,23 @@ async function insertKol(slug: string, cabalId: string | null, status = "approve
   return id;
 }
 
+/**
+ * A day's realized figure for one KOL, written the way the product writes it.
+ *
+ * **It inserts a sell on `trade` as well as the `pnl_daily` row**, because
+ * `readCabals` sums `trade.realized_sol` since 2026-09-03 — every window is
+ * rolling and a day bucket cannot be cut at an arbitrary hour. Both are written
+ * rather than only the one the query reads: that is the state a real replay
+ * leaves (`migrations/015`: the same arithmetic feeds both), and a fixture that
+ * writes only one half would let the two drift apart in a test that is green.
+ *
+ * The trade lands at **00:30 UTC** of the named day. Midday was the first try
+ * and it was wrong in a way worth keeping written: `NOW` is 01:00 on the 25th,
+ * so a trade at 12:00 on the 25th is in the *future* relative to a window that
+ * ends now, and every sum came back `0`. A rolling window ends at the instant,
+ * not at the end of the day — which is exactly the difference this whole change
+ * is about, arriving first as a broken fixture.
+ */
 async function insertDaily(
   kolId: string,
   day: string,
@@ -41,10 +59,37 @@ async function insertDaily(
      VALUES ($1, $2::date, $3::numeric, $4::numeric, $5, 0)`,
     [kolId, day, sol, usd, closed],
   );
+
+  const walletId = await walletFor(kolId);
+  await query(
+    `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
+                        mint, side, token_amount, sol_amount, usd_amount, sol_usd, fee_sol,
+                        basis, block_time, realized_sol, realized_usd)
+     VALUES ($1::uuid, decode($2, 'hex'), decode($2, 'hex'), 0, $3::uuid, $4::uuid,
+             'mint-fixture', 'sell', 1, $5::numeric, $6::numeric, 150, 0,
+             'known', ($7 || 'T00:30:00Z')::timestamptz, $5::numeric, $6::numeric)`,
+    [crypto.randomUUID(), randomBytes(32).toString("hex"), kolId, walletId, sol, usd, day],
+  );
+}
+
+/** One active wallet per KOL, created on demand: `trade.wallet_id` is NOT NULL. */
+const wallets = new Map<string, string>();
+async function walletFor(kolId: string): Promise<string> {
+  const known = wallets.get(kolId);
+  if (known !== undefined) return known;
+  const id = crypto.randomUUID();
+  await query(
+    `INSERT INTO kol_wallet (id, kol_id, chain, address_hmac, address_enc, status, is_public)
+     VALUES ($1::uuid, $2::uuid, 'solana', decode($3, 'hex'), decode($3, 'hex'), 'active', FALSE)`,
+    [id, kolId, randomBytes(32).toString("hex")],
+  );
+  wallets.set(kolId, id);
+  return id;
 }
 
 beforeEach(async () => {
   await query("TRUNCATE kol, kol_wallet, cabal, token, trade, position, pnl_daily, pnl_position_daily CASCADE");
+  wallets.clear();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(NOW));
 });
@@ -60,7 +105,7 @@ describe("readCabals", () => {
     await insertDaily(two, "2026-08-25", "6", "600");
     await insertDaily(three, "2026-08-25", "9", "900");
 
-    const { entries } = await readCabals({ window: "diario" });
+    const { entries } = await readCabals({ window: "1d" });
 
     expect(entries.map((entry) => entry.tag)).toEqual(["ALF", "BET"]);
     expect(entries[0]).toMatchObject({ rank: 1, realizedSol: "10", realizedUsd: "1000", members: 2 });
@@ -84,7 +129,7 @@ describe("readCabals", () => {
       await insertDaily(two, day, "1", "100");
     }
 
-    const { entries } = await readCabals({ window: "mensual" });
+    const { entries } = await readCabals({ window: "30d" });
 
     expect(entries[0].members).toBe(2);
     expect(entries[0].realizedSol).toBe("5");
@@ -104,7 +149,7 @@ describe("readCabals", () => {
       await insertDaily(other, "2026-08-25", "100", "10000");
     }
 
-    const { entries } = await readCabals({ window: "diario" });
+    const { entries } = await readCabals({ window: "1d" });
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ members: 1, realizedSol: "2" });
@@ -126,7 +171,7 @@ describe("readCabals", () => {
     const trader = await insertKol("activo", active);
     await insertDaily(trader, "2026-08-25", "1", "100");
 
-    const { entries } = await readCabals({ window: "diario" });
+    const { entries } = await readCabals({ window: "1d" });
 
     expect(entries.map((entry) => entry.tag)).toEqual(["ACT", "QUI"]);
     expect(entries[1]).toMatchObject({ realizedSol: "0", closed: 0, members: 1 });
@@ -138,8 +183,8 @@ describe("readCabals", () => {
     await insertDaily(kol, "2026-08-25", "1", "100");
     await insertDaily(kol, "2026-08-24", "50", "5000");
 
-    expect((await readCabals({ window: "diario" })).entries[0].realizedSol).toBe("1");
-    expect((await readCabals({ window: "mensual" })).entries[0].realizedSol).toBe("51");
+    expect((await readCabals({ window: "1d" })).entries[0].realizedSol).toBe("1");
+    expect((await readCabals({ window: "30d" })).entries[0].realizedSol).toBe("51");
   });
 
   it("breaks a tie by tag, so equal totals do not reshuffle between loads", async () => {
@@ -149,14 +194,14 @@ describe("readCabals", () => {
       await insertDaily(kol, "2026-08-25", "1", "100");
     }
 
-    const first = (await readCabals({ window: "diario" })).entries.map((entry) => entry.tag);
-    const second = (await readCabals({ window: "diario" })).entries.map((entry) => entry.tag);
+    const first = (await readCabals({ window: "1d" })).entries.map((entry) => entry.tag);
+    const second = (await readCabals({ window: "1d" })).entries.map((entry) => entry.tag);
 
     expect(first).toEqual(["AAA", "MMM", "ZZZ"]);
     expect(second).toEqual(first);
   });
 
   it("has nothing to rank when there are no cabals at all", async () => {
-    expect((await readCabals({ window: "diario" })).entries).toEqual([]);
+    expect((await readCabals({ window: "1d" })).entries).toEqual([]);
   });
 });

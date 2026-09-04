@@ -143,3 +143,136 @@ function levelOf(value: bigint, peak: bigint): 0 | 1 | 2 | 3 {
   if (value * 3n <= peak * 2n) return 2;
   return 3;
 }
+
+
+/**
+ * # The month grid
+ *
+ * `docs/parecido-2026-09-02.md` §7 and the owner's brief of 2026-09-03: the
+ * mould's calendar is **a calendar month with month navigation**, not the
+ * window's span. Measured on its own DOM the same day: a 7-column grid of
+ * 95.4px cells with a 4px gap, the month's own total in large type above it,
+ * and a summary row beneath.
+ *
+ * **This is a change to what the block measures, and it is the owner's, not
+ * mine.** `docs/round-ventanas-moviles.md` §3.4 closed with *"Nothing on the
+ * calendar card changes. It spans a calendar window."* The brief overrules that
+ * line: the card now spans a month the reader can page through, independent of
+ * the window that governs everything below it. The two are no longer the same
+ * period, which is exactly why the month's own total is printed on the card —
+ * without it the grid would be a set of days with no statement of what they add
+ * up to, sitting under a header that sums something else.
+ *
+ * **Monday-first, and that is the one thing not copied.** Their header reads
+ * `D S T Q Q S S` — Sunday-first, which is the Brazilian convention. Ours is
+ * `L M X J V S D`, because Spain and Latin America start the week on Monday and
+ * because `Semanal` here is an **ISO** week, which is Monday-based by
+ * definition (`windows.ts`). A Sunday-first grid beside a Monday-based window
+ * would put the same seven days in two different orders on one screen.
+ */
+export type MonthSummary = {
+  /** Days that closed up, and days that closed down. */
+  gainDays: number;
+  lossDays: number;
+  /** The month's best day, as a signed decimal, or `null` if nothing closed. */
+  best: string | null;
+  /** The longest run of consecutive days that closed up. */
+  streak: number;
+};
+
+/**
+ * `YYYY-MM` to the half-open `[from, to)` pair of `YYYY-MM-DD` strings the
+ * series query wants. `null` if the month is not one.
+ *
+ * Strings, not `Date`s, for the reason `SERIES_SQL` gives: `pg` turns a `date`
+ * into a `Date` at the runner's local midnight, so a UTC day would arrive as
+ * the previous one for this product's whole audience.
+ */
+export function monthRange(month: string): { from: string; to: string } | null {
+  const bounds = monthBounds(month);
+  return bounds === null ? null : { from: isoDay(bounds.start), to: isoDay(bounds.end) };
+}
+
+/** The UTC month an instant falls in. Never the local one — see `windows.ts`. */
+export function utcMonthString(at: Date): string {
+  return at.toISOString().slice(0, 7);
+}
+
+/** `YYYY-MM` to the first and last instants of that month. `null` if malformed. */
+function monthBounds(month: string): { start: number; end: number } | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (match === null) return null;
+  const year = Number(match[1]);
+  const index = Number(match[2]) - 1;
+  if (index < 0 || index > 11) return null;
+  return { start: Date.UTC(year, index, 1), end: Date.UTC(year, index + 1, 1) };
+}
+
+/**
+ * One cell per day of `month`, painted from `series` exactly as
+ * {@link calendarGrid} paints a window: absent days stay absent, and the three
+ * shades are relative to the month's own biggest day.
+ *
+ * A malformed month gives an empty grid rather than a loop, for the same reason
+ * the window version does — the caller has already gone wrong and a calendar is
+ * not where that gets discovered.
+ */
+export function monthGrid(
+  month: string,
+  series: readonly { day: string; dailySol: string }[],
+): CalendarGrid {
+  const bounds = monthBounds(month);
+  if (bounds === null) return { cells: [], leading: 0 };
+  return calendarGrid(isoDay(bounds.start), isoDay(bounds.end), series);
+}
+
+/**
+ * The row under the grid: `12 · 3`, the best day, the streak and the number of
+ * sells — the four things the mould prints there, minus the sell count, which
+ * is not derivable from a series of daily totals and comes from the query.
+ *
+ * The streak counts **calendar-consecutive** days, so a gap day breaks it even
+ * if the next day is also a gain: two wins either side of a quiet Wednesday are
+ * two runs of one, not a run of two. That is what makes it a statement about
+ * days rather than about trades.
+ */
+export function monthSummary(
+  month: string,
+  series: readonly { day: string; dailySol: string }[],
+): MonthSummary {
+  const bounds = monthBounds(month);
+  if (bounds === null) return { gainDays: 0, lossDays: 0, best: null, streak: 0 };
+
+  const byDay = new Map(series.map((point) => [point.day, point.dailySol]));
+  let gainDays = 0;
+  let lossDays = 0;
+  let best: string | null = null;
+  let bestValue = 0n;
+  let streak = 0;
+  let run = 0;
+
+  for (let instant = bounds.start; instant < bounds.end; instant += DAY_MS) {
+    const value = byDay.get(isoDay(instant));
+    if (value === undefined) {
+      run = 0;
+      continue;
+    }
+    const parsed = parseDecimal(value);
+    if (parsed > 0n) {
+      gainDays += 1;
+      run += 1;
+      if (run > streak) streak = run;
+    } else if (parsed < 0n) {
+      lossDays += 1;
+      run = 0;
+    } else {
+      run = 0;
+    }
+    if (best === null || parsed > bestValue) {
+      best = value;
+      bestValue = parsed;
+    }
+  }
+
+  return { gainDays, lossDays, best, streak };
+}

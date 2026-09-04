@@ -7,7 +7,7 @@
  * window's own biggest day.
  */
 import { describe, expect, it } from "vitest";
-import { calendarGrid } from "./calendar";
+import { calendarGrid, monthGrid, monthSummary } from "./calendar";
 
 describe("calendarGrid", () => {
   it("covers every day of the window, painted or not", () => {
@@ -85,5 +85,82 @@ describe("calendarGrid", () => {
     ]) {
       expect(calendarGrid(from, to, []).cells).toEqual([]);
     }
+  });
+});
+
+
+/**
+ * The month grid and its summary row, added 2026-09-03 with the modal's clone.
+ * September 2026 starts on a Tuesday, which is what makes `leading` worth
+ * asserting: a Monday-first grid has to skip exactly one cell before day one.
+ */
+describe("monthGrid", () => {
+  it("spans the whole month and leads with the right weekday offset", () => {
+    const grid = monthGrid("2026-09", []);
+
+    expect(grid.cells).toHaveLength(30);
+    expect(grid.cells[0].day).toBe("2026-09-01");
+    expect(grid.cells[29].day).toBe("2026-09-30");
+    // 2026-09-01 is a Tuesday, so Monday's column is empty.
+    expect(grid.leading).toBe(1);
+  });
+
+  it("paints only the days the series carries", () => {
+    const grid = monthGrid("2026-09", [
+      { day: "2026-09-02", dailySol: "3.5" },
+      { day: "2026-09-04", dailySol: "-1.25" },
+    ]);
+
+    expect(grid.cells[1]).toMatchObject({ day: "2026-09-02", direction: "gain" });
+    expect(grid.cells[3]).toMatchObject({ day: "2026-09-04", direction: "loss" });
+    // Absent, not zero: DESIGN.md, "Absence is rendered as absence."
+    expect(grid.cells[2].dailySol).toBeNull();
+    expect(grid.cells[2].direction).toBe("");
+  });
+
+  it("gives an empty grid for a month that is not one", () => {
+    for (const bad of ["2026-13", "2026", "septiembre", "2026-00"]) {
+      expect(monthGrid(bad, []).cells).toEqual([]);
+    }
+  });
+});
+
+describe("monthSummary", () => {
+  const series = [
+    { day: "2026-09-01", dailySol: "2" },
+    { day: "2026-09-02", dailySol: "5" },
+    { day: "2026-09-03", dailySol: "-1" },
+    { day: "2026-09-05", dailySol: "1" },
+    { day: "2026-09-06", dailySol: "4" },
+    { day: "2026-09-07", dailySol: "3" },
+  ];
+
+  it("counts the days each way and names the best one", () => {
+    const summary = monthSummary("2026-09", series);
+
+    expect(summary.gainDays).toBe(5);
+    expect(summary.lossDays).toBe(1);
+    expect(summary.best).toBe("5");
+  });
+
+  it("breaks the streak on a quiet day, not only on a losing one", () => {
+    // 5, 6 and 7 are three consecutive gains; 1 and 2 are two, and the 4th is
+    // absent, so the run cannot reach across it.
+    expect(monthSummary("2026-09", series).streak).toBe(3);
+
+    // With the 4th filled in as a gain the days read +,+,-,+,+,+,+ : the loss
+    // on the 3rd still cuts it, so the longest run is the four days after it.
+    expect(
+      monthSummary("2026-09", [...series, { day: "2026-09-04", dailySol: "0.5" }]).streak,
+    ).toBe(4);
+  });
+
+  it("says nothing rather than zero when the month closed nothing", () => {
+    expect(monthSummary("2026-09", [])).toEqual({
+      gainDays: 0,
+      lossDays: 0,
+      best: null,
+      streak: 0,
+    });
   });
 });

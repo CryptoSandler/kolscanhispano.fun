@@ -141,7 +141,7 @@ export function FeedLive({ initialTrades }: { initialTrades: PublicTrade[] }) {
       <div className="panel-head">
         <span className="live">
           <span className="live-dot" aria-hidden="true" />
-          <h1 className="headline">En vivo</h1>
+          <h1 className="headline">Live</h1>
         </span>
         <span className="label">Últimas operaciones</span>
       </div>

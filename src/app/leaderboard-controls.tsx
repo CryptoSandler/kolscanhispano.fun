@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { WINDOW_LABELS } from "@/lib/windows";
+import { WINDOW_LABELS, WINDOW_MEANINGS } from "@/lib/windows";
 
 /**
  * **The controls live on the page, beside its title, and not in the chrome.**
@@ -61,7 +61,7 @@ const FIAT_LABELS: Record<string, string> = { usd: "USD", ars: "ARS" };
 export function LeaderboardControls({
   windows,
   fiats,
-  basePath = "/leaderboard",
+  basePath = "/",
 }: {
   windows: readonly string[];
   /**
@@ -70,7 +70,7 @@ export function LeaderboardControls({
    * would be a control that changes nothing.
    */
   fiats: readonly string[];
-  /** Where a segment navigates. `/cabals` keeps its own route. */
+  /** Where a segment navigates. The ranking is `/`; `/cabals` keeps its own. */
   basePath?: string;
 }) {
   /*
@@ -88,8 +88,18 @@ export function LeaderboardControls({
   const params = useSearchParams();
   const selected = (name: string): string | null => params?.get(name) ?? null;
 
-  // The same fallbacks the page applies to an unreadable parameter, so the
-  // control and the page cannot disagree about what is selected.
+  /*
+    The same fallbacks the page applies to an unreadable parameter, so the
+    control and the page cannot disagree about what is selected.
+
+    **This briefly carried an `allWindows` prop** — the home was going to offer
+    three windows while answering six, and a window with no button here had to
+    survive a click on the currency group or `?window=1d` would silently become
+    `Diario`. The owner's amendment of 2026-09-03 removed the situation: every
+    surface offers exactly the three windows that exist. The prop went with it
+    rather than staying as generality nobody asked for; the failure it guarded is
+    recorded in `docs/round-ventanas-moviles.md` §5 if the split ever returns.
+  */
   const window = windows.includes(selected("window") ?? "") ? selected("window")! : windows[0];
   const unit = fiats.includes(selected("unit") ?? "") ? selected("unit")! : fiats[0];
 
@@ -124,6 +134,10 @@ export function LeaderboardControls({
             key={option}
             className={option === window ? "segment is-selected" : "segment"}
             aria-current={option === window ? "true" : undefined}
+            /* What each window measures, which the round made a condition of
+               shipping six of them: `Diario` and `1D` are different numbers
+               and a reader would reasonably expect them to agree. */
+            title={WINDOW_MEANINGS[option as keyof typeof WINDOW_MEANINGS]}
             href={href({ window: option })}
           >
             {WINDOW_LABELS[option as keyof typeof WINDOW_LABELS] ?? option}

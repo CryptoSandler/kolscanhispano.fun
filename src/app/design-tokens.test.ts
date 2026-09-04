@@ -159,9 +159,19 @@ describe("the contrast table in DESIGN.md is true", () => {
   // than acted on -- it is restored here with those two rows added, because a
   // rule the document states and nothing enforces is a rule that drifts.
   it("gives every foreground colour a row in the table", () => {
+    // `podium-1..3` joined the set on 2026-09-03, when they took the mould's
+    // exact values. Verified in `globals.css` on the same day: every one of the
+    // twelve uses is a `background` mix or a `box-shadow` bar and **none is a
+    // `color`** — they paint a 4px rule and a 15-25% wash, and no glyph or
+    // character is ever drawn in them. A text-contrast ratio for a colour that
+    // is never text is a number nobody can act on, and the mould's rank-3 navy
+    // (`#002776`) measures 1.30 against `surface-1`, which would have to be
+    // published as a PASS or the value refused. Neither is honest; the row does
+    // not belong in a table about ink.
     const BACKGROUNDS = new Set([
       "canvas", "surface-1", "surface-2", "surface-3",
       "hairline", "hairline-strong", "on-primary",
+      "podium-1", "podium-2", "podium-3",
       "podium-1-wash", "podium-2-wash", "podium-3-wash",
     ]);
     const documented = new Set(

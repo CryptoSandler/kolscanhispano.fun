@@ -124,14 +124,14 @@ async function expectScrollBack(page: Page): Promise<void> {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/leaderboard");
+  await page.goto("/");
   await expect(page.locator(".row-leaderboard")).toHaveCount(12);
   /*
     The canary, and this suite is the reason it exists. Every spec in `e2e/`
     passed for its whole life against a page whose bundle answered `403`, which
     was invisible until twelve cases here failed on a dialog that never opened
     (`0a04d8d`). `viewport.spec.ts` proves it on `/`, where `FeedLive` writes
-    the mark; `/leaderboard` has no feed, so `KolModalHost` writes one too and
+    the mark; the ranking has no feed on it, so `KolModalHost` writes one and
     this is where it is read. Every case below clicks something, and a click on
     an unhydrated page asserts nothing at all.
   */
@@ -148,34 +148,44 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     await expect(dialog.getByRole("link", { name: /Perfil de Ana Cripto en X/ })).toBeVisible();
     // The header's figure is the row's figure: both read `pnl_daily` through
     // the same window bounds, and the modal opens on the page's window.
+    // The header's figure is the row's figure: both read `trade.realized_sol`
+    // through the same window bounds, and the modal opens on the page's window.
     await expect(dialog.locator(".modal-pnl")).toContainText("+18,42 SOL");
-    await expect(rowAt(page, PUBLIC_ROW).locator(".num-lg")).toHaveText("+18,42 SOL");
+    await expect(rowAt(page, PUBLIC_ROW).locator(".pnl")).toHaveText("+18,42 SOL");
 
-    // The five cards DESIGN.md lists, in order. It listed four until
-    // `card-wallets` was added -- DECISIONES.md, 2026-08-31 moved the
-    // visibility decision from the KOL to the wallet, and the detail states
-    // how much of the operation is on show. This case is what caught the
-    // document and the screen disagreeing, so the count stays exact rather
-    // than becoming a `toBeGreaterThan`.
-    await expect(dialog.locator("section.card")).toHaveCount(5);
+    /*
+      **Four cards since 2026-09-03**, not five: `card-wallets` moved into the
+      header as a line, where the mould puts a truncated address chip and we may
+      not (exception (a)). The count stays exact rather than becoming a
+      `toBeGreaterThan` for the reason it always did — this case is what caught
+      the document and the screen disagreeing.
+    */
+    await expect(dialog.locator("section.card")).toHaveCount(4);
     await expect(dialog.getByText("Calendario de PnL")).toBeVisible();
-    await expect(dialog.getByText("PnL por cadena")).toBeVisible();
-    // Counts, never a list. The seed gives this KOL one published wallet, so
-    // the card carries the public half only -- the private half is omitted
-    // rather than printed as a zero, which is DESIGN.md's rule that absence is
-    // rendered as absence.
-    const wallets = dialog.locator("section.card-wallets");
+    // `Chain PnL`, in English, since `docs/copy.md`: sentences are Spanish and
+    // terms of art are not.
+    await expect(dialog.getByText("Chain PnL")).toBeVisible();
+
+    // Counts, never a list, and now on the header's third line. The seed gives
+    // this KOL one published wallet, so only the public half is stated — the
+    // private half is omitted rather than printed as a zero, which is
+    // DESIGN.md's rule that absence is rendered as absence.
+    const wallets = dialog.locator(".identity-third");
     await expect(wallets).toBeVisible();
-    await expect(wallets).toContainText("Públicas");
-    await expect(wallets).not.toContainText("Privadas");
-    // And it names neither an address nor anything base58: the whole card is
+    await expect(wallets).toContainText("wallet pública");
+    await expect(wallets).not.toContainText("privada");
+    // And it names neither an address nor anything base58: the whole line is
     // two words and a number.
     expect(findDisallowedBase58((await wallets.innerHTML()) ?? "")).toEqual([]);
-    // One `pnl_daily` row per KOL and a daily window, so the calendar is
-    // `calendar.ts`'s single-cell case: one painted day, in its own weekday's
-    // column, and no grid of five weeks around it.
+
+    /*
+      **The calendar spans a month now**, not the window, so the grid is every
+      day of the current month with one of them painted — the seed writes a
+      single `pnl_daily` row per KOL, dated today.
+    */
     await expect(dialog.locator(".calendar time.calendar-cell")).toHaveCount(1);
-    await expect(dialog.locator(".calendar span.calendar-cell")).toHaveCount(0);
+    await expect(dialog.locator(".calendar span.calendar-cell").first()).toBeVisible();
+    await expect(dialog.locator(".calendar-total")).toBeVisible();
 
     // And the two columns `docs/clone-map.md` §5 put below it: the figures on
     // the left, the trade list on the right.
@@ -187,7 +197,9 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     // photo.
     const avatar = dialog.locator(".modal-head img");
     await expect(avatar).toHaveAttribute("src", /^\/api\/avatar\/[0-9a-f-]{36}$/);
-    await expect(avatar).toHaveAttribute("width", "64");
+    // 56 since 2026-09-03, read off the mould's own `<img>` rather than taken
+    // from a picture — `docs/parecido-2026-09-02.md` §7.
+    await expect(avatar).toHaveAttribute("width", "56");
   });
 });
 
@@ -424,9 +436,14 @@ test.describe("spec §7: no wallet address reaches the open modal", () => {
     // applies to an emoji padlock for the same reason: it carries its own
     // colour, so it can be neither tinted with the text nor kept out of the
     // green and red reserved for money.
-    const wallets = dialog.locator("section.card-wallets");
-    await expect(wallets).toContainText("Privadas");
-    await expect(wallets).not.toContainText("Públicas");
+    // A line in the header since 2026-09-03, where the mould puts a truncated
+    // address chip and we may not. It carries **both** the phrase and the
+    // count: the phrase says the wallets are hidden, the number says how much
+    // operation is behind them.
+    const wallets = dialog.locator(".identity-third");
+    await expect(wallets).toContainText("privada");
+    await expect(wallets).not.toContainText("pública");
+    await expect(wallets).toContainText("Wallets ocultas");
     await expect(wallets.locator("svg")).toHaveCount(1);
     expect(await wallets.innerText()).not.toContain("🔒");
     // Drawn, not typed: an emoji padlock carries its own colour and could be
@@ -448,8 +465,21 @@ test.describe("spec §7: no wallet address reaches the open modal", () => {
     // floor, so the scan above cannot see it; this reads the slot instead.
     const { dialog } = await open(page, HIDDEN_ROW);
 
+    /*
+      **Anchored at both ends, which is the whole assertion**: what matters is
+      not that the known parts are present but that *nothing else* is, because
+      a six-character truncation would sit between them unnoticed.
+
+      The header grew three lines on 2026-09-03 and the enumeration grew with
+      it — the `𝕏` link, the cabal chip, the period's PnL beside the handle, and
+      the wallet line's count. The figures are patterns rather than literals so
+      a seed adjustment does not rewrite this case; the *shape* is what is
+      pinned, and an address has no shape that fits between these.
+    */
     const identity = dialog.locator(".modal-identity");
-    await expect(identity).toHaveText(/^Beto Trader@trader_betoWallets ocultas$/);
+    await expect(identity).toHaveText(
+      /^Beto Trader𝕏EJE@trader_beto[+−−][\d.,]+ SOL\([+−−]US\$[\d.,]+\)Wallets ocultas1 privada$/,
+    );
   });
 });
 

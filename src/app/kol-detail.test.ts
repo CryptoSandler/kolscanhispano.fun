@@ -44,7 +44,7 @@ function trade(overrides: Partial<PublicTrade> = {}): PublicTrade {
 
 function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
   return {
-    window: "diario",
+    window: "1d",
     kol: {
       slug: "kol-uno",
       name: "KOL Uno",
@@ -66,6 +66,19 @@ function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
       { day: "2026-08-25", dailySol: "8.25", cumulativeSol: "12.35" },
     ],
     trades: [trade()],
+    /*
+      The calendar's month, which the modal reads independently of the window
+      since 2026-09-03. Two days that closed, both inside August 2026, so the
+      grid, the month total and the summary row all have something real to say.
+    */
+    calendar: {
+      month: "2026-08",
+      days: [
+        { day: "2026-08-24", dailySol: "4.1" },
+        { day: "2026-08-25", dailySol: "8.25" },
+      ],
+      sells: 3,
+    },
     ...overrides,
   };
 }
@@ -82,17 +95,20 @@ describe("the header", () => {
     expect(html).toContain("KOL Uno");
     expect(html).toContain('href="https://x.com/ejemplo_uno"');
     expect(html).toContain("@ejemplo_uno");
-    expect(html).toContain('class="num-lg gain">+12,35 SOL');
+    // The PnL moved into the second line of the header on 2026-09-03, beside
+    // the handle, which is where the mould puts it. Same figure, same sign
+    // colouring, one class less of its own.
+    expect(html).toContain('class="num modal-pnl gain">+12,35 SOL');
     expect(html).toContain("(+US$2.861,62)");
   });
 
   it("colours a losing period loss, and a period that realized nothing neither", () => {
     expect(render({ realizedSol: "-4.1", realizedUsd: "-950.01" })).toContain(
-      'class="num-lg loss">−4,10 SOL',
+      'class="num modal-pnl loss">−4,10 SOL',
     );
     // "Green and red are direction of money and nothing else." A window in
     // which nothing was realized is neither, so the figure stays ink.
-    expect(render({ realizedSol: "0", realizedUsd: "0" })).toContain('class="num-lg ">0,00 SOL');
+    expect(render({ realizedSol: "0", realizedUsd: "0" })).toContain('class="num modal-pnl ">0,00 SOL');
   });
 
   it("shows the handle and Wallets ocultas together, never one instead of the other", () => {
@@ -106,10 +122,11 @@ describe("the header", () => {
   });
 
   it("serves the avatar from our own origin, keyed by kol id", () => {
-    // DESIGN.md's second Don't. 64px, per `modal-kol`.
+    // DESIGN.md's second Don't. **56px** since 2026-09-03, read off the
+    // mould's own `<img>` rather than taken from a picture.
     const html = render();
     expect(html).toMatch(/<img[^>]+src="\/api\/avatar\/[0-9a-f-]{36}"/);
-    expect(html).toContain('width="64"');
+    expect(html).toContain('width="56"');
     expect(html).not.toMatch(/<img[^>]+src="https?:/);
   });
 
@@ -153,41 +170,74 @@ describe("card-calendario-pnl", () => {
    * of that, not a bug to pad out to five weeks — the mould's rolling `1D` is a
    * different measurement and has its own round (`docs/clone-map.md` §8).
    */
-  it("draws a single cell for the daily window", () => {
+  it("draws the whole month, and paints only the days that closed something", () => {
     const html = render({
-      from: "2026-08-25",
-      to: "2026-08-26",
-      series: [{ day: "2026-08-25", dailySol: "12.35", cumulativeSol: "12.35" }],
+      calendar: { month: "2026-08", days: [{ day: "2026-08-25", dailySol: "12.35" }], sells: 1 },
     });
 
+    // August has 31 days and every one of them is a cell: the card spans a
+    // calendar month since 2026-09-03, not the window.
+    expect((html.match(/class="calendar-cell/g) ?? []).length).toBe(31);
+    // Exactly one of them carries a figure.
     expect((html.match(/<time class="calendar-cell/g) ?? []).length).toBe(1);
+    expect(html).toContain('class="calendar-cell gain level-3"');
+    expect(html).toContain("+12,35 SOL");
   });
 
   /**
-   * A day the window covers with no `pnl_daily` row behind it: an empty cell,
-   * hidden from a screen reader, and never a zero. DESIGN.md, "Absence is
-   * rendered as absence, never as a zero."
+   * A day the month covers with no `pnl_daily` row behind it: a cell with its
+   * number and no figure, and never a zero. DESIGN.md, "Absence is rendered as
+   * absence, never as a zero."
    */
-  it("leaves an untraded day blank rather than printing it at zero", () => {
+  it("leaves an untraded day without a figure rather than printing it at zero", () => {
     const html = render({
-      from: "2026-08-24",
-      to: "2026-08-27",
-      series: [{ day: "2026-08-25", dailySol: "1", cumulativeSol: "1" }],
+      calendar: { month: "2026-08", days: [{ day: "2026-08-25", dailySol: "1" }], sells: 1 },
     });
 
     expect((html.match(/<time class="calendar-cell/g) ?? []).length).toBe(1);
-    expect((html.match(/<span class="calendar-cell" aria-hidden="true"/g) ?? []).length).toBe(2);
+    expect((html.match(/<span class="calendar-cell"/g) ?? []).length).toBe(30);
     // And no cell claims a figure for a day that has none.
     expect(html).not.toContain('aria-label="24/08');
     expect(html).not.toContain('aria-label="26/08');
   });
 
+  /**
+   * The month's own total and the row under the grid, which are what keep the
+   * card honest once it stops spanning the window: a grid of days under a
+   * header that sums something else, with no statement of what the days come
+   * to, invites the reader to add the two.
+   */
+  it("prints the month's own total and the summary row", () => {
+    const html = render({
+      calendar: {
+        month: "2026-08",
+        days: [
+          { day: "2026-08-24", dailySol: "4.1" },
+          { day: "2026-08-25", dailySol: "8.25" },
+          { day: "2026-08-27", dailySol: "-1.5" },
+        ],
+        sells: 7,
+      },
+    });
+
+    // 4.1 + 8.25 - 1.5, which is not the header's window figure.
+    expect(html).toContain('class="calendar-total gain">+10,85 SOL');
+    expect(html).toContain("2 en verde");
+    expect(html).toContain("1 en rojo");
+    expect(html).toContain("mejor +8,25 SOL");
+    // The 24th and the 25th are consecutive; the 27th is not.
+    expect(html).toContain("racha 2 días");
+    expect(html).toContain("7 ventas");
+  });
+
   it("says an empty period in words, and draws no grid at all", () => {
-    const html = render({ series: [] });
+    const html = render({ calendar: { month: "2026-08", days: [], sells: 0 } });
 
     expect(html).toContain("Sin operaciones cerradas en este período.");
     expect(html).not.toContain('class="calendar"');
     expect(html).not.toContain("calendar-cell");
+    // And no summary row of five zeros over an empty grid.
+    expect(html).not.toContain("calendar-summary");
   });
 });
 
@@ -195,7 +245,8 @@ describe("card-stats and card-chain-pnl", () => {
   it("prints PnL total, trades and volume", () => {
     const html = render();
     expect(html).toContain("PnL total");
-    expect(html).toContain("Operaciones</span><span class=\"num\">4</span>");
+    // `Trades`, not `Operaciones`: `docs/copy.md`, the term stays English.
+    expect(html).toContain("Trades</span><span class=\"num\">4</span>");
     expect(html).toContain("28,65 SOL");
   });
 

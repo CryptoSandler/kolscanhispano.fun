@@ -51,6 +51,7 @@ const DEFAULT_CLOSED_POSITION_THRESHOLD = "0.95";
 const DEFAULT_DIRTY_LIMIT = 100;
 
 type TradeRow = {
+  id: string;
   side: "buy" | "sell";
   token_amount: string;
   /** The swap leg alone: `parse-swap` adds the fee back out of it (spec §4.4). */
@@ -79,8 +80,10 @@ type DayTotals = { realizedSol: bigint; realizedUsd: bigint; wins: number; losse
  * `slot` is nullable only for rows written before migration 002 added it;
  * those sort last within their second, then by instruction index.
  */
+// `id` joined the select on 2026-09-03: the replay now writes the per-sell
+// realized figure back onto the row it came from, so it has to know which row.
 const TRADES_SQL = `
-  SELECT side, token_amount, sol_amount, usd_amount, fee_sol, sol_usd, basis, block_time
+  SELECT id, side, token_amount, sol_amount, usd_amount, fee_sol, sol_usd, basis, block_time
     FROM trade
    WHERE kol_id = $1 AND chain = $2 AND mint = $3
    ORDER BY block_time, slot, instruction_index, id`;
@@ -136,6 +139,15 @@ type ReplayState = {
   unknownBasis: boolean;
   firstBuyAt: Date | null;
   lastTradeAt: Date | null;
+  /**
+   * What each sell realized, in the order the sells were applied.
+   *
+   * `migrations/015`: the same figure the day buckets get, kept per row so a
+   * window can be any interval instead of a whole number of UTC days. Empty
+   * for a position with no priced sell, which is exactly the set `pnl_daily`
+   * has no row for.
+   */
+  perSell: { id: string; realizedSol: bigint; realizedUsd: bigint }[];
   daily: Map<string, DayTotals>;
 };
 
@@ -153,6 +165,7 @@ function emptyState(): ReplayState {
     unknownBasis: false,
     firstBuyAt: null,
     lastTradeAt: null,
+    perSell: [],
     daily: new Map(),
   };
 }
@@ -294,6 +307,28 @@ function applyTrade(state: ReplayState, trade: TradeRow, threshold: bigint): voi
   state.realizedUsd += netUsd - removedUsd;
   state.soldQty += quantity;
 
+  /*
+    **The same number, kept as well as bucketed** — `migrations/015` and
+    `docs/round-ventanas-moviles.md` §4.
+
+    This line is the whole migration. `netSol - removedSol` is the realized
+    amount of *this sell*; until now it was added into a UTC day and forgotten,
+    which is why a rolling window could not be computed from stored data at any
+    grain finer than a day. Recording it here, beside the bucketing rather than
+    instead of it, is what makes `Diario` and `1D` cost the same and read from
+    one arithmetic.
+
+    Only sells reach this point, and only sells with a known basis: the guard
+    at the top of this function returns early on `basis = 'unknown'`, so a sell
+    withheld from `pnl_daily` is equally absent here. That is the property the
+    round's drift check rests on — both sides withhold the same rows.
+  */
+  state.perSell.push({
+    id: trade.id,
+    realizedSol: netSol - removedSol,
+    realizedUsd: netUsd - removedUsd,
+  });
+
   // Spec §4.7: realized PnL is bucketed by the timestamp of the sell.
   const totals = dayTotals(state, utcDay(trade.block_time));
   totals.realizedSol += netSol - removedSol;
@@ -352,6 +387,48 @@ export async function replayPosition(
 
     const state = emptyState();
     for (const trade of trades) applyTrade(state, trade, threshold);
+
+    /*
+      **The per-sell figures, written back onto their own rows.**
+
+      Two statements and not one, because the set that *should* carry a figure
+      can shrink: a sell that used to price and no longer does, or a buy that
+      was mis-parsed as a sell, has to lose its value rather than keep a stale
+      one. So the position's rows are cleared first and then only the sells the
+      replay actually realized are set. Anything else leaves a figure behind
+      that no replay would ever produce again, and `trade.realized_sol` would
+      drift from `pnl_daily` in exactly the way the round's check is for.
+
+      Inside the replay's transaction, so a reader never sees the cleared state.
+
+      ponytail: one `UPDATE ... FROM (VALUES ...)` per position, which is a
+      statement per position on a full replay. Batching across positions would
+      mean holding the figures outside the transaction that produced them, and
+      the replay is already one transaction per position by design.
+    */
+    await tx(
+      `UPDATE trade SET realized_sol = NULL, realized_usd = NULL
+        WHERE kol_id = $1 AND chain = $2 AND mint = $3
+          AND (realized_sol IS NOT NULL OR realized_usd IS NOT NULL)`,
+      [kolId, chain, mint],
+    );
+
+    if (state.perSell.length > 0) {
+      const values = state.perSell
+        .map((_, index) => `($${index * 3 + 1}::uuid, $${index * 3 + 2}::numeric, $${index * 3 + 3}::numeric)`)
+        .join(", ");
+      await tx(
+        `UPDATE trade t
+            SET realized_sol = v.realized_sol, realized_usd = v.realized_usd
+           FROM (VALUES ${values}) AS v(id, realized_sol, realized_usd)
+          WHERE t.id = v.id`,
+        state.perSell.flatMap((sell) => [
+          sell.id,
+          formatDecimal(sell.realizedSol),
+          formatDecimal(sell.realizedUsd),
+        ]),
+      );
+    }
 
     const previousDays = await tx<{ day: string }>(
       `SELECT to_char(day, 'YYYY-MM-DD') AS day FROM pnl_position_daily

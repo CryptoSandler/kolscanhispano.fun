@@ -21,6 +21,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PublicCabal } from "@/lib/cabals";
 import type { PublicKolDetail, PublicLeaderboardEntry } from "@/lib/serialize";
+import type { LeaderboardWindow } from "@/lib/windows";
 import { CabalsBoard } from "./cabals/board";
 import { FeedLive } from "./feed-live";
 import { KolDetail } from "./kol-detail";
@@ -51,9 +52,20 @@ function entry(rank: number, overrides: Partial<PublicLeaderboardEntry> = {}): P
   };
 }
 
-function leaderboardHtml(entries: PublicLeaderboardEntry[]): string {
+function leaderboardHtml(
+  entries: PublicLeaderboardEntry[],
+  window: LeaderboardWindow = "1d",
+  fiat: "usd" | "ars" = "usd",
+): string {
+  /*
+    `closed` is what the caller counted in the statement it ran, and this helper
+    derives it the way the calendar path does — a row with a win or a loss is a
+    row that closed something. Every test below that wants the empty state
+    passes rows with `winRate: null`, which is what `entry()` builds.
+  */
+  const closed = entries.some((e) => e.wins + e.losses > 0);
   return renderToStaticMarkup(
-    createElement(LeaderboardTable, { entries, fiat: "usd" as const, rate: null }),
+    createElement(LeaderboardTable, { entries, fiat, rate: null, window, closed }),
   );
 }
 
@@ -103,7 +115,7 @@ function emptyCell(surface: string): string {
 /** A KOL's period with nothing in it — the state the chart has to say in words. */
 function quietDetail(): PublicKolDetail {
   return {
-    window: "diario",
+    window: "1d",
     kol: {
       slug: "kol-uno",
       name: "KOL Uno",
@@ -122,6 +134,8 @@ function quietDetail(): PublicKolDetail {
     to: "2026-08-26",
     series: [],
     trades: [],
+    // A month with nothing in it, which is the state this fixture is about.
+    calendar: { month: "2026-08", days: [], sells: 0 },
   };
 }
 
@@ -156,16 +170,67 @@ describe("DESIGN.md's empty states are what the surfaces render", () => {
 
   it("renders the leaderboard's two lines, and no card", () => {
     const [lead, note] = emptyStates().leaderboard;
-    const html = leaderboardHtml([]);
+    // Two approved KOLs, neither of whom closed anything: the discriminator is
+    // "nothing closed", not "no rows", so this is the state under test.
+    const html = leaderboardHtml([entry(1), entry(2)]);
 
     expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
-    expect(html).toContain(`<p class="state-empty-note">${note}</p>`);
+    expect(html).toContain(note);
 
     // No zeroed rows — DESIGN.md's measured case is kolscan.io's fifty rows of
     // `+0.00 Sol` off a stalled indexer.
     expect(html).not.toContain("row-leaderboard");
     expect(html).not.toContain("0,00");
     expect(html).not.toContain("Todavía no hay KOLs en la clasificación.");
+  });
+
+  /**
+   * The three leads, the count and the links — DESIGN.md's paragraph under the
+   * table, parsed rather than restated for the same reason the table is. The
+   * document is what says `hoy`, `esta semana` and `este mes`; if it changes
+   * its mind about one of them, this fails rather than drifting.
+   */
+  it("names the interval that closed nothing, in the document's three phrases", () => {
+    const words = [...DESIGN.matchAll(/`(las últimas 24 horas|los últimos \d+ días)` on `(\w+)`/g)];
+    expect(words.map(([, , window]) => window)).toEqual(["1d", "7d", "30d"]);
+
+    for (const [, interval, window] of words) {
+      const html = leaderboardHtml([entry(1)], window as LeaderboardWindow);
+      // An **interval**, never a period: `docs/round-ventanas-moviles.md` §5.
+      // There is no word for "the last 24 hours" a reader would not hear as
+      // "today", and hearing it as today is what these windows removed.
+      expect(html, `${window} names "${interval}"`).toContain(
+        `Nadie cerró operaciones en ${interval}.`,
+      );
+    }
+  });
+
+  it("counts the roster, in the singular and the plural the document gives", () => {
+    expect(leaderboardHtml([entry(1)])).toContain("Hay 1 KOL en el padrón");
+    expect(leaderboardHtml([entry(1), entry(2), entry(3)])).toContain("Hay 3 KOLs en el padrón");
+
+    // Both spellings are the document's, so neither can drift out of it.
+    for (const spelling of ["Hay 1 KOL en el padrón", "Hay 12 KOLs en el padrón"]) {
+      expect(DESIGN).toContain(spelling);
+    }
+  });
+
+  it("links to the other two windows, carrying the chosen currency", () => {
+    const html = leaderboardHtml([entry(1)], "1d", "ars");
+
+    expect(html).toContain('href="/?window=7d&amp;unit=ars"');
+    expect(html).toContain('href="/?window=30d&amp;unit=ars"');
+    // Never a link back to the window the reader is already looking at.
+    expect(html).not.toContain("window=1d");
+  });
+
+  it("says the roster is empty, and offers no link to a second empty page", () => {
+    const html = leaderboardHtml([]);
+
+    expect(html).toContain("El padrón todavía está vacío.");
+    expect(DESIGN).toContain("El padrón todavía está vacío.");
+    expect(html).not.toContain("state-empty-actions");
+    expect(html).not.toContain("window=");
   });
 });
 
@@ -287,8 +352,19 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
     expect(html.match(/0,00 SOL/g)).toHaveLength(4);
   });
 
-  it("still says so in words when there is no roster at all", () => {
-    expect(leaderboardHtml([])).toContain(lead);
+  /**
+   * **The no-roster case got its own sentence on 2026-09-03.** It rendered the
+   * same daily lead as "nobody closed anything" until then, which said the
+   * wrong thing twice: it named a period when the problem is not the period,
+   * and the note under it would have offered a roster count of zero and two
+   * links to windows that are just as empty. DESIGN.md now carries both
+   * sentences, and this asserts the surface tells them apart.
+   */
+  it("says the roster is empty, in different words from a quiet period", () => {
+    const html = leaderboardHtml([]);
+
+    expect(html).toContain(emptyCell("`leaderboard` with no roster"));
+    expect(html).not.toContain(lead);
   });
 });
 

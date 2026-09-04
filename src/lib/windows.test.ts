@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { parseWindow, utcDayString, windowBounds, type LeaderboardWindow } from "./windows";
+import {
+  LEADERBOARD_WINDOWS,
+  parseWindow,
+  resolveWindow,
+  utcDayString,
+  windowBounds,
+  type LeaderboardWindow,
+} from "./windows";
 
-const now = new Date("2026-08-25T03:30:00Z"); // Tuesday
 
 /**
  * Every `Date` member that reads or writes the *local* calendar. `getTime`,
@@ -99,78 +105,67 @@ function isoBounds(window: LeaderboardWindow, at: string): [string, string] {
 }
 
 describe("windowBounds", () => {
-  it("daily starts at midnight UTC of the same day", () => {
-    expect(windowBounds("diario", now).from.toISOString()).toBe("2026-08-25T00:00:00.000Z");
+  /*
+    **These pinned the calendar boundaries until 2026-09-03**, and the reason
+    they were the sharpest tests in this file — Sunday, the year boundary, the
+    leap February — is that a calendar window has boundaries to get wrong. A
+    rolling window has none: it ends now and starts N days earlier, and the
+    whole class of off-by-one this file existed to catch cannot occur.
+
+    So they are replaced rather than deleted, by the properties that *can* now
+    be wrong: that the window ends at the caller's instant to the millisecond
+    and not at a rounded one, that a day is exactly 86,400,000 ms of arithmetic,
+    and that no local-time accessor is touched — which is the one guard that
+    survives unchanged, and is asserted below with every one of them stubbed.
+  */
+  it("ends at the caller's instant, to the millisecond", () => {
+    for (const window of LEADERBOARD_WINDOWS) {
+      expect(isoBounds(window, "2026-08-25T03:30:12.345Z")[1]).toBe("2026-08-25T03:30:12.345Z");
+    }
   });
 
-  it("weekly starts on Monday, ISO week", () => {
-    expect(windowBounds("semanal", now).from.toISOString()).toBe("2026-08-24T00:00:00.000Z");
-  });
-
-  it("monthly starts on the first of the month", () => {
-    expect(windowBounds("mensual", now).from.toISOString()).toBe("2026-08-01T00:00:00.000Z");
-  });
-
-  it("ends at the start of the next window, exclusive", () => {
-    expect(isoBounds("diario", "2026-08-25T03:30:00Z")).toEqual([
-      "2026-08-25T00:00:00.000Z",
-      "2026-08-26T00:00:00.000Z",
+  it("starts exactly N days earlier", () => {
+    expect(isoBounds("1d", "2026-08-25T03:30:00Z")).toEqual([
+      "2026-08-24T03:30:00.000Z",
+      "2026-08-25T03:30:00.000Z",
     ]);
-    expect(isoBounds("semanal", "2026-08-25T03:30:00Z")).toEqual([
-      "2026-08-24T00:00:00.000Z",
-      "2026-08-31T00:00:00.000Z",
+    expect(isoBounds("7d", "2026-08-25T03:30:00Z")).toEqual([
+      "2026-08-18T03:30:00.000Z",
+      "2026-08-25T03:30:00.000Z",
     ]);
-    expect(isoBounds("mensual", "2026-08-25T03:30:00Z")).toEqual([
-      "2026-08-01T00:00:00.000Z",
-      "2026-09-01T00:00:00.000Z",
-    ]);
-  });
-
-  // `getUTCDay` counts from Sunday and ISO 8601 counts from Monday, so Sunday
-  // is the day an off-by-one hides on: it is the only weekday where the naive
-  // formula lands six days out rather than one.
-  it("puts Sunday at the end of its ISO week, not at the start of the next", () => {
-    expect(isoBounds("semanal", "2026-08-30T23:59:59.999Z")).toEqual([
-      "2026-08-24T00:00:00.000Z",
-      "2026-08-31T00:00:00.000Z",
-    ]);
-    expect(isoBounds("semanal", "2026-08-31T00:00:00.000Z")).toEqual([
-      "2026-08-31T00:00:00.000Z",
-      "2026-09-07T00:00:00.000Z",
+    expect(isoBounds("30d", "2026-08-25T03:30:00Z")).toEqual([
+      "2026-07-26T03:30:00.000Z",
+      "2026-08-25T03:30:00.000Z",
     ]);
   });
 
-  it("holds the ISO week across a year boundary", () => {
-    // Thursday 2026-12-31 is in the week that starts Monday 2026-12-28.
-    expect(isoBounds("semanal", "2026-12-31T12:00:00Z")).toEqual([
-      "2026-12-28T00:00:00.000Z",
-      "2027-01-04T00:00:00.000Z",
-    ]);
-    // And Friday 2027-01-01 is still in it.
-    expect(isoBounds("semanal", "2027-01-01T00:00:00.000Z")).toEqual([
-      "2026-12-28T00:00:00.000Z",
-      "2027-01-04T00:00:00.000Z",
-    ]);
+  /**
+   * **No rounding to a day boundary, ever.** This is the property that
+   * separates `1D` from the `Diario` it replaced: a rolling window that started
+   * at midnight would be the calendar window under a new label, which is what
+   * `docs/round-ventanas-moviles.md` §1 called "a different number wearing the
+   * label". An instant three and a half hours into a day must produce bounds
+   * three and a half hours into two other days.
+   */
+  it("never snaps to midnight", () => {
+    for (const window of LEADERBOARD_WINDOWS) {
+      const [from, to] = isoBounds(window, "2026-08-25T03:30:00Z");
+      expect(from.endsWith("T00:00:00.000Z"), `${window} from`).toBe(false);
+      expect(to.endsWith("T00:00:00.000Z"), `${window} to`).toBe(false);
+    }
   });
 
-  it("rolls the month into the next year in December", () => {
-    expect(isoBounds("mensual", "2026-12-31T23:59:59.999Z")).toEqual([
-      "2026-12-01T00:00:00.000Z",
-      "2027-01-01T00:00:00.000Z",
-    ]);
+  /**
+   * A rolling window crosses a month, a year and a leap day with no special
+   * case, because it is subtraction rather than calendar arithmetic. These are
+   * the same dates the calendar tests used, kept so the file still says what
+   * happens there.
+   */
+  it("crosses a year and a leap day without a special case", () => {
+    expect(isoBounds("7d", "2027-01-01T00:00:00.000Z")[0]).toBe("2026-12-25T00:00:00.000Z");
+    expect(isoBounds("30d", "2028-03-01T12:00:00Z")[0]).toBe("2028-01-31T12:00:00.000Z");
   });
 
-  it("holds the month across February in a leap year", () => {
-    expect(isoBounds("mensual", "2028-02-29T18:00:00Z")).toEqual([
-      "2028-02-01T00:00:00.000Z",
-      "2028-03-01T00:00:00.000Z",
-    ]);
-  });
-
-  it("includes the first instant of the window and excludes the last", () => {
-    expect(isoBounds("diario", "2026-08-25T00:00:00.000Z")[0]).toBe("2026-08-25T00:00:00.000Z");
-    expect(isoBounds("diario", "2026-08-25T23:59:59.999Z")[1]).toBe("2026-08-26T00:00:00.000Z");
-  });
 
   /**
    * The property the brief asks for, stated so it cannot pass vacuously: the
@@ -184,20 +179,27 @@ describe("windowBounds", () => {
     // what is being proved, and it should not be running with a crippled
     // `Date` while it formats a failure.
     const computed = withoutLocalTime(() => ({
-      diario: isoBounds("diario", "2026-08-25T03:30:00Z"),
-      semanal: isoBounds("semanal", "2026-08-25T03:30:00Z"),
-      mensual: isoBounds("mensual", "2026-08-25T03:30:00Z"),
-      // A month boundary and a week boundary too: `Date.UTC(year, month + 1, 1)`
-      // is the one call in the module that could plausibly be reached for.
-      diciembre: isoBounds("mensual", "2026-12-31T23:59:59.999Z"),
-      domingo: isoBounds("semanal", "2026-08-30T23:59:59.999Z"),
+      un: isoBounds("1d", "2026-08-25T03:30:00Z"),
+      siete: isoBounds("7d", "2026-08-25T03:30:00Z"),
+      treinta: isoBounds("30d", "2026-08-25T03:30:00Z"),
+      // A month boundary and a year boundary too: subtraction crosses both with
+      // no special case, and this is where a calendar implementation would
+      // reach for one.
+      diciembre: isoBounds("30d", "2026-12-31T23:59:59.999Z"),
+      bisiesto: isoBounds("30d", "2028-03-01T12:00:00.000Z"),
     }));
 
-    expect(computed.diario).toEqual(["2026-08-25T00:00:00.000Z", "2026-08-26T00:00:00.000Z"]);
-    expect(computed.semanal).toEqual(["2026-08-24T00:00:00.000Z", "2026-08-31T00:00:00.000Z"]);
-    expect(computed.mensual).toEqual(["2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z"]);
-    expect(computed.diciembre).toEqual(["2026-12-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z"]);
-    expect(computed.domingo).toEqual(["2026-08-24T00:00:00.000Z", "2026-08-31T00:00:00.000Z"]);
+    expect(computed.un).toEqual(["2026-08-24T03:30:00.000Z", "2026-08-25T03:30:00.000Z"]);
+    expect(computed.siete).toEqual(["2026-08-18T03:30:00.000Z", "2026-08-25T03:30:00.000Z"]);
+    expect(computed.treinta).toEqual(["2026-07-26T03:30:00.000Z", "2026-08-25T03:30:00.000Z"]);
+    expect(computed.diciembre).toEqual([
+      "2026-12-01T23:59:59.999Z",
+      "2026-12-31T23:59:59.999Z",
+    ]);
+    expect(computed.bisiesto).toEqual([
+      "2028-01-31T12:00:00.000Z",
+      "2028-03-01T12:00:00.000Z",
+    ]);
   });
 
   // Proof the guard itself bites: if the stubs were not installed, or were
@@ -229,16 +231,24 @@ describe("windowBounds", () => {
       "2026-04-04T16:30:00Z", // Sydney, minutes after — the next UTC day has not started
     ];
     for (const at of transitions) {
-      const bounds = windowBounds("diario", new Date(at));
-      expect(bounds.to.getTime() - bounds.from.getTime()).toBe(86_400_000);
-      expect(bounds.from.toISOString()).toBe(`${at.slice(0, 10)}T00:00:00.000Z`);
-      const week = windowBounds("semanal", new Date(at));
-      expect(week.to.getTime() - week.from.getTime()).toBe(7 * 86_400_000);
+      // A rolling window is exactly N days of milliseconds across every one of
+      // these, which is the property a local-calendar implementation loses:
+      // `new Date(y, m, d)` on the morning a zone springs forward produces a
+      // day 23 hours long.
+      const day = windowBounds("1d", new Date(at));
+      expect(day.to.getTime() - day.from.getTime(), at).toBe(86_400_000);
+      expect(day.to.toISOString(), at).toBe(new Date(at).toISOString());
+
+      const week = windowBounds("7d", new Date(at));
+      expect(week.to.getTime() - week.from.getTime(), at).toBe(7 * 86_400_000);
+
+      const month = windowBounds("30d", new Date(at));
+      expect(month.to.getTime() - month.from.getTime(), at).toBe(30 * 86_400_000);
     }
   });
 
   it("refuses an invalid instant rather than producing an unmatchable window", () => {
-    expect(() => windowBounds("diario", new Date("not a date"))).toThrow();
+    expect(() => windowBounds("1d", new Date("not a date"))).toThrow();
   });
 });
 
@@ -252,14 +262,35 @@ describe("utcDayString", () => {
 });
 
 describe("parseWindow", () => {
-  it("defaults an absent parameter to the daily window", () => {
-    expect(parseWindow(null)).toBe("diario");
+  it("defaults an absent parameter to the shortest window", () => {
+    expect(parseWindow(null)).toBe("1d");
   });
 
-  it("accepts the three windows spec §4.9 names", () => {
-    expect(parseWindow("diario")).toBe("diario");
-    expect(parseWindow("semanal")).toBe("semanal");
-    expect(parseWindow("mensual")).toBe("mensual");
+  it("accepts the three rolling windows and nothing else", () => {
+    expect(parseWindow("1d")).toBe("1d");
+    expect(parseWindow("7d")).toBe("7d");
+    expect(parseWindow("30d")).toBe("30d");
+  });
+
+  /**
+   * **The three calendar names are not windows any more, and are not errors
+   * either.** They were published URLs for weeks (`docs/round-ventanas-moviles.md`
+   * §5), so `parseWindow` refuses them — they name nothing this product sums —
+   * and `resolveWindow` turns each into the 308 the pages and both API routes
+   * answer with. A value that was never a window stays `null` in both.
+   */
+  it("sends a published calendar name to its rolling equivalent, not to an error", () => {
+    expect(parseWindow("diario")).toBeNull();
+    expect(resolveWindow("diario")).toEqual({ redirectTo: "1d" });
+    expect(resolveWindow("semanal")).toEqual({ redirectTo: "7d" });
+    expect(resolveWindow("mensual")).toEqual({ redirectTo: "30d" });
+
+    // Never a window, so never a redirect: a caller asking for `anual` should
+    // learn it does not exist rather than read a figure under a label it chose.
+    expect(resolveWindow("anual")).toBeNull();
+    expect(resolveWindow("DIARIO")).toBeNull();
+    // Absent is the default, not a redirect.
+    expect(resolveWindow(null)).toBe("1d");
   });
 
   it("rejects anything else rather than falling back", () => {

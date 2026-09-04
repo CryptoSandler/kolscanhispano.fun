@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { readCabals } from "@/lib/cabals";
-import { LEADERBOARD_WINDOWS, WINDOW_LABELS, parseWindow } from "@/lib/windows";
+import { permanentRedirect } from "next/navigation";
+import { LEADERBOARD_WINDOWS, WINDOW_LABELS, resolveWindow } from "@/lib/windows";
 import { LeaderboardControls } from "../leaderboard-controls";
 import { USD_CAVEAT } from "../leaderboard-table";
 import { CabalsBoard } from "./board";
@@ -39,7 +40,22 @@ export default async function CabalsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const window = parseWindow(first(params.window)) ?? "diario";
+  /*
+    **The board sums the rolling windows too since 2026-09-03**, and the note
+    that stood here — explaining why it could only answer the calendar three —
+    is gone with them. `cabals.ts` sums `trade.realized_sol` the way
+    `leaderboard.ts` does; `migrations/015` is what made that possible, and it
+    is the same column, so a cabal total and the sum of its members' rows cannot
+    disagree.
+
+    A published calendar URL earns a **308** here for the same reason it does on
+    the ranking: `/cabals?window=mensual` was correct for weeks.
+  */
+  const resolved = resolveWindow(first(params.window));
+  if (resolved !== null && typeof resolved === "object") {
+    permanentRedirect(`/cabals?window=${resolved.redirectTo}`);
+  }
+  const window = resolved ?? "1d";
   const ranking = await readCabals({ window });
 
   return (
@@ -48,7 +64,7 @@ export default async function CabalsPage({
         <div>
           <h1 className="display-lg">Cabals</h1>
           <p className="page-subtitle">Grupos de traders compitiendo por ganancias</p>
-          <Link className="panel-link" href="/leaderboard">
+          <Link className="panel-link" href="/">
             ← Volver a la clasificación
           </Link>
         </div>

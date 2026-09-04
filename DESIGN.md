@@ -6,10 +6,10 @@ colors:
   primary: "#22d3ee"
   on-primary: "#04191d"
   primary-hover: "#67e8f9"
-  ink: "#eef1f3"
+  ink: "#ededed"
   ink-muted: "#a5adb5"
   ink-subtle: "#7e878f"
-  canvas: "#0f1113"
+  canvas: "#111315"
   surface-1: "#16191c"
   surface-2: "#1c2024"
   surface-3: "#23272c"
@@ -19,12 +19,13 @@ colors:
   semantic-loss: "#f2555a"
   semantic-neutral: "#7e878f"
   semantic-stale: "#c9a227"
-  podium-1: "#4ade80"
-  podium-2: "#fbbf24"
-  podium-3: "#7dd3fc"
+  podium-1: "#009b3a"
+  podium-2: "#fedf00"
+  podium-3: "#002776"
   podium-1-wash: "#12251a"
   podium-2-wash: "#26200f"
   podium-3-wash: "#101f2b"
+  brand-hispano: "#598db0"
   cabal-a: "#a78bfa"
   cabal-b: "#f472b6"
   cabal-c: "#fdba74"
@@ -39,7 +40,7 @@ typography:
   numeric:    { fontFamily: "JetBrains Mono", fontSize: 13px, fontWeight: 500, fontVariantNumeric: "tabular-nums" }
   numeric-lg: { fontFamily: "JetBrains Mono", fontSize: 16px, fontWeight: 600, fontVariantNumeric: "tabular-nums" }
 rounded: { sm: 3px, md: 6px, lg: 10px, pill: 999px }
-spacing: { row-height: 68px, gutter: 16px, panel-padding: 16px }
+spacing: { row-height: 76px, gutter: 16px, panel-padding: 16px }
 motion:  { data-in: "140ms ease-out", hover: "90ms linear", reduced: "none" }
 ---
 
@@ -87,17 +88,41 @@ focus rings, the selected tab, and the live indicator. **It never touches a figu
 
 ## Colors
 
-`canvas #0f1113` under everything — near the ground the genre uses, deliberately not
+`canvas #111315` under everything — near the ground the genre uses, deliberately not
 identical to it. Panels at `surface-1`, hover `surface-2`, selected `surface-3`. Hairlines
 separate; there are no shadows except the modal's scrim.
 
 **Green and red are direction of money and nothing else.** `semantic-gain #3ecf7f`,
 `semantic-loss #f2555a`. No status pill, no chart series, no validation message may use them.
 
+**One exception, and it is the owner's, dated 2026-09-03: the live dot in the nav.** The mould
+puts a green dot beside the item that is live, and the owner supersedes this rule for that dot
+alone. It is a dot, it carries no figure, and it is the only green on this site that does not
+mean money. Nothing else inherits the exception — a second green thing needs a second
+decision.
+
 **The podium is three medals over three tints.** 🏆 🥈 🥉 in the rank box — the mould's own
-glyphs, and Unicode is nobody's asset (exception c) — over `podium-N`: a solid 3px bar down
-the card's left edge and a `podium-N-wash` gradient fading out across it. Rank 1 green, 2
-amber, 3 blue.
+glyphs, and Unicode is nobody's asset (exception c) — over `podium-N`: a solid **4px** bar down
+the card's left edge and a gradient from `podium-N` to `brand-hispano` running across it. Rank 1
+green, 2 amber, 3 blue.
+
+**The three are the mould's exact values, read off its DOM on 2026-09-03**, alphas included and
+different per rank: `rgba(0,155,58,.25)`, `rgba(254,223,0,.15)`, `rgba(0,39,118,.20)`, each over
+`rgba(89,141,176,.15)`, each with its own colour at full opacity in the bar.
+
+**They are the colours of the flag of Brazil**, which is what those three hexes are, and the
+owner asked for their exact values knowing the clone is exact. It is recorded here rather than
+left to be discovered: this site's mark is the flag of Spain, so the podium and the tile now
+carry two different countries.
+
+**Decided 1:1 by the owner on 2026-09-03, and recorded as reversible.** The question was put
+plainly — copy them exactly, or move the podium to Spain's red and gold — and the answer was to
+copy. It is written here as a reversible decision rather than as a fact about the design because
+that is what it is: **three hex values in the palette block above and nothing else.**
+`design-tokens.test.ts` reads `podium-N` from here, the stylesheet mixes the token rather than
+restating it, and the three alphas (`.25`, `.15`, `.20`) belong to the rank rather than to the
+colour — so a change of mind is an edit to three lines, with no rule to unwind and no
+measurement to redo.
 
 **This paragraph read *"three tints, not three metals"* until 2026-09-02**, and it was
 enforced: the glyph was a `★` in `podium-N` precisely so the podium would not spend a colour
@@ -113,7 +138,7 @@ WCAG 2.1, against `surface-1 #16191c`. Measured 2026-08-27:
 
 | Token | Ratio | AA normal (4.5) |
 |---|---|---|
-| `ink #eef1f3` | 15.56 | PASS |
+| `ink #ededed` | 15.07 | PASS |
 | `ink-muted #a5adb5` | 7.77 | PASS |
 | `ink-subtle #7e878f` | 4.83 | PASS |
 | `semantic-gain #3ecf7f` | 8.77 | PASS |
@@ -122,15 +147,27 @@ WCAG 2.1, against `surface-1 #16191c`. Measured 2026-08-27:
 | `primary #22d3ee` | 9.77 | PASS |
 | `primary-hover #67e8f9` | 12.17 | PASS |
 | `semantic-neutral #7e878f` | 4.83 | PASS |
-| `podium-1 #4ade80` | 10.13 | PASS |
-| `podium-2 #fbbf24` | 10.57 | PASS |
-| `podium-3 #7dd3fc` | 10.58 | PASS |
-| `cabal-a #a78bfa` | 6.95 | PASS |
-| `cabal-b #f472b6` | 7.14 | PASS |
-| `cabal-c #fdba74` | 11.22 | PASS |
-| `cabal-d #94a3b8` | 7.38 | PASS |
+| `brand-hispano #598db0` | 4.93 | PASS |
+| `cabal-a #a78bfa` | 6.84 | PASS |
+| `cabal-b #f472b6` | 7.03 | PASS |
+| `cabal-c #fdba74` | 11.04 | PASS |
+| `cabal-d #94a3b8` | 7.26 | PASS |
 
-The four cabal tints are measured against `canvas #0f1113`, the ink the solid chip prints
+**`podium-1..3` are not in this table, and the reason is a rule rather than an exemption.**
+This table is about **ink**: every colour in it is drawn as text or as a glyph somewhere. The
+three podium colours are not — verified across `globals.css` on 2026-09-03, all twelve uses are
+a `background` mix or a `box-shadow` bar, and none is a `color`. They paint a 4px rule down a
+card and a 15–25% wash behind it, under text that is `ink` on the card's own ground and is
+measured here in its own right.
+
+It matters because the mould's rank-3 navy is `#002776`, which measures **1.30:1** against
+`surface-1`. Published as a `PASS` that would be false; refused, the clone would stop being
+exact for a reason that does not apply. So the honest answer is the third one: the colour never
+carries a character, so it owes this table nothing. `design-tokens.test.ts` holds that claim —
+the three are in its `BACKGROUNDS` set, and any of them becoming a `color` in the stylesheet is
+a change that has to come back here first.
+
+The four cabal tints are measured against `canvas #111315`, the ink the solid chip prints
 in; every other row is against `surface-1`. **The chip went solid on 2026-09-02** and the
 tints stopped being foregrounds: the pair a reader actually looks at is now dark ink *on*
 the tint, so that is the pair the table measures. Contrast is symmetric, so the rows below
@@ -173,9 +210,13 @@ oversight; it applies only to that glyph, and never to a figure.
 about 992px, and at 1280 a row of four figures is mostly the space between them
 (`docs/parecido-2026-09-02.md` §2). 16px gutters.
 
-**Rows are 68px** — enough for a 40px circular avatar and one line of identity beside it. They
-were 56px with a two-line identity block; the line merged on 2026-09-02 and the height went up
-rather than down, because the mould's rows are ~84px and the density it buys is the point. The
+**Rows are 76px, 8px radius, 8px apart, with a 44px circular avatar** — every one of those
+numbers read from the mould's own DOM at 1440 on 2026-09-03 rather than estimated from a
+picture, which is the standard this document holds itself to for anything the clone copies.
+The header is **85px** and the **content column 992px centred at x=224** — the shell's own box
+is that plus its two gutters, because a `max-width` bounds the border box and the gutters would
+otherwise be taken out of the column. The ranking sits **directly on the canvas**: no panel
+around it, the way the mould has none, since every row is already a card. The
 exception is `list-defi-trades` inside the modal, which stays 36px: a one-line trade row needs
 neither the avatar nor the room.
 
@@ -185,7 +226,14 @@ crossing `9,99 → 10,01` reflows nothing — the rule that used to say "fixed c
 kept its job when the table went. The only fixed-layout table left in this product is
 `/admin`'s roster, which no reader sees.
 
-Header: wordmark and subtitle left, nav centre, the wallet action right. **The window and
+Header: **a flag tile**, wordmark and subtitle left; nav and the wallet action right. The tile
+is the owner's decision of 2026-09-03; it held the domain's initials for a day, on the argument
+that no single flag is honest for a site serving Spain and Latin America, and that argument is
+kept in `docs/clone-map.md` §1 rather than deleted.
+
+**The home page is the ranking.** The live feed has its own route, `/en-vivo`, and `/leaderboard`
+redirects to `/`. Their home is the leaderboard and has no feed at all; ours keeps one, where
+kolscan.io keeps theirs. **The window and
 currency controls are on the page**, in one row with its title — `docs/clone-map.md` §2: the
 mould puts them to the right of `KOL Leaderboard`, not in the chrome. They were in the header
 until 2026-09-02, and the cost of moving them is stated rather than hidden: off `/leaderboard`
@@ -242,13 +290,23 @@ its own container is scrolled — never merely that the text exists.
 
 ## Components
 
-**`row-leaderboard`** — a card: 68px minimum, `radius-md`, a hairline border, `surface-2` on
-hover, whole card clickable and focusable (it opens the modal). Left to right: the rank —
-🏆 🥈 🥉 on the podium, a **plain** `numeric` numeral in `ink-subtle` below it; 40px circular
-avatar from `/api/avatar/<kol_id>`; **one line of identity** — `name`, then the
-**`@handle`, always**, linked to X, then `Wallets ocultas` in `hidden` where that KOL's
-wallets are hidden, then the cabal chip; then right-aligned, the SOL figure in `numeric-lg`
-coloured by sign, and the fiat total in `numeric` `ink-muted` in parentheses.
+**`row-leaderboard`** — a card: **76px**, an **8px** radius, 8px from the next, `surface-2` on hover,
+whole card clickable and focusable (it opens the modal). Left to right: the rank — 🏆 🥈 🥉 at
+30px on the podium and **no numeral at all there**, a plain numeral in `ink-subtle` from 4;
+**44px** circular avatar from `/api/avatar/<kol_id>`; **one line of identity** — `name` at
+18/600, the cabal chip against it, the `𝕏` link, the **`@handle`, always**, and
+`Wallets ocultas` in `hidden` where that KOL's wallets are hidden; then right-aligned, the SOL
+figure in **Inter 18/600 coloured by sign** and the fiat total beside it in **Inter 18/400
+`ink`**, in parentheses.
+
+**Neither figure is monospaced, and that is a departure from *"every figure is tabular"*.** The
+mould sets both in its text face at one size, and read side by side that is what makes the row
+a sentence about money rather than a spreadsheet. Tabular figures stay everywhere else — the
+modal, the feed, the calendar — where a column of numbers is read down rather than across.
+
+**The qualifier line is not above the list.** Spec §4.1's caveat and the UTC boundary sit at
+the foot of the page, small: the mould puts nothing between its title and its first row, and a
+caveat is still on the page and still not behind a hover.
 
 It was a two-line block — name over handle — until 2026-09-02; the mould reads them across
 (`docs/clone-map.md` §3). Only the name yields: a handle cut to `@cripto…` and a chip cut to
@@ -268,9 +326,10 @@ identity, the wallet is the secret. `hide_wallets` defaults to `TRUE` here, so t
 as a handle switch would erase the person from almost every row. `Wallets ocultas` occupies
 the **address** slot and nothing else.
 
-Ranks 1–3 additionally carry their `podium-N-wash` as a **gradient fading out across the
-card**, with a solid 3px bar of `podium-N` down its left edge. A flat wash reads as "this row
-is a slightly different colour"; the bar and the fade read as a podium.
+Ranks 1–3 carry a **full-row gradient** — `podium-N` at 25 % opacity running to
+`brand-hispano` at 15 % across the whole card — with a solid **4px** border of `podium-N` down
+the left edge, which is the mould's own construction read from its DOM. **No rank numeral on
+the podium**: the medal is the rank there. From 4 the numeral returns, in `ink-subtle`.
 
 **`chip-cabal`** — the group's 3–4 letter tag, `label`, `radius-sm`, **solid**: the ground is
 one of four tints assigned per cabal — `cabal-a` violet, `cabal-b` pink, `cabal-c` peach,
@@ -283,9 +342,16 @@ reuses the first: repetition is honest, a colour outside the palette is not.
 the slot where the reference prints a truncated address, which is what makes it read as
 native rather than as something withheld.
 
-**`segmented`** — `Diario · Semanal · Mensual` and `USD · ARS` as pill segments; selected
-segment `surface-3` with cyan text. All three windows are real aggregations; none is a
-disabled stub.
+**`segmented`** — `Diario · Semanal · Mensual` and `USD · ARS` as **two dark boxes**, copied
+from the mould's DOM on 2026-09-03: a track of `brand-hispano` at 10% with an 8px radius and
+neither padding nor gap, and segments of 14/500 in `8px 16px` that run edge to edge, so the
+box comes out 36px tall. The **selected** segment is the same blue at **30% with white text**
+— 10.96:1 over the canvas — and the unselected one is `ink-muted` on the bare track, 7.46:1.
+
+They were `surface-3` pills with cyan text until 2026-09-03. **This is the one control the
+ranking took `--accent` for, and it no longer does**: the accent's remaining jobs are listed
+under Colour, and a reader should not have to hold two highlight languages at once. All three
+windows are real aggregations; none is a disabled stub.
 
 The currency toggle chooses **what the parenthesised total is printed in**, not what the
 ranking is sorted by: the ranked figure is always SOL, the way the mould's is always the
@@ -358,13 +424,30 @@ from a stalled indexer, which reads as fifty traders who all broke exactly even.
 
 | Surface | Populated | Empty |
 |---|---|---|
-| `leaderboard` | ranked rows, PnL by sign | `Todavía no hay operaciones cerradas.` / `Aquí va la clasificación por PnL realizado del período, en cuanto los KOL del padrón cierren su primera posición.` |
+| `leaderboard` | ranked rows, PnL by sign | `Nadie cerró operaciones en las últimas 24 horas.` / `en cuanto cierre una posición, aparece acá con su PnL realizado.` |
 | `cabals` | a podium of three over a list | `Todavía no hay cabals con posiciones cerradas.` / `Aquí van los grupos del padrón, ordenados por PnL realizado del período, en cuanto sus miembros cierren su primera posición.` |
 | `feed` | rows arriving at the top | `El feed está esperando la primera operación.` / `Cada compra y cada venta de los KOL del padrón aparece aquí, en cuanto la cadena la confirma.` |
 | `modal-kol` calendar | a cell per day of the window | `Sin operaciones cerradas en este período.` |
 | any figure with no price | the number | `sin precio` |
 | `list-defi-trades` | the KOL's trades | `Sin operaciones en este período.` |
 | `modal-kol` on a **transient** failure (network, 5xx) | the cards | `No se pudo cargar este KOL.` with a retry |
+| `leaderboard` with no roster | ranked rows | `El padrón todavía está vacío.` |
+
+**The `leaderboard`'s empty state is window-aware, counts the roster, and offers a way out.**
+The row above carries `1D`'s wording because the shortest window is the one a reader meets
+empty; the state has three leads and names the **interval** that closed nothing —
+`las últimas 24 horas` on `1d`, `los últimos 7 días` on `7d`, `los últimos 30 días` on `30d`.
+Never a period: since the windows became rolling (`docs/round-ventanas-moviles.md` §5) there is
+no word for "the last 24 hours" that a reader would not hear as "today", and hearing it as today
+is the confusion these windows were adopted to remove. The note **leads with the roster count**
+(`Hay 12 KOLs en el padrón`, and `Hay 1 KOL en el padrón` in the singular), which is the cheapest
+proof that the roster loaded and the emptiness is about the period rather than about the site.
+Two links follow, to the other two windows, carrying the chosen currency: a day is empty far more
+often than a month, and the reader asking whether anyone trades here should not have to find the
+toggle to answer it.
+
+With **no approved KOLs at all** it says `El padrón todavía está vacío.` and offers no links —
+a link to a second empty page is a worse answer than a sentence.
 | `modal-kol` when the KOL is **gone** (404) | the cards | `Este KOL ya no está en el padrón.` — **no retry**, and the row leaves the list when the modal closes |
 | `modal-kol` while loading | the cards | **no copy at all** — the cards reserve their height and stay blank. `Cargando…` is a spinner in words, and this system does not ship spinners |
 

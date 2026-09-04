@@ -142,3 +142,57 @@ migration on `trade` in production, a full replay of every position, and a visua
 delivered in one batch straight to production is three risks sharing one rollback. The audit's
 "se copia" rows are paint and can go out today; this should be its own close, with its own Neon
 branch and its own three-database migration.
+
+
+## 5. Enmienda del dueño, 2026-09-03: las móviles son las únicas
+
+La decisión de §4 —*"the six values are the product"*— duró un día. **Fede decidió que
+`Diario · Semanal · Mensual` desaparecen del producto y `1D · 7D · 30D` son las únicas ventanas**,
+en toda la superficie: el toggle de la home, el del modal y el de `/cabals`. La home vuelve a
+cinco opciones, `USD · ARS | 1D · 7D · 30D`, que es el control de kolscanbrasil.io.
+
+Lo que eso cambia respecto de lo escrito arriba:
+
+- **§3.2 queda revertido.** Ya no se agregan al lado de las de calendario: las reemplazan. El
+  argumento de §3.2 era que `Últimas 24 h` no es `Hoy` y no debe fingir serlo — sigue siendo
+  cierto, y ahora se resuelve quitando el par en vez de mostrarlo, que es la otra forma de que
+  nadie los confunda.
+- **§1 sigue en pie y hay que decirlo.** *"A rolling window has no answer to 'who won today'"* era
+  el argumento más fuerte en contra y no fue refutado: fue **aceptado y descartado**. Este producto
+  ya no contesta "quién ganó hoy"; contesta "quién viene ganando". Es una decisión de producto, no
+  un descubrimiento de que el argumento estaba mal, y queda anotada así para que nadie la lea como
+  resuelta.
+- **§3.4 ya estaba enmendado** por el brief del modal: el calendario abarca un mes navegable e
+  independiente de la ventana, y por eso imprime su propio total.
+- **`/cabals` suma las móviles**, que en §3 se había dejado afuera. Pudo hacerse porque
+  `migrations/015` ya guarda el realizado por venta: `cabals.ts` suma la misma columna que
+  `leaderboard.ts`, así que el total de un cabal y la suma de las filas de sus miembros no pueden
+  discrepar.
+
+**Las URLs viejas no se rompen.** `?window=diario|semanal|mensual` fueron URLs publicadas durante
+semanas y contestan con un **308** a `1d|7d|30d`. Permanente y no temporal porque el valor viejo no
+vuelve; y un redirect y no un `400` porque esas URLs eran correctas cuando se hicieron. El mapeo es
+por *duración*, que es la única correspondencia honesta disponible — no es una equivalencia, y por
+eso las etiquetas nunca compartieron nombre.
+
+**Y `sin cierres` dejó de existir por fila.** Era `winRate === null` — *"esta ventana no cerró
+nada para este KOL"* — y le decía al lector que un `0,00` era **ausencia** y no un empate medido.
+`winRate` sale de `wins`/`losses` de `pnl_daily`, que cuentan una posición *cerrada* por día UTC
+(spec §4.8); una ventana móvil suma ventas sobre un intervalo arbitrario y no puede producirlos,
+así que ahora es nulo para todos y no distingue nada. En el payload, `preview-hilofino` —que sólo
+compró— y `preview-velacorta` —que cerró tres viajes de ida y vuelta y perdió los tres— son
+indistinguibles: ambos imprimen `0`.
+
+Dos atenuantes y una precaución. La fila **ya no lo mostraba**: las columnas de récord salieron de
+la card el 2026-09-02 con la decisión de clon, así que ninguna superficie lo renderiza desde
+entonces. Y la respuesta a nivel **tablero** sobrevive: `readLeaderboard` cuenta lo que
+efectivamente sumó y publica `closed`, que es lo que lee el estado vacío del panel. La precaución
+es que nadie re-derive el récord desde las ventas y lo llame tasa de acierto: sería otra medición
+usando ese nombre, que es exactamente la sustitución que esta ronda existe para impedir.
+
+**Lo que se perdió y conviene tener escrito:** `windows.test.ts` fijaba el domingo de la semana
+ISO, el cruce de año y el febrero bisiesto, y eran las pruebas más filosas del archivo porque una
+ventana de calendario tiene bordes que equivocar. Una móvil no tiene ninguno. Esas pruebas se
+reemplazaron por las propiedades que *sí* pueden fallar ahora — que la ventana termina en el
+instante del llamador al milisegundo y no en uno redondeado, que un día son exactamente 86.400.000
+ms, y que ningún accesor de hora local se toca — y esa última es la única que sobrevive igual.

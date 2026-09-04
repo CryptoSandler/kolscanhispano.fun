@@ -125,6 +125,13 @@ export type PublicTrade = {
  * row that really does contain an address.
  */
 export type LeaderboardRow = {
+  /**
+   * How many closings this window counted for this KOL: closed positions on
+   * the calendar path, contributing sells on the rolling one. It decides the
+   * ranking's empty state and is **not** published — `serializeLeaderboardEntry`
+   * does not carry it into the payload.
+   */
+  closed_count: number;
   kol_id: string;
   slug: string;
   display_name: string;
@@ -377,10 +384,42 @@ export type PublicKolDetail = {
    */
   from: string;
   to: string;
-  /** `card-calendario-pnl`'s cells. Empty when nothing closed in the window. */
+  /**
+   * **The PnL calendar's month, with a running total** — the same days
+   * `calendar.days` carries, plus `cumulativeSol`.
+   *
+   * **Changed meaning on 2026-09-03, deliberately and by the owner's decision.**
+   * It was the *window's* daily series, and that stopped being a statable range
+   * when every window became rolling (`docs/round-ventanas-moviles.md` §5): a
+   * rolling window starts and ends at an **instant**, so its edges are partial
+   * days, and `pnl_daily` is keyed by `date` and cannot answer for a partial
+   * one. The field would have been neither the window nor a month.
+   *
+   * Removing it was the other option and the cleaner shape — nothing on screen
+   * has read it since the calendar card became a navigable month — but this is
+   * a published response and dropping a field breaks whoever holds it. Keeping
+   * it with a meaning it can carry costs nothing and breaks nobody.
+   */
   series: KolSeriesPoint[];
   /** `list-defi-trades`, newest first, capped by the caller. */
   trades: PublicTrade[];
+  /**
+   * **The PnL calendar's own month**, which since 2026-09-03 is not the
+   * window's span: the card shows a calendar month the reader pages through
+   * while the window governs every figure under it. `days` carries only the
+   * days that closed something — absence stays absence and `calendar.ts` fills
+   * the grid — and `sells` is the one figure in the summary row that a series
+   * of daily totals cannot produce.
+   */
+  calendar: KolCalendar;
+};
+
+/** See `PublicKolDetail.calendar`. */
+export type KolCalendar = {
+  /** `YYYY-MM`, always a month the server resolved — never the raw parameter. */
+  month: string;
+  days: { day: string; dailySol: string }[];
+  sells: number;
 };
 
 /**
@@ -404,6 +443,7 @@ export function serializeKolDetail(options: {
   to: string;
   series: KolSeriesPoint[];
   trades: PublicTrade[];
+  calendar: KolCalendar;
 }): PublicKolDetail {
   const { row } = options;
   return {
@@ -426,5 +466,6 @@ export function serializeKolDetail(options: {
     tradeCount: row.trade_count,
     series: options.series,
     trades: options.trades,
+    calendar: options.calendar,
   };
 }

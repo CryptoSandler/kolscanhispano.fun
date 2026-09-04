@@ -24,7 +24,7 @@
  */
 import { query } from "./db";
 import { serializeLeaderboardEntry, type LeaderboardRow, type PublicLeaderboardEntry } from "./serialize";
-import { utcDayString, windowBounds, type LeaderboardWindow } from "./windows";
+import { windowBounds, type LeaderboardWindow } from "./windows";
 
 /**
  * The two currencies the parenthesised total can be printed in.
@@ -85,33 +85,59 @@ const PUBLIC_WALLETS = `
   (SELECT count(*)::int FROM kol_wallet w
     WHERE w.kol_id = k.id AND w.status = 'active' AND w.is_public)`;
 
-const SELECT = `
+/**
+ * The ranking's statement: it sums `trade.realized_sol` over an instant range.
+ *
+ * `migrations/015` and `docs/round-ventanas-moviles.md`: a day bucket cannot be
+ * cut at an arbitrary hour, so `1D` sums the per-sell figures the replay now
+ * records. The two statements are kept side by side rather than templated into
+ * one, for the reason the unit's two statements are: the shape of the query is
+ * the whitelist, and a template with a table name spliced into it is not.
+ *
+ * **`wins` and `losses` are zero here, and that is not an oversight.** Spec §4.8
+ * counts a *closed position* on the day the closing sell landed, and that count
+ * lives in `pnl_daily`; there is no per-sell equivalent, because "closed" is a
+ * property of the position's whole episode rather than of one sell. The record
+ * came off the card on 2026-09-02, so nothing on a public surface reads them —
+ * and `serialize.ts` turns a zero-wins-zero-losses row into `winRate === null`,
+ * which is what the empty-state rule keys on. A rolling window with rows
+ * therefore says "nothing closed" only when nothing closed.
+ *
+ * The bounds are `timestamptz`, not `date`: that is the whole point.
+ *
+ * ## `closed_count`, and the bug that put it here
+ *
+ * `wins` and `losses` are zero on this path, so `serialize.ts` derives
+ * `winRate === null` for every row — and the ranking's empty state was keyed on
+ * exactly that. The consequence shipped for about an hour on 2026-09-03:
+ * `?window=7d` rendered *"Nadie cerró operaciones..."* over thirteen KOLs
+ * carrying real figures, because every row's `winRate` was null by
+ * construction rather than by measurement. `seed-preview.test.ts` caught it —
+ * it asserts the panel-level empty state is unreachable in **every** window.
+ *
+ * So the discriminator stopped being inferred from a rate and became a count of
+ * the sells that contributed. It is not a win rate, and `serializeLeaderboardEntry`
+ * does not publish it.
+ */
+const ROLLING_SELECT = `
   SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag AS cabal_tag,
          ${PUBLIC_WALLETS} AS public_wallets,
-         COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
-         COALESCE(SUM(d.realized_usd), 0) AS realized_usd,
-         COALESCE(SUM(d.wins), 0)::int    AS wins,
-         COALESCE(SUM(d.losses), 0)::int  AS losses
+         COALESCE(SUM(t.realized_sol), 0) AS realized_sol,
+         COALESCE(SUM(t.realized_usd), 0) AS realized_usd,
+         0::int AS wins,
+         0::int AS losses,
+         -- The sells that actually contributed. See the note above this
+         -- statement: it is what the empty state reads, and it is not a rate.
+         COUNT(t.id)::int AS closed_count
     FROM kol k
     LEFT JOIN cabal c ON c.id = k.cabal_id
-    LEFT JOIN pnl_daily d
-           ON d.kol_id = k.id AND d.day >= $1::date AND d.day < $2::date
+    LEFT JOIN trade t
+           ON t.kol_id = k.id
+          AND t.realized_sol IS NOT NULL
+          AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
    WHERE k.status = 'approved'
    GROUP BY k.id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag
-   ORDER BY`;
-
-/**
- * One finished statement per unit, not one template with the column spliced
- * in. The unit reaches this module from a query string; even though
- * {@link parseUnit} has already narrowed it to two literals, a whitelist that
- * is *the SQL itself* cannot be defeated by a later edit that widens the
- * parser.
- *
- * `k.slug` breaks the tie. Without it Postgres may return two KOLs on the same
- * total in either order, and a leaderboard that reshuffles equal rows between
- * two loads looks like data moving when nothing has.
- */
-const ORDERED = `${SELECT} COALESCE(SUM(d.realized_sol), 0) DESC, k.slug ASC`;
+   ORDER BY COALESCE(SUM(t.realized_sol), 0) DESC, k.slug ASC`;
 
 export type LeaderboardQuery = {
   window: LeaderboardWindow;
@@ -123,6 +149,8 @@ export type LeaderboardQuery = {
 
 export type Leaderboard = {
   window: LeaderboardWindow;
+  /** See the note beside where this is computed. `false` renders the empty state. */
+  closed: boolean;
   /** The window actually applied, so the page and the API agree on what was summed. */
   from: string;
   to: string;
@@ -131,15 +159,25 @@ export type Leaderboard = {
 
 export async function readLeaderboard(options: LeaderboardQuery): Promise<Leaderboard> {
   const bounds = windowBounds(options.window, options.now ?? new Date());
-  const from = utcDayString(bounds.from);
-  const to = utcDayString(bounds.to);
+
+  /*
+    **ISO instants, never day strings.** A day string would round the window to
+    a boundary and turn `1D` back into the `Diario` it replaced — the exact
+    substitution `docs/round-ventanas-moviles.md` exists to prevent.
+
+    The `pnl_daily` statement that stood beside this one until 2026-09-03 is
+    gone with the calendar windows: with nothing left to select it, a second
+    query would have read as a path that could still run.
+  */
+  const from = bounds.from.toISOString();
+  const to = bounds.to.toISOString();
 
   const limit = options.limit;
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
     throw new Error("limit must be a non-negative integer");
   }
 
-  const sql = limit === undefined ? ORDERED : `${ORDERED} LIMIT $3`;
+  const sql = limit === undefined ? ROLLING_SELECT : `${ROLLING_SELECT} LIMIT $3`;
   const rows = await query<LeaderboardRow>(
     sql,
     limit === undefined ? [from, to] : [from, to, limit],
@@ -149,6 +187,17 @@ export async function readLeaderboard(options: LeaderboardQuery): Promise<Leader
     window: options.window,
     from: bounds.from.toISOString(),
     to: bounds.to.toISOString(),
+    /*
+      **Whether anything closed in this window, answered by the query.**
+
+      The ranking's empty state used to infer this from `winRate === null` on
+      every row, which is true by construction on a rolling window and made the
+      empty state unreachable-by-accident there. `closed_count` is what each
+      statement actually counted — closed positions on the calendar path,
+      contributing sells on the rolling one — and the two are the same question
+      even though they are not the same number.
+    */
+    closed: rows.some((row) => row.closed_count > 0),
     entries: rows.map((row, index) => serializeLeaderboardEntry(row, index + 1)),
   };
 }

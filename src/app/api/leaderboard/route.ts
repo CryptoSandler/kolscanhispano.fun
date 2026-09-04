@@ -1,6 +1,6 @@
 import { parseFiat, readLeaderboard } from "@/lib/leaderboard";
 import { rateLimited } from "@/lib/rate-limit";
-import { parseWindow } from "@/lib/windows";
+import { resolveWindow } from "@/lib/windows";
 
 export const runtime = "nodejs";
 // The window is relative to the current instant and the rows behind it change
@@ -44,8 +44,28 @@ export async function GET(request: Request): Promise<Response> {
   const limited = await rateLimited(request, "leaderboard");
   if (limited) return limited;
 
-  const params = new URL(request.url).searchParams;
-  const window = parseWindow(params.get("window"));
+  const url = new URL(request.url);
+  const params = url.searchParams;
+
+  /*
+    **A published calendar name earns a 308 here too, not a 400.**
+
+    `?window=diario` was a documented URL of this API for weeks, and a caller
+    holding one is not making a bad request — the window was renamed under them.
+    A `308` preserves the method and the body and tells a client, once, where the
+    value went; a `400` would make every one of those callers debug a query
+    string that used to be right.
+
+    An unrecognised value is still a `400`: `?window=anual` never existed, and a
+    program asking for it should learn that rather than read a `1D` figure under
+    a label it chose.
+  */
+  const resolved = resolveWindow(params.get("window"));
+  if (resolved !== null && typeof resolved === "object") {
+    params.set("window", resolved.redirectTo);
+    return Response.redirect(url.toString(), 308);
+  }
+  const window = resolved;
   const fiat = parseFiat(params.get("unit"));
   if (window === null || fiat === null) return new Response("bad request", { status: 400 });
 

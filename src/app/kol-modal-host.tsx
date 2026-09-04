@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { PublicKolDetail } from "@/lib/serialize";
-import { LEADERBOARD_WINDOWS, WINDOW_LABELS, type LeaderboardWindow } from "@/lib/windows";
+import {
+  LEADERBOARD_WINDOWS,
+  WINDOW_LABELS,
+  WINDOW_MEANINGS,
+  type LeaderboardWindow,
+} from "@/lib/windows";
 import { KolDetail } from "./kol-detail";
 import { GoneKolsContext, KolModalContext } from "./kol-modal";
 
@@ -213,12 +218,36 @@ export function KolModalHost({
     dialog.current?.setAttribute("data-hydrated", "");
   }, []);
 
+  /*
+    **The calendar's month, which is not the window.** Since 2026-09-03 the card
+    shows a calendar month the reader pages through while the window governs
+    every figure under it.
+
+    `null` means "whatever month the server considers current", which is what an
+    unparameterised request already answers — so the first fetch carries no
+    `month` at all and the response says which one it read. Paging sets a
+    concrete month from there.
+
+    Unlike a period change this does **not** clear the detail: only one card on
+    the screen is about to change, and blanking the header, the stats and the
+    trade list to repaint a grid would be a flash of nothing in return for
+    nothing. The stale-response guard below still applies.
+  */
+  const [month, setMonth] = useState<string | null>(null);
+  const changeMonth = useCallback((next: string) => {
+    setMonth(next);
+  }, []);
+
   const open = useCallback(
     (next: string) => {
       trigger.current = document.activeElement as HTMLElement | null;
       // Every opening starts from the page's period, so the modal never
       // inherits a period the reader chose inside a *different* KOL's modal.
       setPeriod(pageWindow);
+      // And the calendar starts on the current month, for the same reason: a
+      // month paged to inside a *different* KOL's modal is not a choice about
+      // this one.
+      setMonth(null);
       setSlug(next);
       setDetail(null);
       setFailure(null);
@@ -240,14 +269,16 @@ export function KolModalHost({
     setFailure(null);
   }, []);
 
+
   useEffect(() => {
     if (slug === null) return;
 
     const controller = new AbortController();
     (async () => {
       try {
+        const query = month === null ? "" : `&month=${encodeURIComponent(month)}`;
         const response = await fetch(
-          `/api/kol/${encodeURIComponent(slug)}?window=${encodeURIComponent(period)}`,
+          `/api/kol/${encodeURIComponent(slug)}?window=${encodeURIComponent(period)}${query}`,
           { signal: controller.signal, cache: "no-store" },
         );
         // The **response** decides which failure this is, never a guess. See
@@ -276,7 +307,7 @@ export function KolModalHost({
     })();
 
     return () => controller.abort();
-  }, [slug, period, attempt]);
+  }, [slug, period, month, attempt]);
 
   useEffect(() => {
     const element = dialog.current;
@@ -352,7 +383,13 @@ export function KolModalHost({
             ×
           </button>
 
-          {detail && <KolDetail detail={detail} segments={<Segments value={period} onChange={changePeriod} />} />}
+          {detail && (
+            <KolDetail
+              detail={detail}
+              segments={<Segments value={period} onChange={changePeriod} />}
+              calendarNav={<MonthNav month={detail.calendar.month} onChange={changeMonth} />}
+            />
+          )}
 
           {failure !== null && (
             <LoadFailureState
@@ -385,13 +422,26 @@ function Segments({
   onChange: (next: LeaderboardWindow) => void;
 }) {
   return (
-    <div className="segmented" role="group" aria-label="Período">
+    /*
+      **`1D · 7D · 30D`**, which is the mould's modal control and, since the
+      owner's amendment of 2026-09-03, the only windows this product has — so
+      this list is `LEADERBOARD_WINDOWS` rather than a second one. It briefly was
+      a second one, when the plan was calendar windows on the ranking and rolling
+      ones here; `docs/round-ventanas-moviles.md` §5 carries what changed.
+
+      `title` and `aria-description` carry what each one measures. The round's
+      condition for adding rolling windows at all was that the two sets stay
+      distinct *and* say which is which — the labels do the first, this does the
+      second, and neither is asked to do both.
+    */
+    <div className="segmented is-modal" role="group" aria-label="Período">
       {LEADERBOARD_WINDOWS.map((option) => (
         <button
           key={option}
           type="button"
           className={option === value ? "segment is-selected" : "segment"}
           aria-pressed={option === value}
+          title={WINDOW_MEANINGS[option]}
           onClick={() => onChange(option)}
         >
           {WINDOW_LABELS[option]}
@@ -399,4 +449,78 @@ function Segments({
       ))}
     </div>
   );
+}
+
+
+/**
+ * `‹ septiembre 2026 ›`, the calendar's month control.
+ *
+ * Buttons rather than links, unlike the ranking's `segmented`: the window is a
+ * URL because the *page* is ranked by it and a reader shares that; the month a
+ * modal's calendar happens to be paged to is not a state anyone links to, and
+ * putting it in the address bar would put a third parameter on every ranking
+ * URL for a card two levels down.
+ *
+ * The month arrives from the response rather than from local state, so the
+ * arrows always step from the month actually rendered. `type="button"` because
+ * a bare `<button>` inside a `<form>`-less dialog still defaults to `submit` in
+ * some engines, and this project has been bitten by a control that navigated.
+ */
+function MonthNav({ month, onChange }: { month: string; onChange: (next: string) => void }) {
+  const step = (delta: number): string => {
+    const [year, index] = month.split("-").map(Number);
+    const moved = new Date(Date.UTC(year, index - 1 + delta, 1));
+    return moved.toISOString().slice(0, 7);
+  };
+
+  return (
+    <div className="calendar-nav">
+      <button
+        type="button"
+        className="calendar-arrow"
+        onClick={() => onChange(step(-1))}
+        aria-label="Mes anterior"
+      >
+        ‹
+      </button>
+      <span className="calendar-month">{formatUtcMonth(month)}</span>
+      <button
+        type="button"
+        className="calendar-arrow"
+        onClick={() => onChange(step(1))}
+        aria-label="Mes siguiente"
+      >
+        ›
+      </button>
+    </div>
+  );
+}
+
+/**
+ * `2026-09` as `septiembre 2026`.
+ *
+ * Built from a fixed table rather than `toLocaleDateString`: the month name has
+ * to be the same on the server that prerenders and the browser that hydrates,
+ * and `Intl`'s data is the runtime's, not ours. It is also the only way to be
+ * sure the string is `es-ES` on a machine with any locale installed.
+ */
+const MONTHS = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+] as const;
+
+function formatUtcMonth(month: string): string {
+  const [year, index] = month.split("-").map(Number);
+  const name = MONTHS[index - 1];
+  return name === undefined ? month : `${name} ${year}`;
 }

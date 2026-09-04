@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { cabalChipClass } from "@/lib/cabal";
 import type { LeaderboardFiat } from "@/lib/leaderboard";
+import { LEADERBOARD_WINDOWS, WINDOW_LABELS, type LeaderboardWindow } from "@/lib/windows";
 import { Avatar } from "./avatar";
 import { KolRow } from "./kol-row";
 import { amountDirection, formatSignedArs, formatSignedSol, formatSignedUsd } from "@/lib/format";
@@ -41,10 +43,20 @@ export function LeaderboardTable({
   entries,
   fiat,
   rate,
+  window,
+  closed,
 }: {
   entries: PublicLeaderboardEntry[];
   /** Which currency the parenthesised total is printed in. */
   fiat: LeaderboardFiat;
+  /**
+   * Which window these rows were aggregated over. Only the empty state reads
+   * it, and it needs it for both halves of what it says: *which* period closed
+   * nothing, and which other two are one click away.
+   */
+  window: LeaderboardWindow;
+  /** Whether anything closed in this window. See the note at the branch below. */
+  closed: boolean;
   /**
    * The peso rate, when `fiat` is `ars`. `null` — no rate stored, or one too
    * old to believe — makes every peso figure `sin precio` rather than a number
@@ -86,16 +98,22 @@ export function LeaderboardTable({
     window", not a leftover of the column that is gone. `entries.every` also
     covers the no-approved-KOL case, where it is vacuously true.
   */
-  if (entries.every((entry) => entry.winRate === null)) {
-    return (
-      <div className="state-empty">
-        <p className="state-empty-lead">Todavía no hay operaciones cerradas.</p>
-        <p className="state-empty-note">
-          Aquí va la clasificación por PnL realizado del período, en cuanto los KOL del padrón
-          cierren su primera posición.
-        </p>
-      </div>
-    );
+  /*
+    **The caller answers this now, and the reason is a bug this rule caused.**
+
+    The discriminator was `entries.every((entry) => entry.winRate === null)`,
+    and the long note above is still why "nothing closed" rather than "no rows"
+    is the right question. What changed on 2026-09-03 is who answers it:
+    `winRate` comes from `wins + losses`, which spec §4.8 counts per *closed
+    position per day* — so on a rolling window it is zero by construction and
+    every row's `winRate` is null even when the window is full. `?window=7d`
+    rendered the empty state over thirteen KOLs with figures.
+
+    `readLeaderboard` counts it in the statement it actually ran. The rule is
+    unchanged; the inference is gone.
+  */
+  if (!closed) {
+    return <EmptyWindow window={window} fiat={fiat} roster={entries.length} />;
   }
 
   return (
@@ -111,6 +129,92 @@ export function LeaderboardTable({
         ))}
       </ul>
     </>
+  );
+}
+
+/**
+ * **The empty window, as a designed state rather than an absence.**
+ *
+ * DESIGN.md, "Every surface has two states", and the owner's instruction of
+ * 2026-09-03: *"nunca una lista vacía muda"*. It was one sentence and a
+ * promise before that — true, and useless to the reader who most needs it: the
+ * one who opened `Diario` at 09:00 UTC. That reader has three questions and the
+ * old copy answered none of them. **Is the site broken? Is anybody here? Where
+ * is the data?**
+ *
+ * So it answers all three, in that order:
+ *
+ * 1. **Which period closed nothing**, named. `Nadie cerró operaciones hoy
+ *    todavía` cannot be misread as "there is nothing here"; `Todavía no hay
+ *    operaciones cerradas` could, and did.
+ * 2. **How many KOLs are in the roster.** A count is the cheapest proof that
+ *    the roster loaded and the emptiness is about the day rather than about
+ *    the site. Spec §2 — *"inactive approved KOLs stay in the list at zero —
+ *    the roster is part of the point"* — is the same argument one layer up:
+ *    when even the zeros are suppressed, the roster is what is left to show.
+ * 3. **The other two windows, as links.** A day is empty far more often than a
+ *    month, and the reader who wants to know whether anyone trades here should
+ *    not have to find the toggle to answer it. The links carry the currency
+ *    forward, so choosing `ARS` and then following one does not silently
+ *    revert to dollars.
+ *
+ * With an empty roster there is no count to give and no other window that
+ * would have rows either, so it says that instead and offers no links: a link
+ * to a second empty page is a worse answer than a sentence.
+ *
+ * The count is `entries.length` and not a second query. `readLeaderboard`
+ * returns one entry per approved KOL — the zeros included, which is exactly
+ * what this branch establishes — so the roster is already in hand, and a
+ * `SELECT count(*)` here would be a second read that can disagree with the
+ * first.
+ */
+const NADIE_CERRO: Record<LeaderboardWindow, string> = {
+  // Each names the **interval**, never a period: there is no word for "the last
+  // 24 hours" that a reader would not hear as "today", and hearing it as today
+  // is exactly the confusion these windows replaced.
+  "1d": "Nadie cerró operaciones en las últimas 24 horas.",
+  "7d": "Nadie cerró operaciones en los últimos 7 días.",
+  "30d": "Nadie cerró operaciones en los últimos 30 días.",
+};
+
+function EmptyWindow({
+  window,
+  fiat,
+  roster,
+}: {
+  window: LeaderboardWindow;
+  fiat: LeaderboardFiat;
+  roster: number;
+}) {
+  const others = LEADERBOARD_WINDOWS.filter((option) => option !== window);
+
+  if (roster === 0) {
+    return (
+      <div className="state-empty is-card">
+        <p className="state-empty-lead">El padrón todavía está vacío.</p>
+        <p className="state-empty-note">
+          Aquí va la clasificación por PnL realizado del período, en cuanto entre el primer KOL y
+          cierre su primera posición.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="state-empty is-card">
+      <p className="state-empty-lead">{NADIE_CERRO[window]}</p>
+      <p className="state-empty-note">
+        {roster === 1 ? "Hay 1 KOL en el padrón" : `Hay ${roster} KOLs en el padrón`}: en cuanto
+        cierre una posición, aparece acá con su PnL realizado.
+      </p>
+      <p className="state-empty-actions">
+        {others.map((option) => (
+          <Link key={option} className="panel-link" href={`/?window=${option}&unit=${fiat}`}>
+            Ver {WINDOW_LABELS[option].toLocaleLowerCase("es")}
+          </Link>
+        ))}
+      </p>
+    </div>
   );
 }
 
@@ -225,7 +329,7 @@ function Row({
         )}
       </span>
       <span className="identity">
-        <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={40} />
+        <Avatar name={entry.kol.name} src={entry.kol.avatarUrl} size={44} />
         {/*
           **One line, not two**, since 2026-09-02: name, handle, the hidden
           marker and the cabal chip, in that order — the mould's arrangement
@@ -252,22 +356,25 @@ function Row({
               the thing the row is for. The handle is the link, as it was when
               this block had two lines. */}
           <span className="name">{entry.kol.name}</span>
+          {/* The chip sits against the name, as on the mould, so the two read
+              as one identity rather than as a name and a badge. */}
+          {entry.kol.cabalTag && (
+            <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
+          )}
+          {/* `𝕏` is the link and the handle beside it is text. The row opens
+              the modal and `KolRow` excludes anything inside an `<a>`, so the
+              smaller target takes the link and the row keeps the rest. */}
           <a
-            className="handle"
+            className="x-glyph"
             href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
             target="_blank"
             rel="noreferrer noopener"
             aria-label={`Perfil de ${entry.kol.name} en X`}
           >
-            @{entry.kol.xHandle}
+            𝕏
           </a>
+          <span className="handle">@{entry.kol.xHandle}</span>
           {entry.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
-          {/* DESIGN.md `chip-cabal`: the tint is per cabal and decided by the
-              tag alone, so the row and the modal's header cannot disagree
-              about which colour a cabal is. See `src/lib/cabal.ts`. */}
-          {entry.kol.cabalTag && (
-            <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
-          )}
         </span>
       </span>
       <span className={`num-lg pnl ${direction}`}>{primary}</span>

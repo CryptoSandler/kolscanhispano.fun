@@ -5,10 +5,12 @@
  * `cabal` has existed since `001_core.sql` and `chip-cabal` has been on every
  * row since the leaderboard was built — the data was here, the page was not.
  *
- * **It reads `pnl_daily` and derives nothing**, exactly as `leaderboard.ts`
- * does, and for the same reasons: `pnl_daily` is already the sum spec §3
- * defines, and re-deriving it here would put a second copy of spec §4.5's
- * exclusion rule in a second query.
+ * **It reads the same column `leaderboard.ts` reads**, and derives nothing:
+ * `trade.realized_sol`, written per sell by the replay (`migrations/015`). It
+ * summed `pnl_daily` until 2026-09-03, when every window became rolling — and
+ * the two are the same arithmetic, which is what keeps a cabal's total and the
+ * sum of its members' rows from disagreeing. Spec §4.5's exclusion lives in the
+ * replay that writes the column, so it is not restated in either query.
  *
  * Three things about the shape of this query are load-bearing:
  *
@@ -23,12 +25,13 @@
  *   contribute their PnL to a cabal's total from behind a filter that runs
  *   afterwards — spec §9, the same rule the leaderboard applies.
  * - **The member count counts the same rows the sum does.** `count(DISTINCT
- *   k.id)` rather than `count(*)`: the `pnl_daily` join multiplies each KOL by
- *   the number of days they traded in the window, so `count(*)` would report a
- *   cabal of three as a cabal of ninety on a monthly window.
+ *   k.id)` rather than `count(*)`: the join multiplies each KOL by the number of
+ *   *sells* they made in the window, so `count(*)` would report a cabal of three
+ *   as a cabal of hundreds on `30D` — a worse version of the same error the
+ *   `pnl_daily` join produced by the day.
  */
 import { query } from "./db";
-import { utcDayString, windowBounds, type LeaderboardWindow } from "./windows";
+import { windowBounds, type LeaderboardWindow } from "./windows";
 
 /** One cabal, ranked, as a surface may read it. */
 export type PublicCabal = {
@@ -57,18 +60,32 @@ type CabalRow = {
   closed: number;
 };
 
+/*
+  **It sums `trade` since 2026-09-03, not `pnl_daily`**, because every window on
+  this site is rolling now and a day bucket cannot be cut at an arbitrary hour.
+  `migrations/015` put the realized figure on the sell that produced it, which is
+  what made this possible — and it is the *same column* `leaderboard.ts` sums, so
+  a cabal's total and the sum of its members' rows cannot disagree.
+
+  `closed` counts contributing sells rather than closed positions. Spec §4.8
+  counts a closed position per day and there is no per-sell equivalent; what this
+  column is for is the board's empty state — "did anything close here" — and a
+  count of sells answers exactly that question. It is not published as a record.
+*/
 const SELECT = `
   SELECT c.tag, c.name,
-         count(DISTINCT k.id)::int       AS members,
-         COALESCE(SUM(d.realized_sol), 0) AS realized_sol,
-         COALESCE(SUM(d.realized_usd), 0) AS realized_usd,
-         COALESCE(SUM(d.wins + d.losses), 0)::int AS closed
+         count(DISTINCT k.id)::int        AS members,
+         COALESCE(SUM(t.realized_sol), 0) AS realized_sol,
+         COALESCE(SUM(t.realized_usd), 0) AS realized_usd,
+         count(t.id)::int                 AS closed
     FROM cabal c
     JOIN kol k ON k.cabal_id = c.id AND k.status = 'approved'
-    LEFT JOIN pnl_daily d
-           ON d.kol_id = k.id AND d.day >= $1::date AND d.day < $2::date
+    LEFT JOIN trade t
+           ON t.kol_id = k.id
+          AND t.realized_sol IS NOT NULL
+          AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
    GROUP BY c.id, c.tag, c.name
-   ORDER BY COALESCE(SUM(d.realized_sol), 0) DESC, c.tag ASC`;
+   ORDER BY COALESCE(SUM(t.realized_sol), 0) DESC, c.tag ASC`;
 
 export type CabalRanking = {
   window: LeaderboardWindow;
@@ -94,7 +111,13 @@ export async function readCabals(options: {
   now?: Date;
 }): Promise<CabalRanking> {
   const bounds = windowBounds(options.window, options.now ?? new Date());
-  const rows = await query<CabalRow>(SELECT, [utcDayString(bounds.from), utcDayString(bounds.to)]);
+  // ISO instants, not day strings: the bounds are `timestamptz` now, and
+  // truncating them to a day is the one thing that turns `1D` back into the
+  // calendar window it replaced.
+  const rows = await query<CabalRow>(SELECT, [
+    bounds.from.toISOString(),
+    bounds.to.toISOString(),
+  ]);
 
   return {
     window: options.window,

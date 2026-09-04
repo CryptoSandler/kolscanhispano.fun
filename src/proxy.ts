@@ -45,11 +45,15 @@ import { rateLimited } from "@/lib/rate-limit";
  * replaces.
  */
 export const config = {
-  // Exactly the two dynamic pages. Everything else — `_next/static`, the
-  // public folder, the API routes that limit themselves — is deliberately
-  // outside, because a matcher-less Proxy runs on every asset request and
-  // would put a Postgres write in front of the CSS.
-  matcher: ["/", "/leaderboard"],
+  // Exactly the dynamic pages a reader lands on. Everything else —
+  // `_next/static`, the public folder, the API routes that limit themselves —
+  // is deliberately outside, because a matcher-less Proxy runs on every asset
+  // request and would put a Postgres write in front of the CSS.
+  //
+  // `/leaderboard` is still here: it redirects to `/` since 2026-09-03, and a
+  // redirect is a request like any other. `/en-vivo` joined when the feed moved
+  // there.
+  matcher: ["/", "/en-vivo", "/leaderboard"],
 };
 
 export async function proxy(request: NextRequest): Promise<Response> {

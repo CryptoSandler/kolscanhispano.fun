@@ -1,5 +1,6 @@
 import { cabalChipClass } from "@/lib/cabal";
-import { calendarGrid } from "@/lib/calendar";
+import { monthGrid, monthSummary } from "@/lib/calendar";
+import { formatDecimal, parseDecimal } from "@/lib/decimal";
 import {
   amountDirection,
   formatSignedSol,
@@ -40,12 +41,40 @@ import { Avatar } from "./avatar";
 export function KolDetail({
   detail,
   segments,
+  calendarNav,
 }: {
   detail: PublicKolDetail;
-  /** The `Diario · Semanal · Mensual` control, owned by the caller. */
+  /** The window control, owned by the caller. */
   segments?: React.ReactNode;
+  /**
+   * The calendar's `‹ septiembre 2026 ›`, owned by the caller for the same
+   * reason `segments` is: it changes what the caller fetches, and this
+   * component renders a payload rather than deciding which one to ask for.
+   */
+  calendarNav?: React.ReactNode;
 }) {
   const direction = amountDirection(detail.realizedSol);
+
+  /*
+    The month's own total, summed here from the days the calendar carries
+    rather than sent as a field.
+
+    It is **not** the header's figure and must not be confused with it: the
+    header sums the window, this sums the month on the card, and since
+    2026-09-03 those are two different periods that a reader can put out of step
+    on purpose by paging the calendar. Printing it is what keeps the card
+    honest — a grid of days under a header that adds up something else, with no
+    statement of what the days themselves come to, is the shape that invites a
+    reader to add the header's number to the grid.
+
+    `decimal.ts`'s scaled `bigint`, like every other sum in this product; a
+    running total in a double is exactly where SOL figures start drifting.
+  */
+  const monthTotal = formatDecimal(
+    detail.calendar.days.reduce((sum, day) => sum + parseDecimal(day.dailySol), 0n),
+  );
+  const monthDirection = amountDirection(monthTotal);
+  const summary = monthSummary(detail.calendar.month, detail.calendar.days);
 
   return (
     <>
@@ -53,45 +82,106 @@ export function KolDetail({
         {/* DESIGN.md: "64px avatar" — from `/api/avatar/<kol_id>` like every
             other avatar on the site, never a hotlink and never keyed by an
             address. */}
-        <Avatar name={detail.kol.name} src={detail.kol.avatarUrl} size={64} />
+        {/* **56px**, read off the mould's own `<img>` at 1440 on 2026-09-03 —
+            it was 64 here, taken from a picture. From `/api/avatar/<kol_id>`
+            like every other avatar on the site, never a hotlink and never keyed
+            by an address. */}
+        <Avatar name={detail.kol.name} src={detail.kol.avatarUrl} size={56} />
 
+        {/*
+          **Three lines, which is the mould's header exactly** (its DOM, same
+          measurement): the name with its marks, then the handle with the
+          period's PnL beside it, then the wallet line.
+
+          The PnL moved *into* the second line from a slot of its own on the
+          right. That is theirs, and it also reads better: the figure belongs to
+          the KOL named two centimetres to its left, and a number alone against
+          the far edge of a 768px card had nothing to attach to.
+        */}
         <div className="modal-identity">
-          <h2 className="headline">{detail.kol.name}</h2>
-          <span className="identity-second">
+          <div className="identity-line">
+            <h2 className="headline">{detail.kol.name}</h2>
             <a
-              className="handle"
+              className="x-glyph"
               href={`https://x.com/${encodeURIComponent(detail.kol.xHandle)}`}
               target="_blank"
               rel="noreferrer noopener"
               aria-label={`Perfil de ${detail.kol.name} en X`}
             >
-              @{detail.kol.xHandle}
+              𝕏
             </a>
-            {detail.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
-          </span>
+            {detail.kol.cabalTag && (
+              <span className={cabalChipClass(detail.kol.cabalTag)}>{detail.kol.cabalTag}</span>
+            )}
+          </div>
+
+          <div className="identity-second">
+            <span className="handle">@{detail.kol.xHandle}</span>
+            {/* "the period's total PnL by sign". The USD equivalent follows the
+                row's shape — parenthesised, one weight down — so the same pair
+                of figures reads the same way on both surfaces. */}
+            <span className={`num modal-pnl ${direction}`}>
+              {formatSignedSol(detail.realizedSol)}
+            </span>
+            <span className="num secondary">({formatSignedUsd(detail.realizedUsd)})</span>
+          </div>
+
+          {/*
+            The third line, where the mould puts a truncated address chip.
+
+            **We put the wallet statement there instead**, which is exception
+            (a) of DESIGN.md's clone rule — no address, ever, on a public
+            surface — and it is the same information one level less specific:
+            how much of this KOL's operation is on show. `DECISIONES.md`,
+            2026-08-31: a count and a padlock, never a list.
+
+            It was a card of its own in the left column until 2026-09-03. The
+            brief moved it here, and it belongs here: it is an identity fact,
+            not a measurement, and the two columns below are measurements.
+          */}
+          <WalletVisibility
+            publicWallets={detail.publicWallets}
+            privateWallets={detail.privateWallets}
+            hideWallets={detail.kol.hideWallets}
+          />
         </div>
-
-        {detail.kol.cabalTag && (
-          <span className={cabalChipClass(detail.kol.cabalTag)}>{detail.kol.cabalTag}</span>
-        )}
-
-        {/* "the period's total PnL in `numeric-lg` by sign". The USD equivalent
-            follows the row's shape — small, parenthesised, ink-muted — so the
-            same pair of figures reads the same way on both surfaces. */}
-        <span className="modal-pnl">
-          <span className={`num-lg ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
-          <span className="num secondary">({formatSignedUsd(detail.realizedUsd)})</span>
-        </span>
       </header>
 
       {/* DESIGN.md `card-calendario-pnl`, and `docs/clone-map.md` §5's first
           block: their calendar heatmap, with our data in it. Full width, above
           the two columns, exactly as on the mould. */}
-      <section className="card">
-        <div className="card-head">
-          <h3 className="label">Calendario de PnL</h3>
+      <section className="card card-calendar">
+        {/* The mould's head: the block's name with the **month's** total under
+            it on the left, and the month control on the right. Measured on its
+            DOM at 1440 — a 48px-tall flex row with a 12px gap. */}
+        <div className="calendar-head">
+          <div className="calendar-title">
+            <h3 className="label">Calendario de PnL</h3>
+            <p className={`calendar-total ${monthDirection}`}>{formatSignedSol(monthTotal)}</p>
+          </div>
+          {calendarNav}
         </div>
-        <PnlCalendar from={detail.from} to={detail.to} series={detail.series} />
+
+        <PnlCalendar month={detail.calendar.month} days={detail.calendar.days} />
+
+        {/* The row under the grid, and the four things the mould prints in it.
+            It renders only when the month closed something: a row reading
+            `0 · 0 · sin mejor día · 0 d · 0 ventas` over an empty grid is five
+            zeros asserting a measurement nobody made, which is the rule
+            DESIGN.md states about zeroed rows one surface up. */}
+        {detail.calendar.days.length > 0 && (
+          <p className="calendar-summary label">
+            <span className="gain">{summary.gainDays} en verde</span>
+            <span className="loss">{summary.lossDays} en rojo</span>
+            {summary.best !== null && <span>mejor {formatSignedSol(summary.best)}</span>}
+            {summary.streak > 0 && (
+              <span>racha {summary.streak} {summary.streak === 1 ? "día" : "días"}</span>
+            )}
+            <span>
+              {detail.calendar.sells} {detail.calendar.sells === 1 ? "venta" : "ventas"}
+            </span>
+          </p>
+        )}
       </section>
 
       {/* **The window control sits below the calendar card, right-aligned**,
@@ -119,7 +209,7 @@ export function KolDetail({
             <Stat label="PnL total">
               <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
             </Stat>
-            <Stat label="Operaciones">
+            <Stat label="Trades">
               <span className="num">{detail.tradeCount}</span>
             </Stat>
             <Stat label="Volumen">
@@ -134,7 +224,7 @@ export function KolDetail({
           no column of chains with one entry, no "otras cadenas" placeholder. */}
           <section className="card">
             <div className="card-head">
-              <h3 className="label">PnL por cadena</h3>
+              <h3 className="label">Chain PnL</h3>
             </div>
             <div className="chain-line">
               {/* The coloured dot the mould puts before a chain's name. It is
@@ -158,16 +248,12 @@ export function KolDetail({
           it explains the `PRIVADO` rows the reader is about to meet. Putting it
           between `card-stats` and `card-chain-pnl` split two numeric cards with
           a non-numeric one. */}
-          <WalletVisibility
-            publicWallets={detail.publicWallets}
-            privateWallets={detail.privateWallets}
-          />
         </div>
 
         <div className="modal-column">
           <section className="card">
             <div className="card-head">
-              <h3 className="label">Operaciones del período</h3>
+              <h3 className="label">DeFi trades</h3>
             </div>
             <TradeList trades={detail.trades} hideWallets={detail.kol.hideWallets} />
           </section>
@@ -203,33 +289,53 @@ export function KolDetail({
 function WalletVisibility({
   publicWallets,
   privateWallets,
+  hideWallets,
 }: {
   publicWallets: number;
   privateWallets: number;
+  /** Every wallet private, which is what the row's `Wallets ocultas` says. */
+  hideWallets: boolean;
 }) {
+  /*
+    **A line in the header since 2026-09-03**, where the mould puts a truncated
+    address chip, rather than a card in the left column.
+
+    `hideWallets` is `publicWallets === 0` in the serializer, so this says the
+    same thing the row says and in the row's words — one string, one meaning,
+    both surfaces. Below that it is counts and a padlock: `DECISIONES.md`,
+    2026-08-31, *"never a list"*.
+  */
   if (publicWallets === 0 && privateWallets === 0) return null;
 
   return (
-    <section className="card card-wallets">
-      <div className="card-head">
-        <h3 className="label">Wallets</h3>
-      </div>
-      <div className="wallet-counts">
-        {publicWallets > 0 && (
-          <Stat label="Públicas">
-            <span className="num">{publicWallets}</span>
-          </Stat>
-        )}
-        {privateWallets > 0 && (
-          <Stat label="Privadas">
-            <span className="num">
-              <Padlock />
-              {privateWallets}
-            </span>
-          </Stat>
-        )}
-      </div>
-    </section>
+    <div className="identity-third">
+      {/*
+        **`Wallets ocultas` and the count, not one instead of the other.**
+
+        The first version of this line printed the phrase alone when every
+        wallet was private — and that dropped the count, which is the thing
+        `DECISIONES.md` (2026-08-31) actually asked the detail to state: *"un
+        conteo y un candado, nunca una lista."* The phrase says the wallets are
+        hidden; the number says how much operation is behind them, and a reader
+        deciding whether a `Wallets ocultas` KOL is running one wallet or nine
+        needs the second. `modal-kol.spec.ts` caught the loss.
+
+        The row keeps saying only the phrase: it has one line and no room, and
+        the modal is where the detail goes.
+      */}
+      {hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
+      {publicWallets > 0 && (
+        <span className="wallet-chip">
+          {publicWallets} {publicWallets === 1 ? "wallet pública" : "wallets públicas"}
+        </span>
+      )}
+      {privateWallets > 0 && (
+        <span className="wallet-chip">
+          <Padlock />
+          {privateWallets} {privateWallets === 1 ? "privada" : "privadas"}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -260,15 +366,13 @@ function Stat({ label, children }: { label: string; children: React.ReactNode })
  * its date and its amount, which is the whole content of this card in text.
  */
 function PnlCalendar({
-  from,
-  to,
-  series,
+  month,
+  days,
 }: {
-  from: string;
-  to: string;
-  series: PublicKolDetail["series"];
+  month: string;
+  days: PublicKolDetail["calendar"]["days"];
 }) {
-  if (series.length === 0) {
+  if (days.length === 0) {
     // DESIGN.md, "Every surface has two states": `| modal-kol calendar | a cell
     // per day of the window | Sin operaciones cerradas en este período. |`.
     // Verbatim, and it sits in the space the grid would occupy rather than
@@ -280,7 +384,7 @@ function PnlCalendar({
     );
   }
 
-  const { cells, leading } = calendarGrid(from, to, series);
+  const { cells, leading } = monthGrid(month, days);
 
   return (
     <div className="calendar">
@@ -298,8 +402,19 @@ function PnlCalendar({
         // seven columns on their own.
         const style = index === 0 && leading > 0 ? { gridColumnStart: leading + 1 } : undefined;
 
+        // The day of the month, which every calendar prints and ours did not:
+        // the cells were 14px squares with nothing in them, so the grid could
+        // be read as a heatmap but not as a calendar.
+        const number = Number(cell.day.slice(8));
+
         if (cell.dailySol === null) {
-          return <span key={cell.day} className={className} style={style} aria-hidden="true" />;
+          return (
+            <span key={cell.day} className={className} style={style}>
+              <span className="calendar-day" aria-hidden="true">
+                {number}
+              </span>
+            </span>
+          );
         }
         return (
           <time
@@ -308,7 +423,18 @@ function PnlCalendar({
             style={style}
             dateTime={cell.day}
             aria-label={`${formatUtcDay(cell.day)}: ${formatSignedSol(cell.dailySol)}`}
-          />
+          >
+            <span className="calendar-day" aria-hidden="true">
+              {number}
+            </span>
+            {/* The figure inside the cell, which is the mould's calendar and
+                not a heatmap's: `aria-hidden` because the `aria-label` above
+                already says the same thing in full, and a screen reader should
+                not read the amount twice. */}
+            <span className="calendar-amount" aria-hidden="true">
+              {formatSignedSol(cell.dailySol)}
+            </span>
+          </time>
         );
       })}
     </div>

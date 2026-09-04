@@ -19,7 +19,8 @@ import { E2E_ADMIN_TOKEN } from "../playwright.config";
  * What DESIGN.md still states, and what this file therefore still measures:
  *
  * - *"1280px maximum, 16px gutters."* — so nothing may push the page sideways.
- * - *"**Rows are 68px**"* — 56 until 2026-09-02, when the identity merged onto
+ * - *"**Rows are 76px**"* — 56 until 2026-09-02 and 68 until 2026-09-03, when
+ *   the mould's own DOM was measured; the identity merged onto
  *   one line and the row took the mould's density — and the rule that a column
  *   of figures has a fixed width.
  * - the two sentences that qualify the figures, on the page rather than behind
@@ -70,12 +71,12 @@ test.describe("the home page at 1280×900", () => {
     });
 
     await page.goto("/");
-    // Two marks, one per client component the home page mounts: `FeedLive` and
-    // `KolModalHost`. Counted rather than merely found, so a page that stopped
-    // mounting one of them is a failure here instead of a mystery in
-    // `modal-kol.spec.ts` — the modal host's mark is what that suite checks on
-    // `/leaderboard`, which has no feed on it.
-    await expect(page.locator("[data-hydrated]")).toHaveCount(2);
+    // One mark: `KolModalHost`. It was two until 2026-09-03, when the ranking
+    // took the home page and `FeedLive` moved to `/en-vivo` — which is asserted
+    // below, so neither component can quietly stop mounting. Counted rather
+    // than merely found, so a page that stopped mounting it is a failure here
+    // instead of a mystery in `modal-kol.spec.ts`.
+    await expect(page.locator("[data-hydrated]")).toHaveCount(1);
     expect(blocked, "static chunks the browser could not fetch").toEqual([]);
   });
 
@@ -83,9 +84,10 @@ test.describe("the home page at 1280×900", () => {
     await page.goto("/");
 
     // The rows have to be there for the assertion to mean anything: a page
-    // that rendered nothing would pass every size check on this list.
-    await expect(page.locator(".row-leaderboard")).toHaveCount(10);
-    await expect(page.locator(".row-feed").first()).toBeVisible();
+    // that rendered nothing would pass every size check on this list. Twelve,
+    // not ten: the home page is the full ranking since 2026-09-03, not a top
+    // ten with a feed above it.
+    await expect(page.locator(".row-leaderboard")).toHaveCount(12);
 
     const box = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
@@ -97,23 +99,61 @@ test.describe("the home page at 1280×900", () => {
     expect(box.scrollWidth).toBeLessThanOrEqual(box.innerWidth);
   });
 
-  test("puts the feed above the ranking, and every row at DESIGN.md's 68px", async ({ page }) => {
+  /**
+   * **The home page is the ranking and nothing else**, since 2026-09-03.
+   *
+   * This case used to assert the opposite — a feed above a top ten, in one
+   * panel of two sections. `docs/clone-map.md` §2 recorded from the first day
+   * that the mould's home *is* the leaderboard; the owner settled it, the feed
+   * took `/en-vivo`, and the assertion moved with the page rather than being
+   * deleted. What it still guards is the row height, which is a DESIGN.md
+   * token.
+   */
+  test("is the ranking, with every row at DESIGN.md's 76px", async ({ page }) => {
     await page.goto("/");
 
-    // One panel, two hairline-divided sections: the feed, then the ranking.
-    const sections = page.locator("main .panel-section");
-    await expect(sections).toHaveCount(2);
+    await expect(page.locator(".row-feed")).toHaveCount(0);
+    // The title is `page-title` since the clone batch of 2026-09-03, not
+    // `display-lg`, and it names the screen the way DESIGN.md does.
+    await expect(page.locator("h1.page-title")).toHaveText("Clasificación de KOLs");
 
-    const feed = await sections.nth(0).boundingBox();
-    const board = await sections.nth(1).boundingBox();
-    expect(feed).not.toBeNull();
-    expect(board).not.toBeNull();
-    expect(feed!.y + feed!.height).toBeLessThanOrEqual(board!.y);
+    const heights = await page
+      .locator(".row-leaderboard")
+      .evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+    // **76 since 2026-09-03**, measured on the mould's own DOM at 1440 rather
+    // than taken from a picture — `docs/parecido-2026-09-02.md` §8. It was 68,
+    // and 56 before that.
+    expect(new Set(heights)).toEqual(new Set([76]));
+  });
 
-    const heights = await page.locator(".row-leaderboard").evaluateAll((rows) =>
-      rows.map((row) => Math.round(row.getBoundingClientRect().height)),
-    );
-    expect(new Set(heights)).toEqual(new Set([68]));
+  /** And the feed is where it moved to, still alive and still hydrating. */
+  test("keeps the feed at /en-vivo", async ({ page }) => {
+    await page.goto("/en-vivo");
+
+    await expect(page.locator(".row-feed").first()).toBeVisible();
+    await expect(page.locator("[data-hydrated]")).toHaveCount(1);
+    await expect(page.locator(".row-leaderboard")).toHaveCount(0);
+  });
+
+  /**
+   * The published URL still answers, and lands on the ranking — **through two
+   * redirects, which is the case worth having.**
+   *
+   * `/leaderboard` moved to `/` on 2026-09-03 and the calendar windows became
+   * rolling the same day, so a link saved before either change carries both a
+   * dead path and a dead window value. It has to survive the pair: the route
+   * redirect preserves the query string, and the window redirect then rewrites
+   * `semanal` to `7d`. Neither is allowed to swallow the other's work — the
+   * currency has to reach the far side too.
+   */
+  test("redirects /leaderboard to the ranking, through the window rename as well", async ({
+    page,
+  }) => {
+    await page.goto("/leaderboard?window=semanal&unit=ars");
+
+    expect(new URL(page.url()).pathname).toBe("/");
+    expect(new URL(page.url()).search).toBe("?window=7d&unit=ars");
+    await expect(page.locator(".row-leaderboard").first()).toBeVisible();
   });
 
   /**
