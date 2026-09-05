@@ -1,10 +1,13 @@
+import { activeChains, type Chain } from "@/lib/chain";
 import { readAffiliateSlot } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Operar · kolscanhispano.fun",
-  description: "Cómo empezar a operar on-chain, con el terminal socio del sitio.",
+  // No partner is promised here either. The page's subject is how to start
+  // trading; the partner is a slot that may one day be filled.
+  description: "Cómo empezar a operar on-chain, paso a paso.",
 };
 
 /**
@@ -35,6 +38,7 @@ export const metadata = {
  */
 export default async function TradePage() {
   const slot = await readAffiliateSlot();
+  const steps = stepsFor(activeChains());
 
   return (
     <>
@@ -44,16 +48,23 @@ export default async function TradePage() {
           Empieza a operar
           <span className="trade-title-accent">on-chain</span>
         </h1>
+        {/*
+          **The absence is stated once, in the chip, and nowhere else.**
+
+          It used to be said four times: the chip, this subtitle, a label where
+          the button goes, and a whole section under a second divider. Each was
+          defensible on its own and together they made a page whose subject was
+          a thing it does not have. One statement is the honest amount; the rest
+          of the page is about how to start trading, which does not depend on a
+          partner existing.
+        */}
         <p className="page-subtitle">
           {slot === null
-            ? "Todavía no elegimos un terminal socio. Cuando haya uno, el enlace aparece aquí."
+            ? "Cómo empezar a operar on-chain, paso a paso."
             : `Opera con ${slot.label}, el terminal socio de este sitio.`}
         </p>
 
-        {slot === null ? (
-          // Not a button, and not disabled: see the note above.
-          <p className="cta-slot label">Sin terminal socio por ahora</p>
-        ) : (
+        {slot !== null && (
           <a
             className="cta-partner"
             href={slot.url}
@@ -68,10 +79,17 @@ export default async function TradePage() {
       <Divider>Cómo empezar</Divider>
 
       <ol className="steps">
-        {STEPS.map((step, index) => (
-          <li key={step.title} className={index === STEPS.length - 1 ? "step is-last" : "step"}>
+        {steps.map((step, index) => (
+          <li key={step.title} className={index === steps.length - 1 ? "step is-last" : "step"}>
+            {/*
+              A small numeral in the corner, not the mould's huge ghosted one.
+              Theirs sits behind the text at 44px and ours overlapped the title
+              at every width the captures were read at — a decoration that eats
+              the content it decorates. The step is still numbered, because it
+              is a sequence; it is just not competing with the words.
+            */}
             <span className="step-number" aria-hidden="true">
-              {String(index + 1).padStart(2, "0")}
+              {index + 1}
             </span>
             <h2 className="step-title">{step.title}</h2>
             <p className="step-body">{step.body}</p>
@@ -79,31 +97,40 @@ export default async function TradePage() {
         ))}
       </ol>
 
-      <Divider>El terminal socio</Divider>
-
       {/*
-        **A divider must not head an empty section**, which is what this one did
-        when it first shipped — caught by reading the capture, not by a test. It
-        is DESIGN.md's last Don't one level up: a heading that announces
-        something the page does not have. So the section says what is there,
-        and while no partner is chosen what is there is the fact that none is.
+        **The partner section exists only when there is a partner.**
+
+        It used to render a second divider over an empty state saying, again,
+        that no terminal is chosen — which was both the fourth copy of that
+        sentence and the reason the page ran half a screen past its content at
+        1440. A page with nothing to put there is shorter, not padded: the same
+        Don\'t that forbids a control which does not work forbids a heading over
+        a section that is not there.
       */}
-      {slot === null ? (
-        <div className="state-empty">
-          <p className="state-empty-lead">Todavía no hay un terminal socio.</p>
-          <p className="state-empty-note">
-            Cuando elijamos uno, su nombre y el enlace aparecen en esta sección y en el botón de
-            arriba. Hasta entonces no hay nada que recomendar.
+      {slot !== null && (
+        <>
+          <Divider>El terminal socio</Divider>
+          <p className="trade-partner">
+            <strong>{slot.label}</strong> es el terminal socio de este sitio. El enlace de arriba
+            lleva allí y está identificado como patrocinado.
           </p>
-        </div>
-      ) : (
-        <p className="trade-partner">
-          <strong>{slot.label}</strong> es el terminal socio de este sitio. El enlace de arriba
-          lleva allí y está identificado como patrocinado.
-        </p>
+        </>
       )}
 
-      <p className="label control-note trade-note">
+      {/*
+        **One disclaimer, at the foot, at the footnote's size.**
+
+        It was rendered as a `.label`, which is uppercase and letterspaced —
+        legal prose in capitals is not a footnote at any size. `.footnote` is
+        what the layout already uses for the site-wide line directly below this
+        one, so the two now read as a single block at 11px instead of as two
+        disclaimers in two different voices.
+
+        The site-wide line covers "not financial advice"; this one covers
+        custody and execution, which is the claim that matters on the page about
+        how to start trading. They are different statements, not a repetition.
+      */}
+      <p className="footnote trade-note">
         Este sitio no custodia fondos, no firma transacciones y no ejecuta órdenes. Operar on-chain
         implica riesgo de pérdida total.
       </p>
@@ -125,28 +152,73 @@ function Divider({ children }: { children: string }) {
 }
 
 /**
- * The four steps, translated into neutral Spanish rather than transcribed:
- * theirs name their own partner in two of the four, and ours cannot name one
- * yet. What survives is the sequence, which is the part that is the same for
- * anybody: get a wallet, fund it, find who to follow, trade.
+ * The steps, per chain that actually has ingestion.
  *
- * The last card carries the accent border on the mould, so it does here.
+ * **Theirs name one chain because they index one.** This page used to say "una
+ * wallet de Solana" and "cárgala con SOL" regardless, which was true only while
+ * Solana was the only chain and would have gone quietly wrong the first time a
+ * reader arrived from an EVM chain the site indexes.
+ *
+ * `activeChains()` is the source, the same one `/registro` and the onboarding
+ * modal read: a chain with no ingestion produces no trades, moves no rank and
+ * appears nowhere, so telling somebody to fund a wallet on it would be
+ * instructions for a thing that does not work — `DESIGN.md`'s last Don't, in
+ * prose rather than in a control.
+ *
+ * The **sequence** is what is copied from the mould and it is the same for
+ * anybody: get a wallet, fund it, find who to follow, trade with your own
+ * judgement. Only the first two steps name chains; the last two are about
+ * reading a ranking and about risk, and neither depends on which chain.
  */
-const STEPS = [
-  {
-    title: "Abre una wallet",
-    body: "Una wallet de Solana en el navegador o en el teléfono. Guarda la frase de recuperación fuera de línea: quien la tenga, tiene los fondos.",
-  },
-  {
-    title: "Cárgala con SOL",
-    body: "Transfiere SOL desde donde ya lo tengas. Deja siempre un resto para las comisiones de red.",
-  },
-  {
-    title: "Mira qué hacen los KOL",
-    body: "La clasificación de este sitio ordena por PnL realizado del período. El feed muestra cada compra y cada venta en cuanto la cadena las confirma.",
-  },
-  {
-    title: "Opera con tu propio criterio",
-    body: "Copiar una operación no copia el momento en que se abrió ni el tamaño con que se hizo. Lo que ves aquí es un registro, no una recomendación.",
-  },
-] as const;
+const CHAIN_WALLET: Record<Chain, string> = {
+  solana: "Solana",
+  robinhood: "Robinhood Chain",
+  ethereum: "Ethereum",
+  bnb: "BNB Chain",
+};
+
+const CHAIN_UNIT: Record<Chain, string> = {
+  solana: "SOL",
+  robinhood: "ETH",
+  ethereum: "ETH",
+  bnb: "BNB",
+};
+
+/** `a`, `a y b`, `a, b y c` — the list Spanish actually uses. */
+function listChains(names: string[]): string {
+  return new Intl.ListFormat("es", { style: "long", type: "conjunction" }).format(names);
+}
+
+export function stepsFor(chains: readonly Chain[]): { title: string; body: string }[] {
+  const networks = listChains(chains.map((chain) => CHAIN_WALLET[chain]));
+  // Distinct units: two EVM chains both spend ETH, and saying so twice reads as
+  // a mistake.
+  const units = listChains([...new Set(chains.map((chain) => CHAIN_UNIT[chain]))]);
+
+  return [
+    {
+      title: chains.length === 1 ? "Abre una wallet" : "Abre una wallet en la red que uses",
+      body:
+        `Una wallet en ${networks}, en el navegador o en el teléfono. Guarda la frase de ` +
+        "recuperación fuera de línea: quien la tenga, tiene los fondos.",
+    },
+    {
+      title: `Cárgala con ${units}`,
+      body:
+        `Transfiere ${units} desde donde ya lo tengas. Deja siempre un resto para las ` +
+        "comisiones de red.",
+    },
+    {
+      title: "Mira qué hacen los KOL",
+      body:
+        "La clasificación de este sitio ordena por PnL realizado del período. El feed muestra " +
+        "cada compra y cada venta en cuanto la cadena las confirma.",
+    },
+    {
+      title: "Opera con tu propio criterio",
+      body:
+        "Copiar una operación no copia el momento en que se abrió ni el tamaño con que se hizo. " +
+        "Lo que ves aquí es un registro, no una recomendación.",
+    },
+  ];
+}

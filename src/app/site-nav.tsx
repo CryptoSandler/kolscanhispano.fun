@@ -42,10 +42,24 @@ import { usePathname } from "next/navigation";
  * mould has no live feed, and ours is not reachable any other way. Dropping it
  * to match the count exactly would orphan a page.
  */
+/**
+ * **Two items, and the dot moved to `Trade`** — the owner's decision of
+ * 2026-09-05, after measuring the mould's header: `● Trade  Cabals`, and no
+ * live-feed item at all.
+ *
+ * `En vivo` used to be here because the mould has no live feed and ours was not
+ * reachable any other way; dropping it to match their count would have orphaned
+ * the page. It is not orphaned now — the home links it from the block at its
+ * foot — so the nav can be theirs exactly.
+ *
+ * The green dot is theirs and it sits on `Trade`. `DESIGN.md` makes green the
+ * direction of money everywhere else and dated this dot as the one exception on
+ * 2026-09-03; the exception now applies to the item they put it on rather than
+ * to the one we had.
+ */
 const LINKS = [
-  { href: "/en-vivo", label: "Live", live: true },
+  { href: "/trade", label: "Trade", live: true },
   { href: "/cabals", label: "Cabals", live: false },
-  { href: "/trade", label: "Trade", live: false },
 ] as const;
 
 export function SiteNav() {

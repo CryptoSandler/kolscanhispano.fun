@@ -44,6 +44,9 @@ function trade(overrides: Partial<PublicTrade> = {}): PublicTrade {
 
 function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
   return {
+    // Empty is the interesting default: it is what a KOL who closed nothing has,
+    // and it is what makes the modal render no CHAIN PNL section at all.
+    chains: [],
     window: "1d",
     kol: {
       slug: "kol-uno",

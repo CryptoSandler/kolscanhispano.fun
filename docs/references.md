@@ -361,15 +361,36 @@ kolscanbrasil.io's landing page carries **no feed at all**: it is leaderboard-on
 So a live feed on the home page is not a genre requirement. Putting one there is our choice,
 and it is the choice that makes the site read as alive on the first three seconds.
 
-### Two places the genre collides with our spec — the spec wins, both times
+### Two places the genre collides with our spec — and the first was reopened
 
-1. **Addresses.** Both sites print a truncated wallet address on every public row, and
-   kolscan.io keys both its avatar URL and its account URL by the full address. `SECURITY.md`
-   and spec §8 forbid publishing an address in any form, truncated included, and `serialize.ts`
-   is the single place that enforces it. **The identity chip is the X handle here, never an
-   address.** kolscanbrasil.io's `Wallets Ocultas` label — which it applies per-KOL — is what
-   our whole site does unconditionally, and confirms the phrasing is idiomatic in the genre
-   rather than an apology.
+1. **Addresses. SUPERSEDED 2026-09-05 by the owner; the original ruling and the
+   reasoning are kept below because the new rule is a narrowing of it, not a reversal.**
+
+   *What stood until then:* both sites print a truncated wallet address on every public row,
+   and kolscan.io keys both its avatar URL and its account URL by the full address.
+   `SECURITY.md` and spec §8 were read as forbidding publication of an address in any form,
+   truncated included; `serialize.ts` enforced it; the identity chip was the X handle and never
+   an address; and `Wallets Ocultas`, which kolscanbrasil applies per-KOL, was what this whole
+   site did unconditionally.
+
+   *What the owner decided on 2026-09-05:* a truncated address **may** be published — **only
+   for a wallet the KOL opted in**, `kol_wallet.is_public`, the flag added on 2026-08-31 for
+   exactly this choice. Everything else is unchanged: a wallet that is not opted in may not
+   appear on any surface **in any form, truncated included**, and `Wallets Ocultas` still takes
+   the slot when there is nothing to publish.
+
+   The distinction that makes this a narrowing rather than a reversal: the old rule could only
+   say *no address anywhere*, so it could not tell a leak from a publication. The new one has
+   an exact edge and `address-invariant.test.ts` asserts **both** directions against a single
+   KOL holding one wallet of each kind — the published one must appear as its six-character
+   chip and no more of it, the private one must not appear at any length.
+
+   One module decrypts an address for a public surface — `src/lib/public-wallets.ts` — and its
+   `WHERE` clause is the whole authorisation. A caller cannot ask it for a private wallet
+   because there is no argument that would express one.
+
+   kolscanbrasil's `Wallets Ocultas` phrasing is still what confirms the label is idiomatic in
+   the genre rather than an apology.
 2. **Avatars.** kolscanbrasil.io hotlinks `pbs.twimg.com` directly, so X sees every visitor's
    request and a broken upstream is a broken row. Spec §6 requires deriving from the handle via
    unavatar, **proxied and cached by `kol_id`**, never a hotlink. Same visual result, no third
@@ -415,7 +436,7 @@ highlighted podium, the cabal badges, and the detail modal.
 | PnL columns | one SOL figure | one per chain, signed | **kolscan.io.** We are SOL-only; a per-chain row would be one column wide and imply chains we do not index. |
 | Fiat | `($0.0)` under the figure | `(R$74.999,2)` at row end | **Brazil**: at row end, in parentheses, subordinate. |
 | Record | `0 / 0` wins/losses | absent | **kolscan.io** — *superseded 2026-09-02*: the clone decision took the column off the card. We still compute it and still publish it in `/api/leaderboard`; no surface prints it. |
-| Identity chip | truncated address | truncated address **or** `Wallets Ocultas` | **Neither.** See the invariant below. |
+| Identity chip | truncated address | truncated address **or** `Wallets Ocultas` | **Truncated address for opted-in wallets only, else `Wallets Ocultas`** — superseded 2026-09-05, see §5 |
 | Avatar | own CDN, keyed by address | hotlinked `pbs.twimg.com` | **Neither.** Our own `/api/avatar/<kol_id>`. |
 | Feed | its own page | none | **kolscan.io**, kept on the home page. |
 | Unit toggle | SOL price in header | `USD` / `BRL` | **See the currency note.** |
@@ -469,3 +490,24 @@ dated public rate, with the rate, the casa and the moment printed beside the fig
 `docs/round-ars.md` is the round it required, and **which dollar is still open**. The toggle
 also stopped choosing the *ranked* figure — the ranking is by SOL now, as on the mould — so
 `SOL / USD` did not become `USD / ARS` so much as split in two, and half of it was lost.
+
+
+## El @handle sale de la fila y queda en el modal — 2026-09-05
+
+**Decisión del dueño, y supersede la regla que este documento fijó.** La fila
+imprimía `@usuario` al lado del glifo `𝕏` desde `b0f2a43`, sobre el argumento —
+que sigue siendo cierto — de que el handle es identidad pública mientras la
+wallet es el secreto, y que por eso podíamos poner ahí lo que ellos no ponen.
+
+Lo que cambió no es ese argumento sino su costo medido: a 1440 el texto de más
+empujaba la línea de identidad a un segundo renglón en casi todas las filas, y la
+tarjeta pasaba de **76 a 84 px** contra un molde cuyas filas miden 76 sin
+excepción. Una fila más alta que la del molde en todas las filas es una diferencia
+peor que la que el handle resolvía.
+
+**El handle se sigue publicando**, en el modal del KOL, donde hay lugar. En la
+fila queda el glifo `𝕏` como enlace, y su `aria-label` nombra a la persona y al
+handle, así que quien no ve el glifo igual sabe a qué perfil lleva.
+
+Lo que **no** cambia: `Wallets Ocultas` y el chip de wallet pública siguen en la
+fila, en el slot de la dirección, que es de lo que hablaba la regla de §5.

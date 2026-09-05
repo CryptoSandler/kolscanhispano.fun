@@ -62,6 +62,14 @@ export const HYGIENE_SKIP = ["src/lib/hygiene.ts", "package-lock.json"];
  * hex" would exempt every EVM wallet address in the repository, which is the
  * opposite of the point.
  */
+/**
+ * **`docs/multichain.md` is the canonical list and this is its copy in code.**
+ * `hygiene-allowlist.test.ts` compares the two in both directions, so neither
+ * half can drift. It is not read from the file at run time: this module is
+ * imported by `src/app/api/admin/kol/route.ts`, Next bundles by following
+ * imports rather than file paths, and a `readFileSync` of a doc would work in
+ * development and fail in production.
+ */
 const ALLOWED_CONTRACTS = [
   "0x8366a39cc670b4001a1121b8f6a443a643e40951", // Uniswap V4 PoolManager, Robinhood Chain 4663
   "0x8876789976dEcBfCbBbe364623C63652db8C0904", // UniversalRouter (Robinhood fork), chain 4663
@@ -74,8 +82,40 @@ const ALLOWED_CONTRACTS = [
   "0x65050a9b7e5075a2ba5ced7b1b64ee66262c40dc",
 ];
 
+/**
+ * Event topic hashes: 64 hex, **not addresses**, and a separate list on purpose.
+ *
+ * `docs/multichain.md` records why the distinction is not pedantry. A grep for
+ * `0x[a-fA-F0-9]{40}` over another repo matched the **first 40 characters of
+ * these 64-character values** and reported them as three unallowlisted
+ * addresses, which is how `docs/round-robinhood.md` §2 came to say something
+ * false. `EVM_IDENTIFIER` never had that defect — it demands exact lengths — so
+ * it sees a topic as a 64 and not as a 40 followed by rubbish.
+ *
+ * They are allowlisted so the Robinhood parser can name the events it decodes.
+ * A public topic and a person's wallet are not the same class of thing even
+ * when they share a shape, which is the whole reason this is a second list and
+ * not three more rows in the one above.
+ *
+ * Verified by RPC 2026-09-04: zero bytecode, zero balance, nonce zero. Not
+ * accounts.
+ */
+const ALLOWED_TOPICS = [
+  "0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455", // CURVE_BUY
+  "0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df", // CURVE_SELL
+  "0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607", // TOKEN_LAUNCHED
+];
+
+/** Both lists, for the test that compares them against the document. */
+export const ALLOWLISTED_IDENTIFIERS = {
+  contracts: ALLOWED_CONTRACTS,
+  topics: ALLOWED_TOPICS,
+} as const;
+
 const ALLOWED_CONTRACT_RE = new RegExp(
-  ALLOWED_CONTRACTS.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  [...ALLOWED_CONTRACTS, ...ALLOWED_TOPICS]
+    .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|"),
   "gi",
 );
 

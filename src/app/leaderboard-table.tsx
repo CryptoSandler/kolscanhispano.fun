@@ -3,9 +3,24 @@ import { cabalChipClass } from "@/lib/cabal";
 import type { LeaderboardFiat } from "@/lib/leaderboard";
 import { LEADERBOARD_WINDOWS, WINDOW_LABELS, type LeaderboardWindow } from "@/lib/windows";
 import { Avatar } from "./avatar";
+import { ChainAmounts } from "./chain-amounts";
+import { WalletChip } from "./wallet-chip";
 import { KolRow } from "./kol-row";
-import { amountDirection, formatSignedArs, formatSignedSol, formatSignedUsd } from "@/lib/format";
+import { formatSignedArs, formatUnsignedUsd } from "@/lib/format";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
+import type { ChainPnl } from "@/lib/chain-pnl";
+import type { PublicWallet } from "@/lib/public-wallets";
+
+/**
+ * A row, plus the per-chain split `leaderboard.ts` attaches from its own
+ * statement. `chains` is empty for a KOL who closed nothing, which is what
+ * renders no columns rather than a line of zeroes.
+ */
+type RankedEntry = PublicLeaderboardEntry & {
+  chains: ChainPnl[];
+  /** Only `is_public` wallets ever reach here. See `public-wallets.ts`. */
+  publicWalletList: PublicWallet[];
+};
 import { usdToArs, type ArsRate } from "@/lib/fx";
 
 /**
@@ -46,7 +61,7 @@ export function LeaderboardTable({
   window,
   closed,
 }: {
-  entries: PublicLeaderboardEntry[];
+  entries: RankedEntry[];
   /** Which currency the parenthesised total is printed in. */
   fiat: LeaderboardFiat;
   /**
@@ -278,7 +293,7 @@ function Row({
   fiat,
   rate,
 }: {
-  entry: PublicLeaderboardEntry;
+  entry: RankedEntry;
   fiat: LeaderboardFiat;
   rate: ArsRate | null;
 }) {
@@ -294,16 +309,26 @@ function Row({
   */
   const secondary =
     fiat === "usd"
-      ? formatSignedUsd(entry.realizedUsd)
+      ? formatUnsignedUsd(entry.realizedUsd)
       : rate === null
         ? null
         : formatSignedArs(usdToArs(entry.realizedUsd, rate.rate));
-  const primary = formatSignedSol(entry.realizedSol);
 
-  // DESIGN.md: green and red mean direction of money and nothing else. A
-  // window in which nothing was realized is neither, so it stays ink. The rule
-  // lives in `format.ts` because the modal colours its header by the same one.
-  const direction = amountDirection(entry.realizedSol);
+  /*
+    Whether anything in this row could be priced at all.
+
+    A row with *some* unpriced chains still shows the quoted total — that is the
+    owner's decision of 2026-09-05, and it is the same rule the ranking sorts by:
+    a KOL ranks on what quotes. A row where **nothing** quotes has no total to
+    show, and shows `(—)` rather than a zero.
+
+    `chains.length === 0` is a KOL who closed nothing, which is a real zero and
+    keeps its `(US$0,00)`.
+  */
+  const quoted =
+    entry.chains.length > 0 && entry.chains.every((chain) => chain.realizedUsd === null)
+      ? null
+      : secondary;
   const podium = entry.rank <= 3 ? (entry.rank as 1 | 2 | 3) : null;
 
   return (
@@ -361,28 +386,74 @@ function Row({
           {entry.kol.cabalTag && (
             <span className={cabalChipClass(entry.kol.cabalTag)}>{entry.kol.cabalTag}</span>
           )}
-          {/* `𝕏` is the link and the handle beside it is text. The row opens
-              the modal and `KolRow` excludes anything inside an `<a>`, so the
-              smaller target takes the link and the row keeps the rest. */}
+          {/*
+            **The glyph is the link and the handle is not in the row** —
+            the mould's arrangement, and the owner's decision of 2026-09-05.
+
+            It was printed here from `b0f2a43` until then, on the reasoning in
+            `docs/references.md` §6 that the handle is public identity while the
+            wallet is the secret. That reasoning still holds and the handle is
+            still published — in the KOL's modal, where there is room for it. The
+            row is what changed: at 1440 the extra text pushed the identity line
+            into a second line on most rows, and the card grew from 76 to 84
+            against a mould whose rows are 76 without exception.
+
+            `aria-label` still names the person, so the link says whose profile
+            it opens to somebody who cannot see the glyph.
+          */}
           <a
             className="x-glyph"
             href={`https://x.com/${encodeURIComponent(entry.kol.xHandle)}`}
             target="_blank"
             rel="noreferrer noopener"
-            aria-label={`Perfil de ${entry.kol.name} en X`}
+            aria-label={`Perfil de ${entry.kol.name} en X, @${entry.kol.xHandle}`}
           >
             𝕏
           </a>
-          <span className="handle">@{entry.kol.xHandle}</span>
-          {entry.kol.hideWallets && <span className="hidden-wallets">Wallets ocultas</span>}
+          {/*
+            The address slot. Published wallets when the KOL opted them in
+            (`is_public`, the owner\'s decision of 2026-09-05), `Wallets ocultas`
+            otherwise — and `WalletChip` is handed nothing but public ones, so it
+            cannot render a private address even by mistake.
+          */}
+          <WalletChip wallets={entry.publicWalletList} />
         </span>
       </span>
-      <span className={`num-lg pnl ${direction}`}>{primary}</span>
+      {/*
+        **One grid for the four figure slots**, so the fiat cannot slide left
+        when a chain is missing. Measured in their DOM at 1440 on 2026-09-05:
+        ETH x676 w120, BNB x796 w130, SOL x926 w130, fiat x1056 w140 — four
+        fixed tracks ending exactly at the card's inner edge.
+
+        They were two siblings until now, and `+12.50 SOL(+US$7.275,00)` in the
+        capture is what that produced: the amounts sized to their content and
+        the total butted straight against them.
+      */}
+      <span className="row-figures">
+      {/* One amount per chain that produced a row, each with its own sign
+          colour. Absent for every chain nothing was measured on — never
+          `0.00`. With no EVM ingestion this renders a single SOL figure and
+          the row is exactly what it was. */}
+      <ChainAmounts chains={entry.chains} />
       {/* DESIGN.md, `state-unpriced`: `sin precio`, never a dash and never a
           zero. A peso figure with no rate behind it is the same absence as a
           SOL amount with no price. */}
-      <span className="num secondary">
-        {secondary === null ? <span className="state-unpriced">sin precio</span> : `(${secondary})`}
+      {/*
+        **The parentheses carry the total of what could be priced, and no label.**
+
+        The row said `SIN PRECIO` whenever any chain was unquoted, which put a
+        caps label where every other row has a number and made one unpriced
+        position shout louder than the figures beside it. The owner's decision of
+        2026-09-05: the parenthesis shows the quoted total; when *nothing* quotes
+        it shows `(—)`, muted; and the explanation — which position, in which
+        unit, and why — belongs in the KOL's modal, not on a list row.
+
+        `nunca en cero` still holds. `(—)` is not `US$0,00`: the dash says we
+        made no measurement, the zero would say we measured nothing.
+      */}
+      <span className={`pnl-fiat${quoted === null ? " is-unquoted" : ""}`}>
+        {quoted === null ? "(—)" : `(${secondary})`}
+      </span>
       </span>
     </KolRow>
   );

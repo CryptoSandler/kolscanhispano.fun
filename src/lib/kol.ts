@@ -32,6 +32,7 @@
  * out flat today", which is a measurement, and DESIGN.md's rule is that
  * *"Absence is rendered as absence, never as a zero."*
  */
+import { orderChains, readChainPnl } from "./chain-pnl";
 import { query } from "./db";
 import { formatDecimal, parseDecimal } from "./decimal";
 import { readKolTrades } from "./feed";
@@ -268,7 +269,15 @@ export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolD
     ]),
   ]);
 
-  return serializeKolDetail({
+  // The per-chain split, from its own statement for the reasons in
+  // `chain-pnl.ts`. Attached after serialization rather than threaded through
+  // it: `serializeKolDetail` is about what a public surface may carry, and this
+  // is an addition to the shape rather than a change to that judgement.
+  const chains = orderChains(
+    (await readChainPnl([row.kol_id], bounds)).get(row.kol_id) ?? [],
+  );
+
+  const detail = serializeKolDetail({
     // `COUNT(*)` and `SUM` over an empty set give `0` and, with the COALESCE,
     // `'0'` -- so a KOL with no trades in the window is a real zero here, not a
     // missing row. What the *screen* does with that is a different rule: see
@@ -301,4 +310,9 @@ export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolD
       sells: monthSells[0]?.sells ?? 0,
     },
   });
+
+  // Attached after serialization rather than threaded through it:
+  // `serializeKolDetail` decides what a public surface may carry, and this is an
+  // addition to the shape rather than a change to that judgement.
+  return { ...detail, chains };
 }

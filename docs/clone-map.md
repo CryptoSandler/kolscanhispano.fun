@@ -191,3 +191,101 @@ summing one calendar day would be two different periods on one card.
 - Cabal density on a real roster.
 
 Everything else in this document was decided from the captures.
+
+
+## Corrección a §8: todas las filas son tarjetas — 2026-09-05
+
+§8 decía que las filas fuera del podio eran transparentes. **No lo son.** Medido
+en el DOM de kolscanbrasil a 1440 el 2026-09-05, con `.kol-row` en la mano:
+
+| | fondo | radio | borde izq. | alto | margen inf. |
+|---|---|---|---|---|---|
+| 1º | `linear-gradient(90deg, rgba(0,155,58,.25), rgba(89,141,176,.15))` | 8px | 4px `rgb(0,155,58)` | 76 | 8 |
+| 2º | `linear-gradient(90deg, rgba(254,223,0,.15), …)` | 8px | 4px `rgb(254,223,0)` | 76 | 8 |
+| 3º | `linear-gradient(90deg, rgba(0,39,118,.2), …)` | 8px | 4px `rgb(0,39,118)` | 76 | 8 |
+| **4 en adelante** | **`rgba(89,141,176,0.15)`** | **8px** | **ninguno** | 76 | 8 |
+
+Padding `16px 20px`, avatar 44×44, ancho de tarjeta 992 empezando en x=224.
+
+**Lo único que distingue al podio es el degradado y la barra de 4px.** El fondo,
+el radio, el alto y el margen son iguales en todas.
+
+### Cómo se produjo el error, que importa más que el error
+
+La primera sonda leyó el elemento equivocado: `.kol-row` tiene adentro un
+`div.hidden.md:flex.px-5.py-4` que **sí** es transparente y con radio 0, y ese
+fue el que se midió. La sonda "subir hasta encontrar un ancestro opaco" tampoco
+sirvió — el fondo del podio es `background-image`, no `background-color`, así que
+la condición de opacidad lo saltó y trepó hasta el `body`. Es la misma clase de
+artefacto que ya está anotada en este documento para el tile y la medalla: **una
+sonda que sube por el árbol se detiene en lugares distintos en cada sitio.**
+
+Lo que lo resolvió fue mirar el `className`: `rounded-lg mb-2 kol-row` está en el
+elemento correcto y se lee de una.
+
+### La grilla de figuras, medida
+
+Cuatro pistas fijas, alineadas a la derecha, que terminan justo en el borde
+interno de la tarjeta:
+
+| slot | x | ancho |
+|---|---|---|
+| ETH | 676 | 120 |
+| BNB | 796 | 130 |
+| SOL | 926 | 130 |
+| fiat | 1056 | 140 |
+
+**No colapsan.** Una chain sin dato deja su celda vacía y las demás no se mueven,
+que es lo que mantiene el paréntesis del total empezando en la misma x en todas
+las filas. `e2e/chain-columns.spec.ts` lo mide en un navegador en vez de confiar
+en el CSS.
+
+**Y no hay total nativo.** Los montos nativos viven en los slots por chain; el
+único número consolidado es el fiat. Nuestra fila tenía además una columna de
+total nativo, que en una fila sólo-Solana imprimía `+12.50 SOL` dos veces.
+
+
+### Las columnas son por unidad, no por chain — 2026-09-05
+
+El molde tiene **tres** columnas de monto: ETH, BNB, SOL. No tiene una por chain.
+
+Importa acá porque este producto indexa —o va a indexar— dos cadenas denominadas
+en ETH: **Robinhood Chain (4663) y Ethereum (1)**. Una columna por chain daría dos
+columnas `ETH` una al lado de la otra, que no es lo que ellos muestran y no es lo
+que un lector espera.
+
+Así que los slots se agrupan por **unidad** y las dos cadenas ETH **se suman en un
+solo slot**. Es la única aritmética de este tablero que cruza cadenas, y está
+permitida justamente porque no las cruza: son la misma unidad, así que es una
+suma y no el error de categoría que cometía el orden nativo viejo
+(`SUM(realized_sol)` sumando SOL con ETH, ver `DECISIONES.md` 2026-09-05).
+
+El desglose por **chain** sigue existiendo donde hay lugar para explicarlo: la
+sección `CHAIN PNL` del modal lista cadenas, no unidades, así que ahí se ve qué
+parte del ETH vino de cada una.
+
+
+### El wordmark va en blanco: excepción deliberada al azul del molde — 2026-09-05
+
+El molde pone la segunda palabra de su wordmark en su celeste de marca
+(`KOLScan **Brasil**`). Acá **`KOLScan Hispano` va entero en blanco `#EDEDED`**, y
+es una excepción decidida, no un descuido.
+
+**Por qué.** Sobre el wordmark corre el brillo de banderas de los veintiún países
+hispanohablantes, sobre las dos palabras y no sólo sobre la segunda. Un degradado de banderas sobre una base celeste se lee como un
+color sucio; sobre blanco se lee como un brillo. La base tiene que ser neutra para
+que el efecto sea el efecto y no una mezcla.
+
+**Lo que no cambia:** el subtítulo (`Clasificación de traders hispanos`) sigue en
+su gris de siempre. La corrección era sobre la palabra del wordmark, no sobre él.
+
+**Contraste, calculado:**
+
+    antes  #598DB0 sobre #111315   5,20:1   AA
+    ahora  #EDEDED sobre #111315  15,90:1   AA y AAA
+
+Así que la excepción además mejora lo que el clon tenía. Con
+`prefers-reduced-motion` la palabra queda **blanca fija**: se apaga el
+pseudo-elemento entero en vez de congelar el degradado, porque un degradado
+detenido sigue siendo una decoración que alguien pidió no ver — y porque
+congelarlo cambiaría el color respecto del reposo.

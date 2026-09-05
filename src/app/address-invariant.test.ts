@@ -252,6 +252,10 @@ function findBlindIndex(text: string, forAddresses: string[]): string[] {
 let kols: Kol[];
 /** Every address the fixture put in the database. None may reach a page. */
 let addresses: string[];
+/** Addresses of wallets the KOL opted in. These are published, truncated. */
+let publicAddresses: string[];
+/** Every other address. None of these may reach any surface, at any length. */
+let privateAddresses: string[];
 /** The mints the fixture traded. Cleartext by spec §3, and never rendered today. */
 let mints: string[];
 /** Signatures of the KOL that publishes its wallets: on the page, by design. */
@@ -324,6 +328,15 @@ beforeAll(async () => {
 
   kols = [abierto, oculto, mixto];
   addresses = kols.flatMap((kol) => kol.wallets.map((wallet) => wallet.address));
+  // The split the invariant now turns on. `kol-mixto` holds one of each, so
+  // both halves are exercised against a single row rather than against two
+  // KOLs that could differ for some other reason.
+  publicAddresses = kols.flatMap((kol) =>
+    kol.wallets.filter((w) => w.isPublic).map((w) => w.address),
+  );
+  privateAddresses = kols.flatMap((kol) =>
+    kol.wallets.filter((w) => !w.isPublic).map((w) => w.address),
+  );
 
   // Two mints: one with a symbol, one the token table has never heard of, so
   // both branches of the feed row's symbol and price rendering are exercised.
@@ -487,14 +500,64 @@ describe("the fixture is populated, so the assertions below are about a real pag
   });
 });
 
-describe("no wallet address reaches the rendered page", () => {
-  it("prints none of the addresses the fixture stored", () => {
-    for (const address of addresses) {
-      expect(surfaces, "a wallet address in the emitted HTML").not.toContain(address);
-      expect(props, "a wallet address in the hydration props").not.toContain(address);
-      // Truncated counts as published: `docs/references.md` §5 records both
-      // reference sites printing a `HFx9E1`-style chip on every public row.
-      // Neither end of the address may appear, at the lengths such a chip uses.
+/**
+ * **The invariant, as of the owner's decision of 2026-09-05.**
+ *
+ * It used to be *no address is published, for anybody*. It is now *no
+ * **non-public** address is published*: a KOL may opt a wallet in with
+ * `kol_wallet.is_public`, and that wallet's truncated address appears on the
+ * row — which is what `docs/references.md` §5 records both reference sites
+ * doing, and what this project refused until now.
+ *
+ * The edge is stricter than the old rule in the way that matters: the old one
+ * could only say "no address anywhere", so it could not tell a leak from a
+ * publication. This one asserts both directions against `kol-mixto`, a single
+ * KOL holding one wallet of each kind.
+ */
+describe("no non-public wallet address reaches the rendered page", () => {
+  it("publishes the truncated form of an opted-in wallet, and no more of it", () => {
+    expect(publicAddresses.length, "the fixture must hold a published wallet").toBeGreaterThan(0);
+    for (const address of publicAddresses) {
+      // The chip: six leading characters, the length `public-wallets.ts` cuts
+      // to and the length kolscan.io prints.
+      expect(surfaces, "a published wallet's chip is missing from the page").toContain(
+        address.slice(0, 6),
+      );
+      /*
+        **And the panel's `6...4`, which is the form the disclosure shows.**
+
+        The rule moved on 2026-09-05 from "six characters on the row" to "six
+        and four in the panel, never the whole address". Ten characters instead
+        of six is more of an address, and it is the deliberate amount: an
+        address is recognisable from its ends — which is why every explorer
+        prints it this way — and **unfindable without its middle**, which is the
+        part that is never published in any form.
+      */
+      const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+      expect(surfaces, "the panel's 6...4 form is missing").toContain(short);
+      // The middle, at the length that would make it searchable, must not be
+      // anywhere — this is what "never the whole address" means in practice.
+      expect(surfaces, "the middle of an address was published").not.toContain(
+        address.slice(6, 22),
+      );
+      // And nothing beyond it. Publishing a truncation is the decision;
+      // publishing the address is not, and a component that rendered the whole
+      // thing would still pass a test that only looked for the prefix.
+      expect(surfaces, "a published wallet appeared in full").not.toContain(address);
+      expect(props, "a published wallet appeared in full in the props").not.toContain(address);
+      expect(surfaces, "more of a published address than the chip shows").not.toContain(
+        address.slice(0, 16),
+      );
+    }
+  });
+
+  it("prints none of the private addresses the fixture stored", () => {
+    expect(privateAddresses.length, "the fixture must hold a private wallet").toBeGreaterThan(0);
+    for (const address of privateAddresses) {
+      expect(surfaces, "a private wallet address in the emitted HTML").not.toContain(address);
+      expect(props, "a private wallet address in the hydration props").not.toContain(address);
+      // Truncated counts as published, which is the whole point: a private
+      // wallet may not appear even as the six-character chip a public one does.
       //
       // Six is the floor, and it is a floor for a measured reason rather than a
       // taste: `inventAddress` draws uniformly over base58, so a four-character

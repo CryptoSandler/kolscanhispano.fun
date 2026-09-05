@@ -436,3 +436,124 @@ En la ingesta de arrival, **el 37,4% de las operaciones quedaron atribuidas al r
 usuarios: es la «wallet» número uno del leaderboard por un factor de cuatro, y son cientos de
 personas en una fila. Quien indexe PONS por eventos de curva **tiene que decodificar el `recipient`
 del swap** o va a construir un ranking con un primer puesto que no existe.
+
+
+---
+
+## Allowlist de identificadores públicos — canónica
+
+**Esta sección es la fuente.** `src/lib/hygiene.ts` mantiene las mismas listas en
+código y `hygiene-allowlist.test.ts` compara las dos **en ambas direcciones**, así
+que ninguna mitad puede derivar sin romper la suite.
+
+**Por qué el código no lee este archivo en tiempo de ejecución**, que era lo
+primero que se intentó: `src/app/api/admin/kol/route.ts` importa el guardián, y
+Next empaqueta siguiendo imports, no rutas de archivo — `docs/multichain.md` no
+viaja al despliegue, así que un `readFileSync` acá funcionaría en local y fallaría
+en producción. Es el mismo patrón que ya usa `wallet-proof-store.test.ts` contra el
+`CHECK` de Postgres: una lista en cada lado y un test que las ata.
+
+**Y por qué la sección está delimitada en vez de leer todo el documento:** este
+archivo también lo escanea el guardián. Si cualquier dirección escrita en cualquier
+párrafo se permitiera a sí misma, pegar una wallet acá por error dejaría de ser un
+error — que es exactamente lo que el guardián existe para atrapar. Solo cuentan las
+filas de las dos tablas de abajo.
+
+### Contratos
+
+Direcciones de 40 hex. Un contrato es un identificador público y permanente que
+lista cualquier explorador; una wallet no.
+
+<!-- allowlist:contracts -->
+| address | qué es |
+|---|---|
+| `0x8366a39cc670b4001a1121b8f6a443a643e40951` | Uniswap V4 PoolManager, Robinhood Chain 4663 |
+| `0x8876789976dEcBfCbBbe364623C63652db8C0904` | UniversalRouter (fork de Robinhood), 4663 |
+| `0x65050a9b7e5075a2ba5ced7b1b64ee66262c40dc` | Agregador de swaps de terceros, 4663 |
+<!-- /allowlist:contracts -->
+
+### Topics de evento
+
+Hashes de 64 hex, **no direcciones**. Van en una lista aparte y con su propio
+comentario porque un topic público y una wallet no son la misma clase de cosa
+aunque compartan la forma — y porque presentarlos como direcciones ya produjo un
+error una vez (§ "Las direcciones de Robinhood Chain").
+
+Los tres se verificaron por RPC el 2026-09-04: **0 bytes de bytecode, saldo 0,
+nonce 0**. No son cuentas.
+
+Los valores completos se copiaron de `smartmoney/src/robinhood/rpc.ts:11-14`, que es
+donde este mismo documento dice que viven. Un primer intento de esta tabla los
+**inventó** a partir de las formas truncadas de arriba (`0xec36bf57…cbfc455`) — en
+un documento que afirma verificación por RPC, que es la peor forma posible de estar
+equivocado. Se corrigió leyendo la fuente antes de escribir.
+
+<!-- allowlist:topics -->
+| topic | qué es |
+|---|---|
+| `0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455` | CURVE_BUY |
+| `0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df` | CURVE_SELL |
+| `0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607` | TOKEN_LAUNCHED |
+<!-- /allowlist:topics -->
+
+
+---
+
+## BNB (56): lo medido contra mainnet — 2026-09-05
+
+**La credencial existe y funciona.** Es la misma key de la app `arrival` de
+Alchemy que `smartmoney` usa en `ROBINHOOD_RPC_URL`; el endpoint de BNB es el
+mismo host con otra red. En este repo vive como `ALCHEMY_BNB_RPC_URL`.
+
+    eth_chainId     -> 0x38  (= 56, BNB mainnet)
+    eth_blockNumber -> 120.151.893
+
+**Y no la habíamos encontrado por buscar mal.** Dos veces se reportó "no hay
+credencial de Alchemy en esta máquina", buscando la cadena `ALCHEMY` en
+`.env.local`, en el entorno y en todos los repos. La key estaba en una variable
+llamada `ROBINHOOD_RPC_URL`. Buscar por el nombre del proveedor no encuentra una
+credencial guardada con el nombre de su uso; buscar por **la forma del valor**
+—un host `*.g.alchemy.com`— sí.
+
+### Los topics, verificados contra historia real
+
+| evento | topic0 | logs / 10 bloques | pools distintos |
+|---|---|---|---|
+| PancakeSwap **V2** `Swap` | `0xd78ad95f…59d822` | 162 | 109 |
+| PancakeSwap **V3** `Swap` | `0xc42079f9…bcca67` | 19 | 14 |
+
+### El techo que decide el diseño
+
+    tiempo de bloque   0,45 s   (medido sobre 100 bloques)
+    bloques por día    192.000
+    eth_getLogs        MÁXIMO 10 BLOQUES por llamada — plan Free
+
+Ese tope no es una elección nuestra: el endpoint lo devuelve como error y nombra
+el rango que sí aceptaría. Con él, **recorrer un día entero cuesta 38.400
+llamadas** (19.200 por topic), y a los ~250 ms medidos por llamada son **~2,7
+horas de reloj por día**. En un cron cada 15 minutos eso no entra, que es
+exactamente lo que §5 anticipaba: *"any design that walks blocks is not viable on
+a throttled cron"*.
+
+**Proyección de CU:** 38.400 llamadas/día × el costo publicado de `eth_getLogs`
+(75 CU) ≈ **2,88 M CU/día** sólo por caminar bloques de BNB, sobre un techo Free
+de ~10 M/día **compartido con la ingesta de Robinhood de `smartmoney`**. El costo
+por llamada es el número publicado por Alchemy y **no lo pude verificar desde
+acá**; el conteo de llamadas sí está medido.
+
+### Lo que sí es viable, y está probado
+
+`eth_getLogs` **filtra por posición de topic**, y eso cambia el problema:
+
+    sin filtrar, 10 bloques        25 logs
+    filtrando topics[2] = wallet    2 logs
+
+`topics[2]` es el `recipient` del swap en V2 y en V3, así que se puede pedir
+"swaps cuyo destinatario es esta wallet" en vez de "todos los swaps". Eso es lo
+que hace barato un **Custom Webhook con filtro GraphQL** —la salida que §5 ya
+proponía— y lo que evita el problema que §4 documenta para PONS: atribuir al
+router en vez de a la persona.
+
+**Sigue faltando** el webhook en sí: endpoint público, secreto de firma y alta en
+el dashboard de Alchemy, el mismo trío que Helius ya tiene. El flag de BNB en
+producción espera a eso, no al parser.

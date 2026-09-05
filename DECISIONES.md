@@ -725,3 +725,35 @@ Es la tercera vez: `/registro` lo tuvo, `/admin` lo tuvo, y este es el mismo err
 con otra ropa. Así que el arreglo no es pasar el valor en este llamador — **el prop
 pasó a ser obligatorio y sin default**. Un cuarto llamador que se olvide ahora no
 compila, en vez de fallar en el browser con la cara de una feature apagada.
+
+## Un KOL con PnL sin cotizar rankea por lo que cotiza — 2026-09-05
+
+**Tomada.** La clasificación ordena por `SUM(trade.realized_usd)`. Ordenaba por
+`realized_sol` hasta hoy, que suma el monto **nativo** de cada chain — con dos
+chains indexadas eso rankea gente por una cantidad sin unidad. El USD es la única
+cifra que se puede sumar entre chains, que es también por qué el total único del
+molde es fiat.
+
+**Una posición que no cotiza aporta cero al orden.** No es un redondeo, es la
+decisión: un KOL rankea por lo que cotiza, y alguien cuya mejor operación no se
+puede cotizar queda por debajo de alguien cuya peor operación sí. Queda escrito
+acá porque es **visible para quien lo sufre e invisible en el número**: la fila
+muestra el total cotizado y nada indica, ahí, que falte algo.
+
+Lo que lo hace decible en vez de silencioso:
+
+- La fila muestra el total entre paréntesis. Si **nada** cotiza muestra `(—)` en
+  muted — no `US$0,00`, porque el guion dice "no medimos" y el cero diría
+  "medimos nada".
+- El **modal** del KOL dice cuál posición quedó afuera y en qué unidad:
+  `+0,42 ETH sin cotizar (Q30–32)`. La explicación vive donde hay lugar para
+  explicar, no en una fila de lista donde una etiqueta en mayúsculas gritaba más
+  que las cifras.
+- `chain-pnl.ts` sigue negándose a sumar la mitad cotizada de un grupo: un total
+  con un agujero adentro es peor que un `null` visible.
+
+**Lo que sigue abierto:** qué cotiza y qué no en cada chain depende de la ingesta
+que todavía no existe (no hay credencial de Alchemy en esta máquina, ver
+`docs/round-columnas-chain.md` §0). Hoy todo lo que hay es Solana y todo cotiza,
+así que la decisión no cambia ningún orden actual — se toma ahora porque después
+de que existan filas mueve gente de lugar en el tablero.

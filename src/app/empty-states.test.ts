@@ -21,6 +21,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PublicCabal } from "@/lib/cabals";
 import type { PublicKolDetail, PublicLeaderboardEntry } from "@/lib/serialize";
+import type { ChainPnl } from "@/lib/chain-pnl";
+import type { PublicWallet } from "@/lib/public-wallets";
 import type { LeaderboardWindow } from "@/lib/windows";
 import { CabalsBoard } from "./cabals/board";
 import { FeedLive } from "./feed-live";
@@ -32,8 +34,22 @@ import { LeaderboardTable } from "./leaderboard-table";
  * A ranked row. `winRate === null` is `serialize.ts`'s "nothing closed in the
  * window"; a string is a real measurement over a real denominator.
  */
-function entry(rank: number, overrides: Partial<PublicLeaderboardEntry> = {}): PublicLeaderboardEntry {
+/**
+ * The ranking's row type gained a per-chain split, so the fixture carries one.
+ * Empty is the interesting default: it is what a KOL who closed nothing has,
+ * and it is what makes the surface render no chain columns at all.
+ */
+type RankedEntry = PublicLeaderboardEntry & {
+  chains: ChainPnl[];
+  publicWalletList: PublicWallet[];
+};
+
+function entry(rank: number, overrides: Partial<RankedEntry> = {}): RankedEntry {
   return {
+    chains: [],
+    // Nothing published: the fixture's KOLs render `Wallets ocultas`, which is
+    // the state the empty-state cases are about.
+    publicWalletList: [],
     rank,
     kol: {
       slug: `kol-${rank}`,
@@ -53,7 +69,7 @@ function entry(rank: number, overrides: Partial<PublicLeaderboardEntry> = {}): P
 }
 
 function leaderboardHtml(
-  entries: PublicLeaderboardEntry[],
+  entries: RankedEntry[],
   window: LeaderboardWindow = "1d",
   fiat: "usd" | "ars" = "usd",
 ): string {
@@ -115,6 +131,9 @@ function emptyCell(surface: string): string {
 /** A KOL's period with nothing in it — the state the chart has to say in words. */
 function quietDetail(): PublicKolDetail {
   return {
+    // Empty is the interesting default: it is what a KOL who closed nothing has,
+    // and it is what makes the modal render no CHAIN PNL section at all.
+    chains: [],
     window: "1d",
     kol: {
       slug: "kol-uno",

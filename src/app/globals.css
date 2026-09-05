@@ -419,6 +419,24 @@ a {
    while it was a label standing in for a page that did not exist. */
 /* A bordered pill with a chain glyph, as on the mould. It was a plain muted
    link; the pill is what makes it read as the one action in the header. */
+/*
+  `Connect Wallet`, filled in Phantom's violet — the owner's decision of
+  2026-09-05. It sits where the mould puts its logged-in user chip, at the same
+  size, and still goes to `/registro`.
+
+  **A colour, not an asset.** `#AB9FF2` is a hex value; nothing of Phantom's is
+  copied — no mark, no logo, no wordmark — and the page names no wallet, which is
+  the rule `wallet-standard.ts` keeps: the list of wallets is whatever the
+  browser announces.
+
+  **Contrast, computed rather than asserted** (WCAG relative luminance):
+
+      #AB9FF2 on #111315   7.96:1   AA and AAA for normal text
+      #9182E0 on #111315   5.74:1   the hover, still AA
+
+  The text is the dark canvas colour and not white: `#AB9FF2` against white is
+  2.34:1 and fails AA outright, which is the trap a light violet invites.
+*/
 .registro {
   display: inline-flex;
   align-items: center;
@@ -426,8 +444,9 @@ a {
   padding: 9px 14px;
   border: 0;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--brand-hispano) 20%, transparent);
-  color: #fff;
+  background: #ab9ff2;
+  color: #111315;
+  font-weight: 600;
   font-size: 16px;
   white-space: nowrap;
   text-decoration: none;
@@ -925,9 +944,21 @@ a {
   border-radius: 0;
 }
 
+/*
+  **Three tracks: rank, identity, figures.**
+
+  It was `48px minmax(0,1fr) 168px 132px` / `rank kol pnl usd` — a native-total
+  column and a fiat column. The figure block replaced both: the mould has no
+  native total at all, its natives live in the per-chain slots, and printing one
+  beside them duplicated the SOL amount on every Solana-only row
+  (`+12.50 SOL … +12,50 SOL` in the 2026-09-05 capture).
+
+  520px is the measured sum of their four slots — 120 + 130 + 130 + 140 — so the
+  block ends exactly at the card's inner edge, as theirs does.
+*/
 .board .row-leaderboard {
-  grid-template-columns: 48px minmax(0, 1fr) 168px 132px;
-  grid-template-areas: "rank kol pnl usd";
+  grid-template-columns: 48px minmax(0, 1fr) 520px;
+  grid-template-areas: "rank kol figures";
 }
 
 /* `/cabals`, below the podium: the same card with a member count where the KOL
@@ -2849,19 +2880,38 @@ a.cta {
   border-color: var(--accent);
 }
 
+/*
+  A small numeral in the corner, not the mould's 44px ghost behind the text.
+
+  Theirs sits under the content as decoration; at 44px against
+  `--surface-3` ours overlapped the step title at every width the captures were
+  read at, and a decoration that eats the words it decorates is not decoration.
+  The step stays numbered — it is a sequence — at a size that does not compete.
+*/
 .step-number {
   position: absolute;
-  top: 2px;
-  right: 8px;
+  top: 10px;
+  right: 12px;
   font-family: var(--font-numeric);
-  font-size: 44px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
-  color: var(--surface-3);
+  letter-spacing: 0.08em;
+  color: var(--muted);
 }
 
 .step-title {
   position: relative;
+  /*
+    **Room for the numeral, so it cannot sit on the words.**
+
+    Shrinking the number from 44px to 12px was not enough on its own: the title
+    still ran the full width of the card and wrapped underneath it, which the
+    1440 capture showed as `...en la red que ¹uses`. The brief's complaint was
+    exactly this — a decoration that eats the text it decorates — and the fix is
+    to reserve the space rather than to hope the title is short.
+  */
+  padding-right: 22px;
   margin: 0 0 6px;
   font-family: var(--font-body);
   font-size: 15px;
@@ -2891,4 +2941,467 @@ a.cta {
   .steps {
     grid-template-columns: 1fr;
   }
+}
+
+
+/*
+  Per-chain amounts on a ranking row, and the modal's CHAIN PNL list.
+
+  `docs/round-columnas-chain.md` §3: one amount per chain that produced a row,
+  and nothing at all for the chains that did not. With no EVM ingestion this
+  renders a single SOL figure, so the row keeps the geometry `DESIGN.md`
+  measured against the mould at 1440 — the extra amounts only appear on a row
+  that has them, which is the state the overlay gate will have to be re-run
+  against the day a second chain turns on.
+*/
+/*
+  Fixed, right-aligned chain columns — the mould's arrangement, measured at 1440
+  on 2026-09-05. Every row has the same slots in the same places, so the amounts
+  line up down the page and an idle chain leaves a gap rather than shifting the
+  ones beside it.
+*/
+.chain-amounts {
+  display: grid;
+  grid-template-columns: repeat(var(--chain-columns, 1), minmax(96px, max-content));
+  justify-content: end;
+  gap: 0 20px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.chain-slot {
+  text-align: right;
+}
+
+/*
+  **Sans, 18/600 — measured in their DOM at 1440 on 2026-09-05**, not chosen:
+
+    +11.19 ETH   Inter  18px  600  letter-spacing normal  rgb(96,165,250)
+    +0.03 BNB    Inter  18px  600  letter-spacing normal  rgb(250,204,21)
+
+  Ours rendered these in the numeric face, which is this product's default for
+  a figure and is wrong here: theirs is the body sans and the difference is
+  visible at a glance in a side-by-side. `font-variant-numeric: tabular-nums`
+  keeps the columns aligned down the page, which their fixed layout gets from
+  the grid instead.
+*/
+.chain-amount {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+  Chain tints for gains, red for losses.
+
+  Their `+11.75 ETH` is blue, `+0.24 BNB` yellow, `+2.41 SOL` green, and both
+  `-0.14 BNB` and `-0.30 BNB` are red — the chain colours the gain, the loss is
+  red whatever chain it happened on. Taken from their rendered pixels rather
+  than from a brand guide, which is what "se vea tal cual así" asks for.
+*/
+.chain-amount.is-chain-eth { color: rgb(96 165 250); }
+.chain-amount.is-chain-bnb { color: rgb(250 204 21); }
+.chain-amount.is-chain-sol { color: rgb(74 222 128); }
+.chain-amount.is-loss { color: rgb(248 113 113); }
+
+/* The idle slot. Present in their DOM as `---` and rendered far back. */
+.chain-slot .state-unpriced {
+  color: var(--surface-3);
+}
+
+.chain-pnl {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chain-pnl > li {
+  display: grid;
+  /* Label, native amount, fiat equivalent: the modal's three-column rhythm. */
+  grid-template-columns: 4rem 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 0;
+}
+
+
+/*
+  The address slot: a published wallet, its badges, and the `+N` disclosure.
+  The mould's arrangement — `4PsfXF +2 ⌄  SOL  EVM` — measured at 1440 on
+  2026-09-05.
+*/
+.wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wallet-short {
+  font-size: 14px;
+  color: var(--ink-subtle);
+}
+
+.wallet-more {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-subtle);
+  cursor: pointer;
+}
+
+.chain-badge {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* Their badge tints: SOL violet, EVM blue. */
+.chain-badge.is-sol { background: color-mix(in srgb, #9945ff 30%, transparent); color: #c9a3ff; }
+.chain-badge.is-evm { background: color-mix(in srgb, #627eea 30%, transparent); color: #a8b8f0; }
+
+.wallet-list-open {
+  display: inline-flex;
+  gap: 6px;
+}
+
+
+/*
+  The parenthesised fiat total, at their measure: Inter 18px, weight 400,
+  rgb(237,237,237) — lighter than the chain amounts beside it, which is what
+  makes those read as the figures and this as the sum.
+*/
+.row-leaderboard .pnl-fiat {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* Nothing priced at all: an em dash, muted. Not a zero and not a label. */
+.row-leaderboard .pnl-fiat.is-unquoted {
+  color: var(--ink-subtle);
+}
+
+
+/*
+  ============================================================================
+  The row card and the figure grid — measured in kolscanbrasil's DOM at 1440
+  on 2026-09-05, not estimated.
+
+      every row      992 x 76, radius 8px, margin-bottom 8px, padding 16px 20px
+      avatar         44 x 44
+      rows 4+        background rgba(89,141,176,0.15), NO left border
+      podium 1       linear-gradient(90deg, rgba(0,155,58,.25), rgba(89,141,176,.15))
+                     border-left 4px rgb(0,155,58)
+      podium 2       gradient from rgba(254,223,0,.15), border-left 4px rgb(254,223,0)
+      podium 3       gradient from rgba(0,39,118,.2),  border-left 4px rgb(0,39,118)
+
+  **`docs/clone-map.md` §8 said the non-podium rows were transparent. They are
+  not** — every row is a card, and only the left border and the gradient are
+  the podium's. That correction is the reason this block exists.
+  ============================================================================
+*/
+.board > li.row-leaderboard {
+  min-height: 76px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: rgba(89, 141, 176, 0.15);
+}
+
+.board > li.row-leaderboard.is-podium-1 {
+  background: linear-gradient(90deg, rgba(0, 155, 58, 0.25), rgba(89, 141, 176, 0.15));
+  border-left: 4px solid rgb(0 155 58);
+}
+
+.board > li.row-leaderboard.is-podium-2 {
+  background: linear-gradient(90deg, rgba(254, 223, 0, 0.15), rgba(89, 141, 176, 0.15));
+  border-left: 4px solid rgb(254 223 0);
+}
+
+.board > li.row-leaderboard.is-podium-3 {
+  background: linear-gradient(90deg, rgba(0, 39, 118, 0.2), rgba(89, 141, 176, 0.15));
+  border-left: 4px solid rgb(0 39 118);
+}
+
+/*
+  **Four fixed tracks, and the fiat is one of them.**
+
+  The amounts and the total were siblings that each sized to their content, so
+  a row with two chains pushed the total left until it touched the amount
+  beside it — `+12.50 SOL(+US$7.275,00)` in the 1440 capture. Fixed tracks mean
+  a missing chain leaves its slot **empty** instead of collapsing, which is the
+  whole of "nunca se superponen": the fiat starts at the same x on every row
+  whatever the row contains.
+
+  `e2e/chain-columns.spec.ts` measures that rather than trusting it.
+*/
+.row-figures {
+  grid-area: figures;
+  display: grid;
+  grid-template-columns: 120px 130px 130px 140px;
+  align-items: baseline;
+}
+
+.row-figures .pnl-fiat,
+.row-figures .chain-slot {
+  text-align: right;
+}
+
+
+.registro:hover {
+  background: #9182e0;
+}
+
+
+/*
+  ============================================================================
+  El shimmer de `Hispano`, traído de `survives.fun` (`app/src/index.css`,
+  `.text-shimmer-flag`) y adaptado.
+
+  **Cómo funciona, que es lo que lo hace seguro:** las letras de abajo quedan
+  sólidas y opacas; un `::before` duplica el texto con `content: attr(data-text)`
+  y recorta un degradado en movimiento contra esos glifos. El brillo pasa por
+  encima, no reemplaza al texto — así el contraste del wordmark es el mismo con
+  el efecto y sin él, y no hay nada que cargar ni medir, así que no toca el CLS.
+
+  Es exactamente la razón por la que el original lo hace con un pseudo-elemento
+  en vez de con `background-clip` sobre el texto real, como su otro shimmer
+  (`.text-shimmer`): ese vuelve el texto transparente y depende del degradado
+  para ser legible.
+
+  **La rotación de paletas** usa `@property` para registrar los tres stops como
+  `<color>`, que es lo que permite que el navegador los **interpole**. Sin
+  registrar, una custom property es un token y salta de un valor al siguiente;
+  registrada como color, la transición es suave, que es lo que se pidió.
+
+  España y Argentina aparecen **dos veces** en el ciclo de 23 pasos.
+  ============================================================================
+*/
+@property --shine-1 { syntax: "<color>"; inherits: true; initial-value: #AA151B; }
+@property --shine-2 { syntax: "<color>"; inherits: true; initial-value: #F1BF00; }
+@property --shine-3 { syntax: "<color>"; inherits: true; initial-value: #AA151B; }
+
+/*
+  **El wordmark entero es blanco (#EDEDED), no el azul del molde.**
+
+  Corrección del dueño del 2026-09-05: el molde pone su segunda palabra en su
+  celeste de marca; acá `KOLScan Hispano` va entero en blanco para que el brillo
+  de banderas tenga sobre qué correr, y corre sobre las dos palabras. Un degradado
+  de banderas sobre una base celeste se lee como un color sucio; sobre blanco se
+  lee como un brillo.
+
+  El reposo es esta base. El degradado vive en `::before` y pasa por encima, así
+  que si nada de lo de abajo carga —o si el navegador no soporta
+  `background-clip: text`— lo que se ve es la palabra en blanco, que es un estado
+  correcto y no una degradación.
+
+  El subtítulo (`Clasificación de traders hispanos`) **no cambia**: sigue en su
+  gris, con su contraste medido. `.wordmark-accent` queda sin uso en el header y
+  se conserva por si otra superficie lo pide.
+*/
+.shimmer-flag {
+  position: relative;
+  display: inline-block;
+  color: #ededed;
+}
+
+.shimmer-flag::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    var(--shine-1) 45%,
+    var(--shine-2) 50%,
+    var(--shine-3) 55%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  /* El barrido, y la rotación de banderas, a ritmos distintos a propósito: el
+     brillo cruza la palabra cada 4s y la paleta tarda 69s en dar la vuelta, así
+     que dos pasadas seguidas casi nunca traen el mismo par de colores. */
+  animation:
+    shimmer-flow 4s linear infinite,
+    shimmer-nations 69s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes shimmer-flow {
+  0%   { background-position: 200% 0%; }
+  100% { background-position: -200% 0%; }
+}
+
+@keyframes shimmer-nations {
+  0.0% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* espana */
+  4.348% { --shine-1: #75AADB; --shine-2: #FFFFFF; --shine-3: #F6B40E; } /* argentina */
+  8.696% { --shine-1: #006341; --shine-2: #FFFFFF; --shine-3: #CE1126; } /* mexico */
+  13.043% { --shine-1: #FCD116; --shine-2: #003893; --shine-3: #CE1126; } /* colombia */
+  17.391% { --shine-1: #0039A6; --shine-2: #FFFFFF; --shine-3: #D52B1E; } /* chile */
+  21.739% { --shine-1: #D91023; --shine-2: #FFFFFF; --shine-3: #D91023; } /* peru */
+  26.087% { --shine-1: #FCE300; --shine-2: #00247D; --shine-3: #CF142B; } /* venezuela */
+  30.435% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* espana */
+  34.783% { --shine-1: #0038A8; --shine-2: #FFFFFF; --shine-3: #FCD116; } /* uruguay */
+  39.13% { --shine-1: #D52B1E; --shine-2: #FFFFFF; --shine-3: #0038A8; } /* paraguay */
+  43.478% { --shine-1: #D52B1E; --shine-2: #F9E300; --shine-3: #007934; } /* bolivia */
+  47.826% { --shine-1: #FFDD00; --shine-2: #0072CE; --shine-3: #EF3340; } /* ecuador */
+  52.174% { --shine-1: #4997D0; --shine-2: #FFFFFF; --shine-3: #4997D0; } /* guatemala */
+  56.522% { --shine-1: #0073CF; --shine-2: #FFFFFF; --shine-3: #0073CF; } /* honduras */
+  60.87% { --shine-1: #75AADB; --shine-2: #FFFFFF; --shine-3: #F6B40E; } /* argentina */
+  65.217% { --shine-1: #0F47AF; --shine-2: #FFFFFF; --shine-3: #0F47AF; } /* elsalvador */
+  69.565% { --shine-1: #0067C6; --shine-2: #FFFFFF; --shine-3: #0067C6; } /* nicaragua */
+  73.913% { --shine-1: #002B7F; --shine-2: #FFFFFF; --shine-3: #CE1126; } /* costarica */
+  78.261% { --shine-1: #005293; --shine-2: #FFFFFF; --shine-3: #D21034; } /* panama */
+  82.609% { --shine-1: #002A8F; --shine-2: #FFFFFF; --shine-3: #CF142B; } /* cuba */
+  86.957% { --shine-1: #002D62; --shine-2: #FFFFFF; --shine-3: #CE1126; } /* dominicana */
+  91.304% { --shine-1: #0050F0; --shine-2: #FFFFFF; --shine-3: #ED0000; } /* puertorico */
+  95.652% { --shine-1: #3E9A00; --shine-2: #FFFFFF; --shine-3: #E32118; } /* guineaecuatorial */
+  100% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* espana, cierra el ciclo */
+}
+
+/*
+  `prefers-reduced-motion`: **blanco fijo**, que es la base misma.
+
+  Antes esto dejaba el degradado de España quieto. La corrección del dueño es más
+  simple y es mejor: sin el brillo, la palabra es la palabra. Se apaga el
+  `::before` entero en vez de congelarlo — un degradado detenido sobre las letras
+  sigue siendo una decoración que alguien pidió no ver, y además cambiaría el
+  color respecto del reposo.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-flag::before {
+    display: none;
+  }
+}
+
+
+/*
+  El crédito del pie. Mismo componente y mismo copy que `milliondollarpage`;
+  el color es el violeta del botón `Connect Wallet`, que sobre el lienzo de este
+  sitio da:
+
+      #AB9FF2 sobre #111315   7.96:1   AA y AAA
+
+  Visible en todos los anchos, a diferencia del de `milliondollarpage`, que se
+  esconde por debajo de 1400 porque allá vive en una franja que se apila.
+*/
+.built-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: #ab9ff2;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.built-by:hover {
+  text-decoration: underline;
+}
+
+.built-by__mark {
+  width: 12px;
+  height: 12px;
+}
+
+
+/*
+  El desplegable de wallets públicas.
+
+  **El bug que arregla:** al abrir `+N ▾`, las direcciones extra se insertaban en
+  la misma línea que el chip, la línea de identidad se ensanchaba y el nombre
+  quedaba recortado (`prueba dos …`). El molde no hace eso: la fila no cambia y
+  se abre un panel debajo.
+
+  `.wallet-cell` es hijo de `.identity-line`, que es `display: flex`. El panel
+  toma `flex: 0 0 100%` y **envuelve a su propia línea**, así que la tarjeta crece
+  hacia abajo y las filas siguientes bajan — que es exactamente lo pedido — sin
+  tocar el ancho de nada.
+*/
+.wallet-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wallet-panel {
+  /*
+    `width: 0` con `min-width: 100%` es lo que evita que el panel participe del
+    ancho **intrínseco** de la celda. Sin eso, abrirlo ensanchaba
+    `.wallet-cell`, `.identity-line` repartía de nuevo y el nombre se encogía de
+    165 a 112 px y se recortaba — la mitad del bug original, reaparecida por otro
+    camino. La fila crece en alto, que es lo pedido, y en ancho no cambia nada.
+  */
+  width: 0;
+  min-width: 100%;
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  /* El borde fino a la izquierda, indentado, que es lo que lo lee como panel y
+     no como más contenido de la fila. */
+  padding-left: 10px;
+  border-left: 2px solid var(--surface-3);
+}
+
+/*
+  **`display: flex` gana sobre `[hidden]`**, que es una regla de la hoja del
+  navegador. Sin esto el panel nunca se oculta: la fila medía 103 px cerrada en
+  vez de 76 y el nombre salía apretado — o sea, el bug que este panel venía a
+  arreglar, causado por el arreglo.
+*/
+.wallet-panel[hidden] {
+  display: none;
+}
+
+.wallet-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wallet-full {
+  font-size: 12px;
+  color: var(--ink-subtle);
+}
+
+/* La flecha rota al abrir. `transform` y no otro glifo: un carácter distinto
+   cambiaría el ancho del botón y movería el chip. */
+.wallet-caret {
+  display: inline-block;
+  transition: transform var(--hover);
+}
+
+.wallet-caret.is-open {
+  transform: rotate(180deg);
+}
+
+
+/*
+  **El nombre no cede.** Abrir el panel le costaba 4 px al nombre —165 a 161— y
+  eso alcanzaba para que se recortara: quedaba justo en el límite. `flex: none`
+  dice cuál es el elemento que no se encoge, en vez de perseguir de dónde salían
+  los 4 px. Lo que cede es la celda de la wallet, que tiene su propio panel
+  debajo para lo que no entra.
+*/
+.identity-line .name {
+  flex: none;
 }

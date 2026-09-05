@@ -159,10 +159,19 @@ function Podium({ entries }: { entries: PublicCabal[] }) {
           <ReassignedNote at={entry.reassignedAt} by={entry.reassignedTo} />
           <DissolvedNote at={entry.dissolvedAt} />
           <span className="podium-tag label">({entry.tag})</span>
+          {/*
+            **One figure on a podium card, not two.**
+
+            Measured against the mould on 2026-09-05: their cabals podium reads
+            `🏆 El Cartel (ELC) +R$2.172.365 3 membros` — a single amount and the
+            member count. Ours carried the SOL total *and* a smaller
+            parenthesised USD under the medal, which is a second figure they do
+            not have. The list rows below still show both, as theirs do; it is
+            the card that is one.
+          */}
           <span className={`num-lg podium-pnl ${amountDirection(entry.realizedSol)}`}>
             {formatSignedSol(entry.realizedSol)}
           </span>
-          <span className="num podium-usd">({formatSignedUsd(entry.realizedUsd)})</span>
           <span className="label podium-members">{members(entry.members)}</span>
         </li>
       ))}

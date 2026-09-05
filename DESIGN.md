@@ -475,3 +475,19 @@ transient — and the stale row is removed on close rather than left to invite a
 - **Don't** copy a byte of theirs. The mould is the layout, the hierarchy and the labels;
   every asset, every rule of CSS and every line of code here is written from the capture,
   never lifted from the page (exception c).
+
+
+## El título de la home es `KOL Leaderboard` — 2026-09-05
+
+**Supersede** la regla *"The ranked list is called `Clasificación`, everywhere a
+reader can see"*. Decisión del dueño: el título de la home es el del molde,
+`KOL Leaderboard`, y el anglicismo se permite ahí.
+
+Alcanza al `<h1>` de la home y a nada más. Sigue prohibido `ranking` —era el
+tercer nombre del problema original, no la alternativa— y siguen prohibidas las
+formas de sustantivo español (`el leaderboard`, `leaderboard de X`). La ruta
+`/leaderboard`, los identificadores y la prosa no se tocan.
+
+`docs/copy.md` tiene la versión larga y conserva el argumento anterior, que
+seguía siendo bueno salvo en su conclusión: la pantalla sigue teniendo **un**
+nombre, y ahora está en inglés.

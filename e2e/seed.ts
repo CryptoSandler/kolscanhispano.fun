@@ -15,7 +15,7 @@
  */
 import { aadFor, blindIndex, encrypt } from "../src/lib/crypto";
 import { query } from "../src/lib/db";
-import { inventAddress, inventSignature } from "../src/lib/ids";
+import { inventAddress, inventEvmAddress, inventSignature } from "../src/lib/ids";
 import { addWallet, setWalletVisibility } from "../src/lib/wallets";
 
 /** Twelve, so the top-ten cut is exercised rather than assumed. */
@@ -167,6 +167,47 @@ export async function seedLeaderboard(): Promise<void> {
         USD[index],
       ],
     );
+
+    /*
+      **One KOL trades on a second chain**, so the ranking has a row with two
+      chain amounts beside rows with one. Without it `chain-columns.spec.ts`
+      compares a page where every row is identical and proves nothing.
+
+      `migrations/011` ties `trade.chain` to the wallet's with a composite
+      foreign key, so the wallet has to exist on that chain first.
+    */
+    if (index === 0) {
+      const evmWalletId = crypto.randomUUID();
+      const evmAddress = inventEvmAddress();
+      await query(
+        `INSERT INTO kol_wallet (id, kol_id, chain, address_hmac, address_enc, status, is_public)
+         VALUES ($1, $2, 'robinhood', decode($3,'hex'), decode($4,'hex'), 'active', FALSE)`,
+        [
+          evmWalletId,
+          kolId,
+          blindIndex(evmAddress, "address").toString("hex"),
+          encrypt(evmAddress, aadFor("kol_wallet", "address", evmWalletId)).toString("hex"),
+        ],
+      );
+      const evmTradeId = crypto.randomUUID();
+      const evmSignature = inventSignature();
+      await query(
+        `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, slot, kol_id,
+                            wallet_id, chain, mint, side, token_amount, sol_amount, price_usd,
+                            fee_sol, block_time, realized_sol, realized_usd)
+         VALUES ($1, decode($2,'hex'), decode($3,'hex'), 3, $4, $5, $6, 'robinhood', $7, 'sell',
+                 1, 1.5, 0.0000071, 0, now() - interval '12 minutes', 1.5, 4500)`,
+        [
+          evmTradeId,
+          blindIndex(evmSignature, "signature").toString("hex"),
+          encrypt(evmSignature, aadFor("trade", "signature", evmTradeId)).toString("hex"),
+          3000 + index,
+          kolId,
+          evmWalletId,
+          mint,
+        ],
+      );
+    }
 
     if (index < TRADES) {
       // Encrypted the way the parser writes it — AES-GCM under the AAD that

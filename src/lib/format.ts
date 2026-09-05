@@ -140,6 +140,27 @@ export function formatSignedUsd(text: string): string {
 }
 
 /**
+ * The same figure with **no leading `+`**, for the ranking row's parenthesised
+ * total.
+ *
+ * Measured on the mould at 1440 on 2026-09-05: their totals read
+ * `(R$148.253,0)`, with no sign on a gain — the sign lives on the per-chain
+ * amounts beside it, where direction is the information. A loss keeps its minus,
+ * as theirs does (`R$-123` on their cabals list).
+ *
+ * It is not only a convention. Their fiat track is **exactly 140px** and their
+ * string fits it; ours carried one glyph more and overflowed leftward into the
+ * SOL slot, which is what produced `+12.50 SOL(+US$7.275,00)` with no gap on the
+ * wide rows and a gap on the narrow ones. Dropping the sign both matches them
+ * and fits the track they sized.
+ */
+export function formatUnsignedUsd(text: string): string {
+  const value = parseDecimal(text);
+  const sign = signOf(value) === "-" ? "-" : "";
+  return `${sign}US$${renderEs(roundTo(absolute(value), 2), 2)}`;
+}
+
+/**
  * The same total in pesos: `+AR$2.784.708`.
  *
  * **No decimals, unlike every other money figure here.** At the rates this

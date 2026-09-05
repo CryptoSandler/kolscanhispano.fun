@@ -51,8 +51,24 @@ function BrandInner() {
           add a claim the text does not make. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img className="brand-mark" src="/marca/espana.png" alt="" width={40} height={40} aria-hidden="true" />
-      <span className="wordmark">
-        KOLScan<span className="wordmark-accent"> Hispano</span>
+      {/*
+        **El brillo corre sobre el wordmark entero**, `KOLScan Hispano`, no sólo
+        sobre la segunda palabra — corrección del dueño del 2026-09-05. En reposo
+        las dos palabras son blancas (`#EDEDED`) y el degradado de banderas pasa
+        por encima.
+
+        `data-text` repite el texto visible: el `::before` del shimmer lo duplica
+        con `content: attr(data-text)` y recorta el degradado contra esos glifos.
+        Traído de `.text-shimmer-flag` de `survives.fun`, que funciona igual y por
+        la misma razón — las letras de abajo quedan sólidas, así que el brillo
+        nunca le cuesta el contraste al wordmark.
+
+        Una sola palabra en el `data-text` y un solo nodo de texto: partirlo en
+        dos spans daría dos cajas recortadas, cada una con su propio barrido, y
+        el brillo se vería cortado en el medio.
+      */}
+      <span className="wordmark shimmer-flag" data-text="KOLScan Hispano">
+        KOLScan Hispano
       </span>
       <p className="brand-subtitle">Clasificación de traders hispanos</p>
     </>
@@ -171,7 +187,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   would be a session this site cannot have and a control that
                   does not work. Same shape, honest content. */}
                 <a className="registro" href="/registro">
-                  <span aria-hidden="true">🔗</span> Entrar al padrón
+                  Connect Wallet
                 </a>
                 {/*
                 Spec §1.9: the affiliate slot is configurable from the admin and
@@ -186,6 +202,37 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         <div className="shell">
           <main>{children}</main>
+          {/*
+            **El crédito de siempre**, copiado de `milliondollarpage`
+            (`BoardView.tsx`) para que sea el mismo en los dos: mismo glifo
+            dibujado a mano, mismo `Built by`, mismo handle, mismo `rel`.
+
+            **El glifo se dibuja acá.** Un avatar traído de x.com sería una
+            petición que sale de esta página al servidor de otro en cada carga, y
+            este sitio dibuja sus propias imágenes — la misma razón por la que los
+            avatares de los KOL pasan por `unavatar` proxeado y nunca por un
+            hotlink (`docs/references.md` §5, segunda colisión).
+
+            A diferencia de `milliondollarpage`, acá **no se esconde a ningún
+            ancho**: allá el crédito vive en una franja que a menos de 1400px se
+            apila y desaparece; este pie es el mismo en 1440 y en 390, que es lo
+            que se pidió.
+          */}
+          <a
+            href="https://x.com/CryptoSandlerr"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="built-by"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="built-by__mark">
+              <path
+                fill="currentColor"
+                d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+              />
+            </svg>
+            <span className="built-by__label">Built by </span>
+            <span className="built-by__handle">@CryptoSandlerr</span>
+          </a>
           <p className="footnote">
             Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados pasados no
             garantizan nada.

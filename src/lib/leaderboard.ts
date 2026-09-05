@@ -24,6 +24,8 @@
  */
 import { query } from "./db";
 import { serializeLeaderboardEntry, type LeaderboardRow, type PublicLeaderboardEntry } from "./serialize";
+import { orderChains, readChainPnl, type ChainPnl } from "./chain-pnl";
+import { readPublicWallets, type PublicWallet } from "./public-wallets";
 import { windowBounds, type LeaderboardWindow } from "./windows";
 
 /**
@@ -137,7 +139,42 @@ const ROLLING_SELECT = `
           AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
    WHERE k.status = 'approved'
    GROUP BY k.id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag
-   ORDER BY COALESCE(SUM(t.realized_sol), 0) DESC, k.slug ASC`;
+   ORDER BY COALESCE(SUM(t.realized_usd), 0) DESC, k.slug ASC`;
+
+/*
+  **The ranking sorts by quoted USD** — the owner's decision of 2026-09-05, and
+  the answer to the question `docs/round-columnas-chain.md` §3 deferred.
+
+  It sorted by `SUM(t.realized_sol)` until then, which adds each chain's
+  *native* amount together and therefore ranks people by a quantity with no unit
+  the moment a second chain is indexed. USD is the one figure that can be summed
+  across chains, which is why the mould's single total is fiat too.
+
+  **A position that cannot be priced contributes nothing to the sort.** That is
+  not a rounding decision, it is the decision: `COALESCE(..., 0)` means a KOL
+  ranks on what quotes, and a KOL whose best trade is unquotable ranks below one
+  whose worse trade is quotable. `DECISIONES.md` records it because it is
+  visible to the person it affects and invisible in the number — the row shows
+  the quoted total, and the modal says which position was left out of it.
+
+  What follows is the note that stood while the question was open. Today it
+  cannot happen — every trade in every database is on Solana, because no EVM chain has
+  ingestion — and the row no longer *prints* the sum above one chain
+  (`leaderboard-table.tsx` suppresses it and lets the per-chain columns and the
+  fiat total carry the meaning, which is the mould's arrangement).
+
+  The sort itself is still this expression, and it is deferred on purpose:
+  `docs/round-columnas-chain.md` §3 argues that choosing between a per-chain
+  sort and a consolidated fiat total is the one decision here that cannot be
+  corrected later without moving people up and down the board, and
+  `docs/multichain.md` §7 lists it as the owner's to make. It has to be answered
+  before a second chain's ingestion is switched on, not after.
+
+  A first attempt guarded this with a test asserting `trade` spans one chain.
+  That was unsound: the test database legitimately holds multi-chain fixtures,
+  so it failed on correct data and its answer depended on which tests had run.
+  A guard that cries wolf is worse than a comment that does not.
+*/
 
 export type LeaderboardQuery = {
   window: LeaderboardWindow;
@@ -154,7 +191,10 @@ export type Leaderboard = {
   /** The window actually applied, so the page and the API agree on what was summed. */
   from: string;
   to: string;
-  entries: PublicLeaderboardEntry[];
+  entries: (PublicLeaderboardEntry & {
+    chains: ChainPnl[];
+    publicWalletList: PublicWallet[];
+  })[];
 };
 
 export async function readLeaderboard(options: LeaderboardQuery): Promise<Leaderboard> {
@@ -183,6 +223,17 @@ export async function readLeaderboard(options: LeaderboardQuery): Promise<Leader
     limit === undefined ? [from, to] : [from, to, limit],
   );
 
+  const entries = rows.map((row, index) => serializeLeaderboardEntry(row, index + 1));
+  // One extra statement for the whole page, after the cut: only the rows that
+  // survived `LIMIT` need a breakdown.
+  const kolIds = rows.map((row) => row.kol_id);
+  const [byKol, walletsByKol] = await Promise.all([
+    readChainPnl(kolIds, bounds),
+    // Only `is_public` wallets ever come back — see `public-wallets.ts`, which
+    // is the one place an address is decrypted for a public surface.
+    readPublicWallets(kolIds),
+  ]);
+
   return {
     window: options.window,
     from: bounds.from.toISOString(),
@@ -198,7 +249,18 @@ export async function readLeaderboard(options: LeaderboardQuery): Promise<Leader
       even though they are not the same number.
     */
     closed: rows.some((row) => row.closed_count > 0),
-    entries: rows.map((row, index) => serializeLeaderboardEntry(row, index + 1)),
+    entries: entries.map((entry, index) => ({
+      ...entry,
+      // `docs/round-columnas-chain.md` §3: attached from its own statement, so
+      // the ranking's sort is untouched. A KOL with no rows keeps an empty list
+      // and the surface renders no columns at all — never a zero, which would be
+      // a measurement nobody made.
+      // By position, not by id: `serializeLeaderboardEntry` deliberately drops
+      // the KOL's id — a public surface has no business carrying one — and both
+      // lists come from the same `rows` in the same order.
+      chains: orderChains(byKol.get(rows[index].kol_id) ?? []),
+      publicWalletList: walletsByKol.get(rows[index].kol_id) ?? [],
+    })),
   };
 }
 

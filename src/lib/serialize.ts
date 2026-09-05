@@ -1,3 +1,4 @@
+import type { ChainPnl } from "./chain-pnl";
 /**
  * The single place that decides what leaves the server.
  *
@@ -5,7 +6,15 @@
  * a UI rule, because a rule every component has to remember is a rule that
  * one component eventually forgets. Two of those invariants live here:
  *
- * - **The address is never published, for any KOL, hidden or not.** It is not
+ * - **No address is published unless the KOL opted that wallet in.** Superseded
+ *   on 2026-09-05 by the owner: it read *"never published, for any KOL, hidden
+ *   or not"* until then. A wallet with `is_public` may appear as a six-character
+ *   chip and no more of it; every other wallet may not appear at any length.
+ *   `src/lib/public-wallets.ts` is the only module that decrypts an address for
+ *   a public surface, and `address-invariant.test.ts` asserts both directions
+ *   against one KOL holding one wallet of each kind. What follows is the
+ *   original reasoning, which still governs everything that is not opted in. It
+ *   is not
  *   a field of {@link PublicTrade}, so no caller can add it back by passing a
  *   different row; the only way to leak it is to change this file.
  * - **A signature is published only for a wallet whose owner published it.**
@@ -334,6 +343,14 @@ export type KolSeriesPoint = {
 /** Everything a public response may carry about one KOL's period, and nothing more. */
 export type PublicKolDetail = {
   /**
+   * Realized PnL split by chain, for the modal's `CHAIN PNL` section.
+   *
+   * Empty when the KOL closed nothing in the window, and **short one entry for
+   * every chain nothing was measured on** — which is what renders no line
+   * rather than a zero (`docs/round-columnas-chain.md` §3).
+   */
+  chains: ChainPnl[];
+  /**
    * The window that was actually summed.
    *
    * Read by the modal, which refetches when its segment changes: a response
@@ -444,7 +461,7 @@ export function serializeKolDetail(options: {
   series: KolSeriesPoint[];
   trades: PublicTrade[];
   calendar: KolCalendar;
-}): PublicKolDetail {
+}): Omit<PublicKolDetail, "chains"> {
   const { row } = options;
   return {
     window: options.window,

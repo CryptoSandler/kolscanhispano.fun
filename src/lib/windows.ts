@@ -104,10 +104,32 @@ export type LeaderboardWindow = (typeof LEADERBOARD_WINDOWS)[number];
  * without dragging the Postgres driver into the browser bundle, which is why
  * the labels are here rather than in `leaderboard.ts`.
  */
+/**
+ * **The words are the mould's; the meaning is rolling.**
+ *
+ * Measured on kolscanbrasil at 1440 on 2026-09-05: their toggle reads
+ * `Daily · Weekly · Monthly`. `docs/clone-map.md` §8 measured their *semantics*
+ * earlier and found them **rolling** — their modal moves with the clock — which
+ * is why this product moved to rolling windows in the first place.
+ *
+ * So the owner's decision of 2026-09-05 is: their words, translated, over the
+ * rolling meaning we already have. `Diario` here means **the last 24 hours**,
+ * not the current UTC calendar day it meant before
+ * `docs/round-ventanas-moviles.md`.
+ *
+ * **The routes do not change.** `?window=1d|7d|30d` stays, and the 308 redirects
+ * from `diario|semanal|mensual` stay pointing *at* them — a link somebody
+ * already has must keep working, and re-pointing those redirects at the words
+ * they came from would be a cycle. The label is what a reader sees; the value is
+ * what a URL carries, and they are allowed to differ.
+ *
+ * {@link WINDOW_MEANINGS} is what keeps the label honest: `Diario` and a
+ * calendar day are two different numbers, and the tooltip says which this is.
+ */
 export const WINDOW_LABELS: Record<LeaderboardWindow, string> = {
-  "1d": "1D",
-  "7d": "7D",
-  "30d": "30D",
+  "1d": "Diario",
+  "7d": "Semanal",
+  "30d": "Mensual",
 };
 
 /**

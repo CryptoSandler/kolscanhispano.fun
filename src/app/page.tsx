@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { permanentRedirect } from "next/navigation";
 import { LEADERBOARD_FIATS, parseFiat, readLeaderboard } from "@/lib/leaderboard";
 import { ARS_SOURCE_LABELS, readArsRate } from "@/lib/fx";
@@ -97,7 +98,17 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
             `PnL realizado · <ventana> · SOL`: the window is on the toggle two
             centimetres to its right, and SOL stopped varying when the toggle
             became a currency. It was naming things that name themselves. */}
-        <h1 className="page-title">Clasificación de KOLs</h1>
+        {/*
+          **`KOL Leaderboard`** — the mould's own title, kept in English by the
+          owner's decision of 2026-09-05. It superseded `Clasificación de KOLs`,
+          which `DESIGN.md` and `docs/copy.md` had required; both now record the
+          change and why.
+
+          The **route does not move**: `/leaderboard` still redirects here and
+          `Clasificación` survives in identifiers, in `WINDOW_MEANINGS` and in
+          prose. What changed is the name on the screen, and only that.
+        */}
+        <h1 className="page-title">KOL Leaderboard</h1>
         <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS} />
       </div>
 
@@ -142,6 +153,19 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         the figures above read `sin precio`.
       */}
       <footer className="page-note">
+        {/*
+          **The feed's only door, since `Live` left the nav.**
+
+          The nav is the mould's two items now (`● Trade  Cabals`), and this
+          product has a live feed they do not. `site-nav.tsx` kept it in the nav
+          precisely so the page would not be orphaned; this is what replaces
+          that, and it is why removing the nav item was safe to do.
+        */}
+        <p className="label">
+          <Link className="panel-link" href="/en-vivo">
+            Ver el feed en vivo →
+          </Link>
+        </p>
         <p className="label">
           día UTC · {USD_CAVEAT}
           {fiat === "ars" && ` · ${ARS_CAVEAT}`}
