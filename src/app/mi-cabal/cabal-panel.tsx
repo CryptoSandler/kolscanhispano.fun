@@ -113,6 +113,13 @@ const FORMS: {
     placeholder: "ARG",
   },
   {
+    action: "disolver cabal",
+    title: "Disolver el cabal",
+    hint: "Solo el líder. No se puede deshacer. La sigla queda reservada 30 días.",
+    label: "Sigla de tu cabal",
+    placeholder: "ARG",
+  },
+  {
     action: "reclamar cabal",
     title: "Reclamar un cabal",
     hint: "Solo si un admin te nominó para un cabal huérfano. La nominación dura 7 días.",
@@ -161,6 +168,7 @@ const MESSAGES: Record<string, string> = {
   bad_input: "Revisa los datos y prueba otra vez.",
   expired: "La nominación venció. Pídele al admin que la haga de nuevo.",
   not_orphaned: "Ese cabal ya tiene quien lo dirija.",
+  already_dissolved: "Ese cabal ya está disuelto.",
   bad_subject: "Revisa los datos y prueba otra vez.",
   no_provider:
     "No encontramos ninguna wallet en este navegador. Instala una extensión que firme " +
@@ -181,6 +189,7 @@ const DONE: Record<CabalAction, string> = {
   "ver solicitudes": "",
   "ver mi solicitud": "",
   "reclamar cabal": "Cabal reclamado. Ya eres su líder.",
+  "disolver cabal": "Cabal disuelto. La sigla queda reservada 30 días.",
 };
 
 const READS: CabalAction[] = ["ver solicitudes", "ver mi solicitud"];

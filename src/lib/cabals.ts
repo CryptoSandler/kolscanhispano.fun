@@ -52,6 +52,15 @@ export type PublicCabal = {
   reassignedAt: string | null;
   /** The `@handle` that claimed it, kept so a later transfer cannot rewrite history. */
   reassignedTo: string | null;
+  /**
+   * When its leader ended it, if they did.
+   *
+   * A dissolved cabal keeps its name, its members and its history, and its tag
+   * for thirty more days (`docs/round-cabals.md` §4). What it stops being is
+   * live — so the board says so rather than letting a group that no longer
+   * exists sit among the ones that do, looking identical.
+   */
+  dissolvedAt: string | null;
   realizedSol: string;
   realizedUsd: string;
   /**
@@ -68,6 +77,7 @@ type CabalRow = {
   tag: string;
   name: string;
   reassigned_at: Date | null;
+  dissolved_at: Date | null;
   reassigned_to: string | null;
   members: number;
   realized_sol: string;
@@ -88,7 +98,7 @@ type CabalRow = {
   count of sells answers exactly that question. It is not published as a record.
 */
 const SELECT = `
-  SELECT c.tag, c.name, c.reassigned_at, r.x_handle AS reassigned_to,
+  SELECT c.tag, c.name, c.reassigned_at, c.dissolved_at, r.x_handle AS reassigned_to,
          count(DISTINCT k.id)::int        AS members,
          COALESCE(SUM(t.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(t.realized_usd), 0) AS realized_usd,
@@ -100,7 +110,7 @@ const SELECT = `
            ON t.kol_id = k.id
           AND t.realized_sol IS NOT NULL
           AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
-   GROUP BY c.id, c.tag, c.name, c.reassigned_at, r.x_handle
+   GROUP BY c.id, c.tag, c.name, c.reassigned_at, c.dissolved_at, r.x_handle
    ORDER BY COALESCE(SUM(t.realized_sol), 0) DESC, c.tag ASC`;
 
 export type CabalRanking = {
@@ -146,6 +156,7 @@ export async function readCabals(options: {
       members: row.members,
       reassignedAt: row.reassigned_at === null ? null : row.reassigned_at.toISOString(),
       reassignedTo: row.reassigned_to,
+      dissolvedAt: row.dissolved_at === null ? null : row.dissolved_at.toISOString(),
       realizedSol: row.realized_sol,
       realizedUsd: row.realized_usd,
       closed: row.closed,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { activeChains, type Chain } from "@/lib/chain";
+import type { Chain } from "@/lib/chain";
 import { normalizeXHandle } from "@/lib/x-handle";
 
 /**
@@ -146,7 +146,7 @@ function WalletRow({
  */
 export function OnboardingModal({
   wallets,
-  available = activeChains(),
+  available,
   onSubmit,
 }: {
   wallets: OnboardingWallet[];
@@ -157,7 +157,22 @@ export function OnboardingModal({
    * A parameter with a default rather than a call inside the component, so a
    * test can state each combination without touching `process.env`.
    */
-  available?: readonly Chain[];
+  /**
+   * The chains with live ingestion. **Required, and deliberately without a
+   * default.**
+   *
+   * It used to default to `activeChains()`. That reads
+   * `CHAIN_ROBINHOOD_INGESTION` from `process.env`, and this is a client
+   * component — so the server rendered one list and the browser rendered
+   * another, and React reported a hydration mismatch on `disabled` (through
+   * `indexed`) and on the sentence built by `listChains`. Two symptoms, one
+   * cause, and the same cause `/registro` and `/admin` each had before them.
+   *
+   * Making it required is what stops it being a fourth: a caller that forgets
+   * now fails to compile instead of failing in the browser, where it looks like
+   * a switched-off feature. `chain.ts` exists so this value has one answer.
+   */
+  available: readonly Chain[];
   onSubmit?: (result: { handle: string; publicWalletIds: string[] }) => void;
 }) {
   /**

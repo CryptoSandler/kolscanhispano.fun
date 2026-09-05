@@ -168,6 +168,17 @@ const CONTRACT: Contract[] = [
     ],
   },
   {
+    action: "disolver cabal",
+    who: "the leader only",
+    rules: [
+      { precondition: "the subject is not a tag", refusal: "bad_input" },
+      { precondition: "no cabal holds that tag", refusal: "not_found" },
+      { precondition: "the signer is a co-leader or a member", refusal: "not_leader" },
+      { precondition: "the signer leads a different cabal", refusal: "not_leader" },
+      { precondition: "it is already dissolved", refusal: "already_dissolved" },
+    ],
+  },
+  {
     action: "retirar wallet",
     who: "any approved KOL, about the wallet that signs",
     rules: [

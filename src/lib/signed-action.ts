@@ -108,6 +108,8 @@ export const ACTION_REFUSALS = [
   "not_a_co_leader",
   /** The nomination's seven days ran out. Nothing moved; the admin nominates again. */
   "expired",
+  /** The cabal is already dissolved. Ending it twice is not an event. */
+  "already_dissolved",
   /**
    * The cabal is no longer orphaned — the old leader registered a wallet, or a
    * deputy appeared, in the days between the nomination and the claim. A repair

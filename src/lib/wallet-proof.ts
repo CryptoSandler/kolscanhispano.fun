@@ -87,6 +87,10 @@ export const PROOF_ACTIONS = [
   // manufacture by hand. Now withdrawing is signed, and signed by the wallet
   // being withdrawn — see `migrations/023`.
   "retirar wallet",
+  // The fifteenth, and the writer `dissolved_at` never had: the column existed
+  // from `migrations/016`, three paths read it, and nothing set it. Only the
+  // leader, never a deputy, never the admin, never a timer.
+  "disolver cabal",
 ] as const;
 
 export type ProofAction = (typeof PROOF_ACTIONS)[number];

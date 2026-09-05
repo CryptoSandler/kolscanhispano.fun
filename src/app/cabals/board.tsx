@@ -63,6 +63,7 @@ export function CabalsBoard({ entries }: { entries: PublicCabal[] }) {
                   <span className="identity-lines">
                     <span className="name">{entry.name}</span>
                     <ReassignedNote at={entry.reassignedAt} by={entry.reassignedTo} />
+          <DissolvedNote at={entry.dissolvedAt} />
                     <span className="identity-second">
                       <span className="handle">({entry.tag})</span>
                     </span>
@@ -118,6 +119,23 @@ function members(count: number): string {
  * almost every one: the rows `DESIGN.md` measures against the mould keep exactly
  * the geometry they were measured at, and only the exceptional row grows a line.
  */
+/**
+ * "Disuelto el <fecha>", when its leader ended it.
+ *
+ * A dissolved cabal keeps everything except being live, and its tag for thirty
+ * more days — so a reader seeing it beside the live ones is owed the difference.
+ * Nothing here says why: ending a group is the leader's business, and the
+ * product never asked them for a reason.
+ */
+function DissolvedNote({ at }: { at: string | null }) {
+  if (at === null) return null;
+  return (
+    <span className="hidden-wallets">
+      Disuelto el <time dateTime={at}>{new Date(at).toLocaleDateString("es")}</time>
+    </span>
+  );
+}
+
 function ReassignedNote({ at, by }: { at: string | null; by: string | null }) {
   if (at === null) return null;
   return (
@@ -139,6 +157,7 @@ function Podium({ entries }: { entries: PublicCabal[] }) {
           <Avatar name={entry.name} src="" size={64} />
           <span className="podium-name">{entry.name}</span>
           <ReassignedNote at={entry.reassignedAt} by={entry.reassignedTo} />
+          <DissolvedNote at={entry.dissolvedAt} />
           <span className="podium-tag label">({entry.tag})</span>
           <span className={`num-lg podium-pnl ${amountDirection(entry.realizedSol)}`}>
             {formatSignedSol(entry.realizedSol)}

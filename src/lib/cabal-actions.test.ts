@@ -6,6 +6,7 @@ import {
   acceptRequest,
   appointCoLeader,
   claimCabal,
+  dissolveCabal,
   createCabal,
   expel,
   readOwnRequest,
@@ -20,6 +21,7 @@ import {
   type SignedRequest,
 } from "./cabal-actions";
 import { verifyAuditChain } from "./audit";
+import { releaseCabalTags } from "./release-cabal-tags";
 import { checkSignature } from "./audit-signature";
 import { blindIndex, encrypt, aadFor } from "./crypto";
 import { query } from "./db";
@@ -1199,5 +1201,118 @@ describe("reclamar cabal", () => {
     const request = await prove(heir, "reclamar cabal", "ARG");
     expect(await claimCabal(request)).toEqual(refusal("expired"));
     expect(await claimCabal(request)).toEqual(refusal("bad_proof"));
+  });
+});
+
+/**
+ * The fifteenth action, and the writer `dissolved_at` never had: the column
+ * existed from `migrations/016` and three paths read it, but nothing set it.
+ */
+describe("disolver cabal", () => {
+  it("stamps dissolved_at and keeps everything else", async () => {
+    const leader = await newKol("ana");
+    const cabalId = await makeCabal(leader, "ARG");
+    const member = await newKol("beto");
+    await join(member, cabalId);
+
+    const result = await dissolveCabal(await prove(leader, "disolver cabal", "ARG"));
+    expect(result.ok && result.value.tag).toBe("ARG");
+
+    const [cabal] = await query<{ dissolved_at: Date | null; tag: string | null; name: string }>(
+      "SELECT dissolved_at, tag, name FROM cabal WHERE id = $1::uuid",
+      [cabalId],
+    );
+    expect(cabal.dissolved_at).not.toBeNull();
+    // The tag is still held: `release-cabal-tags.ts` frees it thirty days later,
+    // and releasing it now would hand somebody's identity to a stranger the same
+    // afternoon.
+    expect(cabal.tag).toBe("ARG");
+    expect(cabal.name).toBe("Cabal ARG");
+    // The members stay members; what changed is that the cabal stops being live.
+    const [row] = await query<{ cabal_id: string }>(
+      "SELECT cabal_id FROM kol WHERE id = $1::uuid",
+      [member.id],
+    );
+    expect(row.cabal_id).toBe(cabalId);
+  });
+
+  /** The tag comes back through the cron that already exists, and not before. */
+  it("hands the tag to the thirty-day cron, which releases it and not sooner", async () => {
+    const leader = await newKol("ana");
+    await makeCabal(leader, "ARG");
+    await dissolveCabal(await prove(leader, "disolver cabal", "ARG"));
+
+    expect(await releaseCabalTags()).toEqual([]);
+    await query("UPDATE cabal SET dissolved_at = now() - interval '31 days' WHERE tag = 'ARG'");
+    expect(await releaseCabalTags()).toEqual(["ARG"]);
+  });
+
+  it("refuses a co-leader and an ordinary member, with the same word", async () => {
+    const leader = await newKol("ana");
+    const cabalId = await makeCabal(leader, "ARG");
+    const deputy = await newKol("caro");
+    const member = await newKol("beto");
+    await join(deputy, cabalId);
+    await join(member, cabalId);
+    await makeCoLeader(deputy, cabalId);
+
+    // A deputy who could end the group could destroy what they were lent, and
+    // the two things they may not do — hand it on and end it — are one rule.
+    expect(await dissolveCabal(await prove(deputy, "disolver cabal", "ARG"))).toEqual(
+      refusal("not_leader"),
+    );
+    expect(await dissolveCabal(await prove(member, "disolver cabal", "ARG"))).toEqual(
+      refusal("not_leader"),
+    );
+    const [cabal] = await query<{ dissolved_at: Date | null }>(
+      "SELECT dissolved_at FROM cabal WHERE id = $1::uuid",
+      [cabalId],
+    );
+    expect(cabal.dissolved_at).toBeNull();
+  });
+
+  it("refuses a second dissolution", async () => {
+    const leader = await newKol("ana");
+    await makeCabal(leader, "ARG");
+    expect((await dissolveCabal(await prove(leader, "disolver cabal", "ARG"))).ok).toBe(true);
+    expect(await dissolveCabal(await prove(leader, "disolver cabal", "ARG"))).toEqual(
+      refusal("already_dissolved"),
+    );
+  });
+
+  it("refuses a leader naming somebody else's cabal", async () => {
+    const leader = await newKol("ana");
+    await makeCabal(leader, "ARG");
+    const other = await newKol("zoe");
+    await makeCabal(other, "MEX");
+
+    // Bound to the tag they signed, not to whatever cabal they happen to lead.
+    expect(await dissolveCabal(await prove(other, "disolver cabal", "ARG"))).toEqual(
+      refusal("not_leader"),
+    );
+    const [cabal] = await query<{ dissolved_at: Date | null }>(
+      "SELECT dissolved_at FROM cabal WHERE tag = 'ARG'",
+    );
+    expect(cabal.dissolved_at).toBeNull();
+  });
+
+  it("refuses a tag nobody holds, and spends the nonce on a refusal", async () => {
+    const leader = await newKol("ana");
+    await makeCabal(leader, "ARG");
+    const request = await prove(leader, "disolver cabal", "ZZZ");
+    expect(await dissolveCabal(request)).toEqual(refusal("not_found"));
+    expect(await dissolveCabal(request)).toEqual(refusal("bad_proof"));
+  });
+
+  /** A dissolved cabal is finished: nobody joins it and nobody claims it. */
+  it("closes the cabal to new requests", async () => {
+    const leader = await newKol("ana");
+    await makeCabal(leader, "ARG");
+    await dissolveCabal(await prove(leader, "disolver cabal", "ARG"));
+
+    const applicant = await newKol("beto");
+    expect(await requestJoin(await prove(applicant, "pedir entrar al cabal", "ARG"))).toEqual(
+      refusal("not_found"),
+    );
   });
 });

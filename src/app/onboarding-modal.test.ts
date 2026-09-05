@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { activeChains } from "@/lib/chain";
 import { inventAddress, inventEvmAddress } from "@/lib/ids";
 import { findDisallowedBase58, findDisallowedEvm } from "@/lib/hygiene";
 import type { Chain } from "@/lib/chain";
@@ -11,7 +12,13 @@ import { OnboardingModal, type OnboardingWallet } from "./onboarding-modal";
  * questions here are about what the screen states and what it defaults to, and
  * both are answerable from the emitted HTML.
  */
-function render(wallets: OnboardingWallet[], available?: Chain[]): string {
+/**
+ * `available` used to be optional here because the component defaulted it to
+ * `activeChains()`. That default was the hydration bug — it read `process.env`
+ * inside a client component — so the prop is required now and the tests that
+ * did not care pass the live list explicitly.
+ */
+function render(wallets: OnboardingWallet[], available: readonly Chain[] = activeChains()): string {
   return renderToStaticMarkup(createElement(OnboardingModal, { wallets, available }));
 }
 
@@ -144,7 +151,12 @@ describe("only the chains with live ingestion", () => {
       does not move: a chain with no flag is not mentioned to a reader, because
       naming it would promise a date nobody has.
     */
-    const html = renderToStaticMarkup(createElement(OnboardingModal, { wallets: [solana] }));
+    // `activeChains()` explicitly: this case is about what the live flags say,
+    // and it used to lean on a default that has been removed because reading
+    // the environment inside a client component was the hydration bug.
+    const html = renderToStaticMarkup(
+      createElement(OnboardingModal, { wallets: [solana], available: activeChains() }),
+    );
     expect(html).toContain("Por ahora indexamos Solana y Robinhood.");
     expect(html).not.toContain("Ethereum");
     expect(html).not.toContain("BNB Chain");

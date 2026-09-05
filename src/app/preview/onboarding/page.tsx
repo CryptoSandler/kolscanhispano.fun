@@ -69,7 +69,15 @@ export default function OnboardingPreviewPage() {
       <p className="label" style={{ marginBottom: "var(--stack)" }}>
         Vista previa de diseño. El registro todavía no existe.
       </p>
-      <OnboardingModal wallets={mockWallets()} />
+      {/*
+        `available` is passed from here, a server component, rather than
+        defaulted inside the modal. The default read `process.env` in a client
+        component, so the browser saw one chain list and the server another —
+        which React reported as a hydration mismatch on `disabled` and on the
+        sentence `listChains` builds. Same fix as `/registro` and `/admin`, and
+        the prop is required now so a fourth page cannot repeat it.
+      */}
+      <OnboardingModal wallets={mockWallets()} available={activeChains()} />
     </main>
   );
 }

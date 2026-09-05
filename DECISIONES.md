@@ -679,3 +679,49 @@ acto irreversible a un click de alguien que entró a hacer otra cosa.
 `quedás` entró a la lista de voseo de `copy.test.ts` el mismo día: el aviso se
 dictó con esa forma y se escribió `te quedas`. La lista solo crece con formas que
 estuvieron cerca de salir, que es lo que la mantiene honesta.
+
+## Disolver un cabal: solo el líder, y es lo único que escribe `dissolved_at` — 2026-09-05
+
+**Tomada.** `disolver cabal` es la decimoquinta acción firmada. Es del **líder y de
+nadie más**: ni co-líder, ni admin, ni temporizador, ni ningún camino automático.
+
+**La columna no la escribía nada.** `migrations/016` agregó `dissolved_at` y tres
+caminos la leen —la lista de huérfanos, las puertas de entrar y reclamar, y la
+liberación del tag— pero **ningún camino de código la seteaba**. Un cabal no se
+podía disolver, `scripts/release-cabal-tags.ts` no tenía nada que liberar, y la
+regla de los treinta días que el dueño decidió en `docs/round-cabals.md` §4
+describía un estado al que el producto no podía llegar. Esta acción es ese
+escritor, y es el único.
+
+**Por qué no un co-líder.** Quien pudiera disolver el grupo podría destruir lo que
+le prestaron. Las dos cosas que un co-líder no puede hacer —entregar el cabal y
+terminarlo— son la misma regla vista dos veces.
+
+**Por qué no el admin ni un timer.** `docs/round-reasignacion.md` ya discutió el
+caso general: el operador no recibe verbos que decidan de quién es qué, y terminar
+un grupo es ese verbo en su forma más filosa.
+
+**Disolver no libera la sigla.** La libera `release-cabal-tags.ts` treinta días
+después, por el cron que ya corre, porque una sigla se retiene mientras está en uso
+y un mes más. Liberarla en el momento de disolver sería entregarle la identidad de
+alguien a un desconocido esa misma tarde. Tampoco saca a los miembros: conservan
+`cabal_id`, el nombre y la historia quedan, y lo que cambia es que el cabal deja de
+contar como vivo — que es lo que todos los lectores de `dissolved_at` ya querían
+decir con eso.
+
+El tablero lo dice en público: **"Disuelto el D"**, sin motivo. Terminar un grupo es
+asunto de su líder y el producto nunca les pidió una razón.
+
+## El mismatch de hidratación era la misma causa por tercera vez — 2026-09-05
+
+`OnboardingModal` tenía `available = activeChains()` como **valor por defecto de un
+prop, dentro de un componente cliente**. En el servidor eso lee
+`CHAIN_ROBINHOOD_INGESTION`; en el browser `process.env` está vacío. Un solo valor,
+dos síntomas: `indexed` cambiaba y con él `disabled` (`disabled={true}` contra
+`disabled={null}` en el diff de React), y la frase que arma `listChains` salía
+distinta.
+
+Es la tercera vez: `/registro` lo tuvo, `/admin` lo tuvo, y este es el mismo error
+con otra ropa. Así que el arreglo no es pasar el valor en este llamador — **el prop
+pasó a ser obligatorio y sin default**. Un cuarto llamador que se olvide ahora no
+compila, en vez de fallar en el browser con la cara de una feature apagada.

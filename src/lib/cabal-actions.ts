@@ -744,3 +744,86 @@ export async function claimCabal(
     };
   });
 }
+
+/**
+ * The leader ends their own cabal. The subject is its tag.
+ *
+ * **The writer `dissolved_at` never had.** `migrations/016` added the column and
+ * three paths read it — the orphan list, the join and claim gates, the tag
+ * release — but nothing ever set it, so a cabal could not be dissolved and the
+ * owner's thirty-day tag rule described a state the product could not reach.
+ *
+ * ## Only the leader
+ *
+ * Not a deputy: somebody who could dissolve the group could destroy what they
+ * were lent, and the two things a co-leader may not do — hand the cabal on and
+ * end it — are one rule seen twice. Not the admin, and not a timer:
+ * `docs/round-reasignacion.md` argued that the operator does not get verbs that
+ * decide who owns what, and ending a group is that verb at its sharpest.
+ *
+ * ## What it does not do
+ *
+ * **It does not release the tag.** `scripts/release-cabal-tags.ts` does that
+ * thirty days later, on the cron that already runs, because a tag is held while
+ * it is in use and for a month after (`docs/round-cabals.md` §4). Releasing on
+ * dissolution would hand somebody's identity to a stranger the same afternoon.
+ *
+ * It does not remove the members either. They keep `cabal_id`, the name and the
+ * history stay, and what changes is that the cabal stops counting as live —
+ * which is what every reader of `dissolved_at` already means by it.
+ */
+export async function dissolveCabal(
+  request: SignedRequest,
+  nowMs = Date.now(),
+): Promise<ActionResult<{ tag: string; dissolvedAt: string }>> {
+  const tag = request.subject ?? "";
+  if (!TAG.test(tag)) return { ok: false, reason: "bad_input" };
+
+  const auth = await authorise("disolver cabal", request, nowMs);
+  if (!auth.ok) return auth;
+  const signer = auth.value;
+
+  return withTransaction(async (tx) => {
+    // By tag and by leader together. `ledCabal` would find the cabal they lead
+    // whatever tag they signed, and the tag is what they signed — so a leader
+    // naming somebody else's cabal is refused rather than dissolving their own.
+    const [cabal] = await tx<{
+      id: string;
+      leader_kol_id: string | null;
+      dissolved_at: Date | null;
+      members: number;
+    }>(
+      `SELECT c.id, c.leader_kol_id, c.dissolved_at,
+              (SELECT count(*)::int FROM kol m WHERE m.cabal_id = c.id) AS members
+         FROM cabal c
+        WHERE c.tag = $1
+          FOR UPDATE`,
+      [tag],
+    );
+    if (!cabal) return { ok: false, reason: "not_found" as const };
+    // A deputy and an ordinary member get the same word, because neither leads
+    // it and the difference is not theirs to learn from a refusal.
+    if (cabal.leader_kol_id !== signer.kolId) return { ok: false, reason: "not_leader" as const };
+    if (cabal.dissolved_at !== null) return { ok: false, reason: "already_dissolved" as const };
+
+    const [updated] = await tx<{ dissolved_at: Date }>(
+      "UPDATE cabal SET dissolved_at = now() WHERE id = $1::uuid RETURNING dissolved_at",
+      [cabal.id],
+    );
+
+    await record(tx, signer, "disolver cabal", request, {
+      targetType: "cabal",
+      targetId: cabal.id,
+      before: { dissolved: false, members: cabal.members },
+      // The tag is deliberately still held. `release-cabal-tags.ts` frees it
+      // thirty days from this instant, which is the only thing that reads
+      // `dissolved_at` as a clock.
+      after: { dissolved: true, tagHeldUntilDays: 30 },
+    });
+
+    return {
+      ok: true as const,
+      value: { tag, dissolvedAt: updated.dissolved_at.toISOString() },
+    };
+  });
+}

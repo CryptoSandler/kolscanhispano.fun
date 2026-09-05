@@ -3,6 +3,7 @@ import {
   acceptRequest,
   appointCoLeader,
   claimCabal,
+  dissolveCabal,
   createCabal,
   expel,
   isCabalAction,
@@ -51,6 +52,7 @@ const STATUS: Record<ActionRefusal, number> = {
   already_in_cabal: 409,
   already_requested: 409,
   expired: 410,
+  already_dissolved: 409,
   not_orphaned: 409,
   already_co_leader: 409,
   no_slot: 409,
@@ -126,6 +128,7 @@ export async function POST(request: Request): Promise<Response> {
     "ver solicitudes": () => readRequests(proof),
     "ver mi solicitud": () => readOwnRequest(proof),
     "reclamar cabal": () => claimCabal(proof),
+    "disolver cabal": () => dissolveCabal(proof),
   };
 
   const result = await handlers[body.action]();

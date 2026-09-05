@@ -253,6 +253,7 @@ describe("the cabal board's two states", () => {
       members: 3,
       reassignedAt: null,
       reassignedTo: null,
+      dissolvedAt: null,
       realizedSol: "0",
       realizedUsd: "0",
       closed: 0,
