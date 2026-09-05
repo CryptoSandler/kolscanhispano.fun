@@ -115,15 +115,23 @@ describe("2-6. what a wallet has to be", () => {
 
   it("3. refuses a chain with no live ingestion, and says which are live", async () => {
     const response = await POST(
-      request({ handle: "ejemplo", wallets: [{ address: inventEvmAddress(), chain: "bnb" }] }),
+      request({ handle: "ejemplo", wallets: [{ address: inventEvmAddress(), chain: "ethereum" }] }),
     );
     expect(response.status).toBe(400);
-    // The list is the environment's, so it grew when Robinhood was switched on
-    // for `/registro` (2026-09-04). `bnb` is still off, which is what this case
-    // is about: the refusal names what *is* live rather than only saying no.
+    /*
+      La lista es la del entorno, así que crece cada vez que se enciende una
+      cadena: Robinhood el 2026-09-04, **BNB el 2026-09-05**. Este caso usaba
+      `bnb` como la cadena apagada y dejó de servir el día que se encendió — que
+      es la señal correcta, no un test frágil: lo que mide es que el rechazo
+      *nombre lo que sí está vivo* en vez de sólo decir que no.
+
+      `ethereum` es la que sigue apagada. El día que se encienda, este caso se
+      queda sin cadena inactiva que probar y habrá que decidir si la lista de
+      `chain.ts` necesita una permanentemente apagada para esto.
+    */
     expect(await response.json()).toEqual({
       error: "chain_not_active",
-      active: ["solana", "robinhood"],
+      active: ["solana", "robinhood", "bnb"],
     });
   });
 

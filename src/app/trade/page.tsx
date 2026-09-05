@@ -130,6 +130,35 @@ export default async function TradePage() {
         custody and execution, which is the claim that matters on the page about
         how to start trading. They are different statements, not a repetition.
       */}
+      {/*
+        **Cómo protegemos tus wallets** — lo que efectivamente hacemos, no lo que
+        nos gustaría. Cada línea corresponde a un mecanismo que existe y a un
+        test que lo sostiene; nada acá es una promesa a futuro.
+      */}
+      <Divider>Cómo protegemos tus wallets</Divider>
+      <ul className="privacy-list">
+        <li>
+          <strong>Privadas por defecto.</strong> Una wallet se publica sólo si su
+          dueño la marca como pública, wallet por wallet. `is_public` es esa
+          elección y es lo único que la habilita.
+        </li>
+        <li>
+          <strong>Ni truncadas.</strong> De una wallet que no elegiste mostrar no
+          aparece nada en la página: ni la dirección, ni sus primeros caracteres.
+          Hay un test que lee el HTML que servimos y falla si aparece.
+        </li>
+        <li>
+          <strong>Cifradas en la base.</strong> Cada dirección se guarda cifrada y
+          atada a su propia fila, y se busca por un índice ciego — un resumen con
+          clave que permite encontrarla sin guardarla en claro.
+        </li>
+        <li>
+          <strong>Firmas un mensaje, nunca una transacción.</strong> Este sitio no
+          custodia fondos ni construye operaciones. Un test falla si el código de
+          la aplicación pudiera siquiera importar una API que arme o envíe una.
+        </li>
+      </ul>
+
       <p className="footnote trade-note">
         Este sitio no custodia fondos, no firma transacciones y no ejecuta órdenes. Operar on-chain
         implica riesgo de pérdida total.

@@ -77,6 +77,15 @@ describe("selectArsRate", () => {
       rate: "1545",
       source: "blue",
       asOf: AS_OF,
+      /*
+        Dos campos nuevos del 2026-09-05. `stale` marca —no oculta— una
+        cotización de más de 6 h, que es la decisión del dueño: se muestra igual,
+        con aviso, *nunca en cero*. `ageMinutes` es lo que el tooltip imprime
+        (`blue $1.545 · actualizado hace N min`), y está acá y no calculado en la
+        vista porque el reloj vive en un solo lado.
+      */
+      stale: false,
+      ageMinutes: 5,
     });
   });
 

@@ -1,5 +1,5 @@
 import { CHAIN_ORDER, type ChainPnl } from "@/lib/chain-pnl";
-import { amountDirection, formatSignedUsd } from "@/lib/format";
+import { amountDirection, formatSignedAmount, formatSignedUsd } from "@/lib/format";
 
 /**
  * A KOL's realized figures, one per chain, in the row and in the modal.
@@ -40,12 +40,15 @@ const CHAIN_UNIT: Record<string, string> = {
  */
 
 
-/** Trailing zeros are noise on a list; the modal shows the full precision. */
-function short(amount: string): string {
-  const value = Number(amount);
-  if (!Number.isFinite(value)) return amount;
-  const signed = value > 0 ? `+${value.toFixed(2)}` : value.toFixed(2);
-  return signed.replace(/\.00$/, "");
+/**
+ * The site's Spanish formatter, not `toFixed`.
+ *
+ * This printed `+12.50 SOL` with a dot until 2026-09-05, on a site whose every
+ * other figure uses a comma. `formatSignedAmount` is the shared one and it does
+ * the sign, the rounding and the trailing-zero trim in one place.
+ */
+function short(amount: string, unit: string): string {
+  return formatSignedAmount(amount, unit);
 }
 
 /**
@@ -118,7 +121,7 @@ export function ChainAmounts({ chains }: { chains: ChainPnl[] }) {
                   total.realized < 0 ? "is-loss" : (UNIT_TINT[unit] ?? "")
                 }`}
               >
-                {short(String(total.realized))} {unit}
+                {short(String(total.realized), unit)}
               </span>
             )}
           </span>
@@ -153,7 +156,7 @@ export function ChainPnlSection({ chains }: { chains: ChainPnl[] }) {
           <li key={entry.chain}>
             <span className="label">{CHAIN_UNIT[entry.chain] ?? entry.chain}</span>
             <span className={`num ${amountDirection(entry.realized)}`}>
-              {short(entry.realized)} {CHAIN_UNIT[entry.chain] ?? ""}
+              {short(entry.realized, CHAIN_UNIT[entry.chain] ?? "")}
             </span>
             <span className="num secondary">
               {entry.realizedUsd === null ? (
@@ -174,7 +177,7 @@ export function ChainPnlSection({ chains }: { chains: ChainPnl[] }) {
                   instead. This comment may name the document; the screen may not.
                 */
                 <span className="state-unpriced">
-                  {short(entry.realized)} {CHAIN_UNIT[entry.chain] ?? ""} sin cotizar — el par de
+                  {short(entry.realized, CHAIN_UNIT[entry.chain] ?? "")} sin cotizar — el par de
                   este token no tiene precio en dólares todavía
                 </span>
               ) : (

@@ -154,6 +154,25 @@ export function formatSignedUsd(text: string): string {
  * wide rows and a gap on the narrow ones. Dropping the sign both matches them
  * and fits the track they sized.
  */
+/**
+ * `+12,50 SOL`, `-0,30 BNB` — a signed native amount in any unit.
+ *
+ * **Spanish decimals, like every other figure here.** The chain columns were
+ * built with `toFixed`, which prints `+12.50 SOL` with a dot, on a site whose
+ * every other number uses a comma — caught by an existing test that expected
+ * `+18,42 SOL` and got the dot. The mould prints a dot because it is formatted
+ * for a different locale; copying its geometry does not mean copying its
+ * number formatting.
+ *
+ * Two decimals and trailing zeros trimmed: a list is read at a glance and
+ * `+12 SOL` is easier than `+12,00 SOL`.
+ */
+export function formatSignedAmount(text: string, unit: string): string {
+  const value = parseDecimal(text);
+  const rendered = renderEs(roundTo(absolute(value), 2), 2).replace(/,00$/, "");
+  return `${signOf(value)}${rendered} ${unit}`;
+}
+
 export function formatUnsignedUsd(text: string): string {
   const value = parseDecimal(text);
   const sign = signOf(value) === "-" ? "-" : "";

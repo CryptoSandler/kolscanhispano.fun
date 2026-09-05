@@ -104,6 +104,12 @@ const ALLOWED_TOPICS = [
   "0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455", // CURVE_BUY
   "0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df", // CURVE_SELL
   "0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607", // TOKEN_LAUNCHED
+  // PancakeSwap on BNB 56, added 2026-09-05. Verified against mainnet the same
+  // day: 162 V2 logs and 19 V3 logs in a ten-block window, across 109 and 14
+  // pools. `bnb-swap.ts` decodes both, and the guard flagged them the moment
+  // they entered the tree — which is the guard working, not a nuisance.
+  "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822", // V2 Swap
+  "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67", // V3 Swap
 ];
 
 /** Both lists, for the test that compares them against the document. */

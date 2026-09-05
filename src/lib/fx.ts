@@ -87,6 +87,25 @@ export const DEFAULT_ARS_SOURCE: ArsSource = "blue";
  */
 export const ARS_STALE_AFTER_MS = 96 * 60 * 60 * 1000;
 
+/**
+ * When a quote starts being **labelled** stale, as opposed to refused.
+ *
+ * The owner's decision of 2026-09-05: past six hours the figure is still shown,
+ * with `cotización desactualizada` beside it — *"nunca en cero"*.
+ *
+ * **That is a different policy from the one above, and both now apply.** The
+ * original refused a stale figure outright, on the reasoning that "a peso total
+ * computed from last week's dollar is a number that looks current and is not".
+ * The answer to that objection is to stop it looking current, which is what the
+ * label does — so six hours marks it and {@link ARS_STALE_AFTER_MS} still
+ * refuses it, four days out, where the number stops being a price at all.
+ *
+ * Six hours against a rate quoted on business days means a Sunday reader sees
+ * the notice. That is correct rather than noisy: on a Sunday the last real price
+ * *is* old, and the notice is what says so.
+ */
+export const ARS_WARN_AFTER_MS = 6 * 60 * 60 * 1000;
+
 /** One `casa`'s quote, as stored. */
 export type ArsQuote = { rate: string; asOf: string };
 
@@ -94,7 +113,15 @@ export type ArsQuote = { rate: string; asOf: string };
 export type ArsRates = { fetchedAt: string; casas: Partial<Record<ArsSource, ArsQuote>> };
 
 /** What a surface needs to print a peso figure and say where it came from. */
-export type ArsRate = { rate: string; source: ArsSource; asOf: string };
+export type ArsRate = {
+  rate: string;
+  source: ArsSource;
+  asOf: string;
+  /** Older than {@link ARS_WARN_AFTER_MS}: shown, and labelled. Never hidden. */
+  stale: boolean;
+  /** How old the quote is, for the tooltip. */
+  ageMinutes: number;
+};
 
 /**
  * Exported for its own test: this is validation of a value that came from
@@ -145,8 +172,33 @@ export function selectArsRate(
 ): ArsRate | null {
   const quote = rates?.casas[source];
   if (quote === undefined) return null;
-  if (now - Date.parse(quote.asOf) > ARS_STALE_AFTER_MS) return null;
-  return { rate: quote.rate, source, asOf: quote.asOf };
+  const age = now - Date.parse(quote.asOf);
+  if (age > ARS_STALE_AFTER_MS) return null;
+  return {
+    rate: quote.rate,
+    source,
+    asOf: quote.asOf,
+    // Shown, and marked. See `ARS_WARN_AFTER_MS`.
+    stale: age > ARS_WARN_AFTER_MS,
+    ageMinutes: Math.max(0, Math.floor(age / 60_000)),
+  };
+}
+
+/**
+ * `blue $1.545 · actualizado hace 12 min`, the tooltip on the ARS toggle and on
+ * every converted figure.
+ *
+ * It names the casa, the rate and the age — the three things that make a
+ * converted number checkable. `docs/round-ars.md` §3: *"a converted figure
+ * without them is a number pretending to be a fact"*.
+ */
+export function arsTooltip(rate: ArsRate): string {
+  const age =
+    rate.ageMinutes < 60
+      ? `hace ${rate.ageMinutes} min`
+      : `hace ${Math.floor(rate.ageMinutes / 60)} h`;
+  const label = ARS_SOURCE_LABELS[rate.source];
+  return `${label} $${rate.rate} · actualizado ${age}${rate.stale ? " · cotización desactualizada" : ""}`;
 }
 
 /**

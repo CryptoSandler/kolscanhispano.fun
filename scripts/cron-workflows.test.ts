@@ -34,7 +34,7 @@ const REQUIRED_SECRETS = ["DATABASE_URL", "WALLET_ENC_KEY", "WALLET_HMAC_KEY"];
 const WORKFLOWS = [
   { path: ".github/workflows/parse-pending.yml", cron: "*/5 * * * *", group: "parse-pending", script: "scripts/parse-pending.ts", secrets: REQUIRED_SECRETS },
   { path: ".github/workflows/recompute-dirty.yml", cron: "*/15 * * * *", group: "recompute-dirty", script: "scripts/recompute-dirty.ts", secrets: REQUIRED_SECRETS },
-  { path: ".github/workflows/fetch-fx.yml", cron: "0 */3 * * *", group: "fetch-fx", script: "scripts/fetch-fx.ts", secrets: ["DATABASE_URL"] },
+  { path: ".github/workflows/fetch-fx.yml", cron: "0 * * * *", group: "fetch-fx", script: "scripts/fetch-fx.ts", secrets: ["DATABASE_URL"] },
 ] as const;
 
 describe.each(WORKFLOWS)("$path", ({ path, cron, group, script, secrets }) => {

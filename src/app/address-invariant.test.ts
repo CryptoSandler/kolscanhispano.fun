@@ -302,11 +302,18 @@ beforeAll(async () => {
   // old code -- `false`, which used to mean "publish everything" -- so a
   // regression to reading the KOL flag publishes a private wallet's signature
   // and this file fails.
+  /*
+    **Two published wallets, not one**, since 2026-09-05: the disclosure panel
+    only exists for a KOL with more than one, and the panel is where the `6...4`
+    form is published. With a single wallet the row shows six characters and the
+    longer form never renders, so the assertion below had nothing to find and
+    the rule would have gone untested on the surface it applies to.
+  */
   const abierto = await insertKol({
     slug: "kol-abierto",
     hideWallets: false,
     cabalTag: "ABT",
-    wallets: [true],
+    wallets: [true, true],
   });
   const oculto = await insertKol({ slug: "kol-oculto", hideWallets: true, wallets: [false] });
   const mixto = await insertKol({ slug: "kol-mixto", hideWallets: false, wallets: [true, false] });
@@ -533,8 +540,6 @@ describe("no non-public wallet address reaches the rendered page", () => {
         prints it this way — and **unfindable without its middle**, which is the
         part that is never published in any form.
       */
-      const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
-      expect(surfaces, "the panel's 6...4 form is missing").toContain(short);
       // The middle, at the length that would make it searchable, must not be
       // anywhere — this is what "never the whole address" means in practice.
       expect(surfaces, "the middle of an address was published").not.toContain(
@@ -548,6 +553,27 @@ describe("no non-public wallet address reaches the rendered page", () => {
       expect(surfaces, "more of a published address than the chip shows").not.toContain(
         address.slice(0, 16),
       );
+    }
+  });
+
+  /**
+   * The panel's longer form, asserted only where the panel exists.
+   *
+   * `+N ▾` only appears for a KOL publishing **more than one** wallet — with a
+   * single one there is nothing to disclose, so the row shows six characters and
+   * the `6...4` form is never rendered. Asserting it for every published address
+   * failed on `kol-mixto`, which publishes exactly one, and the failure was the
+   * assertion's rather than the code's.
+   */
+  it("publishes 6...4 in the panel, for the KOLs that have one", () => {
+    const withPanel = kols.filter((kol) => kol.wallets.filter((w) => w.isPublic).length > 1);
+    expect(withPanel.length, "no fixture KOL publishes two wallets").toBeGreaterThan(0);
+
+    for (const kol of withPanel) {
+      for (const wallet of kol.wallets.filter((w) => w.isPublic)) {
+        const short = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
+        expect(surfaces, `${kol.slug}: the panel's 6...4 form is missing`).toContain(short);
+      }
     }
   });
 

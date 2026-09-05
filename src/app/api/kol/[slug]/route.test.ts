@@ -560,14 +560,23 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
       naming its fields one at a time.
     */
     expect(Object.keys(body).sort()).toEqual(
-      ["calendar", "from", "kol", "privateWallets", "publicWallets", "realizedSol", "realizedUsd",
-       "series", "to", "tradeCount", "trades", "volumeSol", "window"].sort(),
+      ["calendar", "chains", "from", "kol", "privateWallets", "publicWallets", "realizedSol",
+       "realizedUsd", "series", "to", "tradeCount", "trades", "volumeSol", "window"].sort(),
     );
     expect(Object.keys(body.calendar).sort()).toEqual(["days", "month", "sells"].sort());
     // A month the server resolved, never the parameter echoed back.
     expect(body.calendar.month).toMatch(/^\d{4}-\d{2}$/);
     expect(Object.keys(body.kol).sort()).toEqual(
-      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "xHandle"].sort(),
+      [
+        "avatarUrl",
+        "cabalTag",
+        "hideWallets",
+        "name",
+        "slug",
+        "xHandle",
+        // La tilde de verificado, añadida el 2026-09-05.
+        "verified",
+      ].sort(),
     );
     expect(Object.keys(body.series[0]).sort()).toEqual(
       ["cumulativeSol", "dailySol", "day"].sort(),

@@ -396,7 +396,9 @@ describe("GET /api/feed", () => {
        "tokenAmount", "usdAmount"].sort(),
     );
     expect(Object.keys(got.kol).sort()).toEqual(
-      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug"].sort(),
+      // `verified` se sumó el 2026-09-05: la tilde de handle verificado también
+      // aparece en el feed, así que el feed la lleva.
+      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "verified"].sort(),
     );
 
     // Every column name the query touches. A spread of the database row would

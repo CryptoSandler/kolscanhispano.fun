@@ -122,7 +122,8 @@ const PUBLIC_WALLETS = `
  * does not publish it.
  */
 const ROLLING_SELECT = `
-  SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag AS cabal_tag,
+  SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets,
+         (k.tweet_verified_at IS NOT NULL) AS verified, c.tag AS cabal_tag,
          ${PUBLIC_WALLETS} AS public_wallets,
          COALESCE(SUM(t.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(t.realized_usd), 0) AS realized_usd,
@@ -138,7 +139,7 @@ const ROLLING_SELECT = `
           AND t.realized_sol IS NOT NULL
           AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
    WHERE k.status = 'approved'
-   GROUP BY k.id, k.slug, k.display_name, k.x_handle, k.hide_wallets, c.tag
+   GROUP BY k.id, k.slug, k.display_name, k.x_handle, k.hide_wallets, k.tweet_verified_at, c.tag
    ORDER BY COALESCE(SUM(t.realized_usd), 0) DESC, k.slug ASC`;
 
 /*

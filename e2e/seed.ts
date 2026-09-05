@@ -122,6 +122,20 @@ export async function seedLeaderboard(): Promise<void> {
     // asserting against a roster that publishes nothing.
     if (index % 3 === 0) await setWalletVisibility(kolId, walletId, true);
 
+    /*
+      **Un KOL publica dos wallets**, para que exista el desplegable `+N ▾`.
+
+      El panel sólo aparece con más de una wallet pública, así que sin esto
+      `chain-columns.spec.ts` no tiene qué abrir y sus tres casos no prueban
+      nada. Es la misma lección que dejó `address-invariant.test.ts` unas horas
+      antes: un fixture con una sola wallet publicada hace que la regla del panel
+      quede sin ejercitar en la superficie donde rige.
+    */
+    if (index === 0) {
+      const second = await addWallet(kolId, inventAddress());
+      await setWalletVisibility(kolId, second, true);
+    }
+
     await query(
       `INSERT INTO pnl_daily (kol_id, day, realized_sol, realized_usd, wins, losses)
        VALUES ($1, $2::date, $3::numeric, $4::numeric, $5, $6)`,
@@ -176,7 +190,28 @@ export async function seedLeaderboard(): Promise<void> {
       `migrations/011` ties `trade.chain` to the wallet's with a composite
       foreign key, so the wallet has to exist on that chain first.
     */
-    if (index === 0) {
+    /*
+      **Elena DEX, y un monto que no la mueve de puesto.**
+
+      Este fixture rompió dos casos ajenos antes de quedarse quieto, por dos
+      razones distintas, y las dos valen la pena:
+
+      1. En el índice 0 le sumaba una operación a Ana Cripto, cuyos totales fija
+         `modal-kol.spec.ts` en `+18,42 SOL`. Pasaron a `+19,92`.
+      2. Movido al último, le sumaba **4.500 USD** a Luis Scalp (-2.460), que
+         saltó del puesto 12 al 4 y **reordenó la tabla entera**. Los casos que
+         eligen su fila por puesto — `PUBLIC_ROW`, `HIDDEN_ROW` — se quedaron
+         mirando a otro KOL, y fallaron diciendo que faltaba un candado.
+
+      Así que la fila tiene que tener dos montos **y** el puesto tiene que
+      quedar donde estaba. Elena está en 708 USD, entre 1.140,25 y 355: cualquier
+      cosa entre -352 y +431 la deja quinta. `+300` está cómodo en el medio.
+
+      `chain-columns.spec.ts` recorre todas las filas buscando una con dos
+      montos, así que no le importa cuál sea — pedía la más fácil, no la
+      primera.
+    */
+    if (index === 4) {
       const evmWalletId = crypto.randomUUID();
       const evmAddress = inventEvmAddress();
       await query(
@@ -196,7 +231,7 @@ export async function seedLeaderboard(): Promise<void> {
                             wallet_id, chain, mint, side, token_amount, sol_amount, price_usd,
                             fee_sol, block_time, realized_sol, realized_usd)
          VALUES ($1, decode($2,'hex'), decode($3,'hex'), 3, $4, $5, $6, 'robinhood', $7, 'sell',
-                 1, 1.5, 0.0000071, 0, now() - interval '12 minutes', 1.5, 4500)`,
+                 1, 0.12, 0.0000071, 0, now() - interval '12 minutes', 0.12, 300)`,
         [
           evmTradeId,
           blindIndex(evmSignature, "signature").toString("hex"),

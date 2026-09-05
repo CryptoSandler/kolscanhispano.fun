@@ -77,6 +77,8 @@ export type FeedRow = {
    */
   wallet_is_public: boolean;
   hide_wallets: boolean;
+  /** `tweet_verified_at IS NOT NULL`: the handle was proved by a signed tweet. */
+  verified?: boolean;
   address?: string | null;
 };
 
@@ -101,6 +103,20 @@ export type PublicTrade = {
      * product makes.
      */
     hideWallets: boolean;
+    /**
+     * **The handle was verified through `/registro`**: the KOL tweeted the code
+     * and signed for their wallet (`migrations/014`, `DECISIONES.md`
+     * 2026-08-31).
+     *
+     * `false` for a KOL the operator seeded by hand, which is most of the
+     * roster — those were added from a tracker crossing, not by the person, and
+     * nobody proved the handle belongs to them. The tick says *this account
+     * proved it*, so it must be absent wherever that did not happen.
+     *
+     * Not the same as `status = 'approved'`: an admin may approve an unverified
+     * handle, and the trail records that they did.
+     */
+    verified: boolean;
   };
   side: "buy" | "sell";
   mint: string;
@@ -147,6 +163,8 @@ export type LeaderboardRow = {
   x_handle: string;
   cabal_tag: string | null;
   hide_wallets: boolean;
+  /** `tweet_verified_at IS NOT NULL`: the handle was proved by a signed tweet. */
+  verified?: boolean;
   /** Active wallets this KOL has published. See {@link PublicLeaderboardEntry.hideWallets}. */
   public_wallets: number;
   realized_sol: string;
@@ -193,6 +211,20 @@ export type PublicLeaderboardEntry = {
      * underneath it.
      */
     hideWallets: boolean;
+    /**
+     * **The handle was verified through `/registro`**: the KOL tweeted the code
+     * and signed for their wallet (`migrations/014`, `DECISIONES.md`
+     * 2026-08-31).
+     *
+     * `false` for a KOL the operator seeded by hand, which is most of the
+     * roster — those were added from a tracker crossing, not by the person, and
+     * nobody proved the handle belongs to them. The tick says *this account
+     * proved it*, so it must be absent wherever that did not happen.
+     *
+     * Not the same as `status = 'approved'`: an admin may approve an unverified
+     * handle, and the trail records that they did.
+     */
+    verified: boolean;
   };
   realizedSol: string;
   realizedUsd: string;
@@ -243,6 +275,7 @@ export function serializeLeaderboardEntry(row: LeaderboardRow, rank: number): Pu
       cabalTag: row.cabal_tag,
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
       hideWallets: row.public_wallets === 0,
+      verified: row.verified === true,
     },
     realizedSol: row.realized_sol,
     realizedUsd: row.realized_usd,
@@ -268,6 +301,7 @@ export function serializeTrade(row: FeedRow): PublicTrade {
       // carries a Solscan link, and leave the mixed KOL's private row with no
       // marker at all beside its missing one.
       hideWallets: !row.wallet_is_public,
+      verified: row.verified === true,
     },
     side: row.side,
     mint: row.mint,
@@ -300,6 +334,8 @@ export type KolDetailRow = {
   x_handle: string;
   cabal_tag: string | null;
   hide_wallets: boolean;
+  /** `tweet_verified_at IS NOT NULL`: the handle was proved by a signed tweet. */
+  verified?: boolean;
   /** Active wallets this KOL has published. */
   public_wallets: number;
   /** Active wallets this KOL has kept private. Rendered as a count and a padlock. */
@@ -368,6 +404,20 @@ export type PublicKolDetail = {
     avatarUrl: string;
     /** See {@link PublicLeaderboardEntry}: it decides the address slot, never the handle. */
     hideWallets: boolean;
+    /**
+     * **The handle was verified through `/registro`**: the KOL tweeted the code
+     * and signed for their wallet (`migrations/014`, `DECISIONES.md`
+     * 2026-08-31).
+     *
+     * `false` for a KOL the operator seeded by hand, which is most of the
+     * roster — those were added from a tracker crossing, not by the person, and
+     * nobody proved the handle belongs to them. The tick says *this account
+     * proved it*, so it must be absent wherever that did not happen.
+     *
+     * Not the same as `status = 'approved'`: an admin may approve an unverified
+     * handle, and the trail records that they did.
+     */
+    verified: boolean;
   };
   /**
    * How many active wallets this KOL has published, and how many they have
@@ -474,6 +524,7 @@ export function serializeKolDetail(options: {
       cabalTag: row.cabal_tag,
       avatarUrl: `/api/avatar/${encodeURIComponent(row.kol_id)}`,
       hideWallets: row.public_wallets === 0,
+      verified: row.verified === true,
     },
     publicWallets: row.public_wallets,
     privateWallets: row.private_wallets,

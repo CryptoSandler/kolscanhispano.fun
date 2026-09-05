@@ -45,8 +45,26 @@ type RankedEntry = PublicLeaderboardEntry & {
 };
 
 function entry(rank: number, overrides: Partial<RankedEntry> = {}): RankedEntry {
+  /*
+    El desglose por chain se deriva del total, como en los datos reales: la fila
+    ya no imprime un total nativo —el molde no tiene uno— y los montos viven en
+    los slots por unidad. Un KOL que no cerró nada **no tiene entrada de chain**,
+    y por eso su fila muestra `---` en los tres slots en vez de `0,00 SOL`.
+  */
+  const realizedSol = overrides.realizedSol ?? "0";
+  const chains =
+    realizedSol === "0"
+      ? []
+      : [
+          {
+            chain: "solana" as const,
+            realized: realizedSol,
+            realizedUsd: overrides.realizedUsd ?? "0",
+            unpriced: 0,
+          },
+        ];
   return {
-    chains: [],
+    chains,
     // Nothing published: the fixture's KOLs render `Wallets ocultas`, which is
     // the state the empty-state cases are about.
     publicWalletList: [],
@@ -58,6 +76,8 @@ function entry(rank: number, overrides: Partial<RankedEntry> = {}): RankedEntry 
       cabalTag: null,
       avatarUrl: `/api/avatar/${crypto.randomUUID()}`,
       hideWallets: false,
+      // Sin verificar: es el estado de casi todo el padrón, sembrado por admin.
+      verified: false,
     },
     realizedSol: "0",
     realizedUsd: "0",
@@ -142,6 +162,8 @@ function quietDetail(): PublicKolDetail {
       cabalTag: null,
       avatarUrl: `/api/avatar/${crypto.randomUUID()}`,
       hideWallets: false,
+      // Sin verificar: es el estado de casi todo el padrón, sembrado por admin.
+      verified: false,
     },
     publicWallets: 0,
     privateWallets: 0,
@@ -371,7 +393,20 @@ describe("the leaderboard's empty state is keyed on closed episodes, not on row 
     expect(html).toContain("+18,42 SOL");
     // The four that closed nothing are printed at zero rather than suppressed:
     // spec §2's roster, legible because one row beside them carries a figure.
-    expect(html.match(/0,00 SOL/g)).toHaveLength(4);
+    /*
+      **`---`, no `0,00 SOL`.** Las cuatro filas que no cerraron nada se imprimen
+      igual —ese es el punto de este caso, el padrón de spec §2 se ve entero—
+      pero desde el 2026-09-05 lo que muestran en cada slot por chain es un
+      guion. La regla es del molde y estaba en el pedido: una chain sin actividad
+      queda vacía, nunca en cero, porque un cero es una medición y ahí no se
+      midió nada. El total en fiat sí es un cero real: cerraron cero.
+
+      Cinco filas por tres slots son quince; una sola lleva una cifra (la de
+      arriba, en SOL), así que quedan **catorce** guiones — los dos vacíos de esa
+      fila incluidos, que es lo que se me pasó al contar doce.
+    */
+    expect(html.match(/class="state-unpriced"/g)).toHaveLength(14);
+    expect(html.match(/\(US\$0,00\)/g)).toHaveLength(4);
   });
 
   /**
@@ -493,5 +528,52 @@ describe("modal-kol tells a KOL that is gone from a KOL that is unreachable", ()
     // to prevent.
     expect(html).not.toContain(emptyCell(TRANSIENT));
     for (const apology of ["Ups", "Lo sentimos"]) expect(html).not.toContain(apology);
+  });
+});
+
+/**
+ * **La tilde de verificado dice que el handle se probó, y sólo eso.**
+ *
+ * `migrations/014` y `DECISIONES.md` 2026-08-31: `tweet_verified_at` se llena
+ * cuando el KOL tuiteó el código y firmó por su wallet en `/registro`. Casi todo
+ * el padrón **no** pasó por ahí — se sembró desde un cruce de trackers — y una
+ * tilde en esas filas afirmaría algo que nadie comprobó.
+ *
+ * Es la clase de dato que se rompe en silencio: si el flag dejara de leerse, la
+ * tilde desaparecería y nadie lo notaría; si se leyera al revés, aparecería en
+ * todos y tampoco. Por eso hay un caso por cada lado.
+ */
+describe("la tilde de verificado", () => {
+  it("no aparece para un KOL que el admin sembró sin tweet", () => {
+    const html = renderToStaticMarkup(
+      createElement(LeaderboardTable, {
+        entries: [entry(1, { kol: { ...entry(1).kol, verified: false } })],
+        window: "1d" as const,
+        fiat: "usd" as const,
+        // `closed: true` — la fila tiene que renderizarse para poder mirarle la
+        // tilde; con `false` la tabla muestra su estado vacío y no hay fila.
+        closed: true,
+        rate: null,
+      }),
+    );
+    expect(html).not.toContain("verified-tick");
+    expect(html).not.toContain("Handle verificado");
+  });
+
+  it("aparece, con su explicación, para uno verificado por el flujo de /registro", () => {
+    const html = renderToStaticMarkup(
+      createElement(LeaderboardTable, {
+        entries: [entry(1, { kol: { ...entry(1).kol, verified: true } })],
+        window: "1d" as const,
+        fiat: "usd" as const,
+        // `closed: true` — la fila tiene que renderizarse para poder mirarle la
+        // tilde; con `false` la tabla muestra su estado vacío y no hay fila.
+        closed: true,
+        rate: null,
+      }),
+    );
+    expect(html).toContain("verified-tick");
+    // El texto es la mitad del punto: una tilde sin explicación es una insignia.
+    expect(html).toContain("Handle verificado por tweet firmado");
   });
 });

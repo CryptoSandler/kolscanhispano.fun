@@ -172,6 +172,29 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
 
   return (
     <main className="page">
+      {/*
+        **La privacidad, dicha antes de pedir nada.**
+
+        Cada frase de acá la sostiene un test, que es la única razón por la que
+        se puede escribir:
+
+        - *"ni truncadas"* — `address-invariant.test.ts` recorre el HTML emitido
+          y falla si aparece una dirección que su KOL no publicó, a seis
+          caracteres o a la longitud que sea.
+        - *"salvo que vos elijas mostrarlas"* — `public-wallets.ts` es el único
+          módulo que descifra una dirección para una superficie pública, y su
+          `WHERE` exige `is_public`.
+        - *"Firmás un mensaje, no una transacción"* — `no-money-path.test.ts`
+          falla si cualquier API que construya o mande una transacción se vuelve
+          importable desde el código de la aplicación.
+
+        Nada de esto es una promesa de intención: son tres tests que se rompen si
+        deja de ser cierto.
+      */}
+      <p className="privacy-lead">
+        Tus wallets nunca se publican —ni truncadas— salvo que elijas mostrarlas.
+        Firmas un mensaje, no una transacción.
+      </p>
       {choices && (
         <WalletPicker
           wallets={choices}

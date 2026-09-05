@@ -73,9 +73,15 @@ describe("readChainPnl", () => {
     await sell(id, eth, "ethereum", "0.8", "2400");
 
     const byKol = await readChainPnl([id], { from: FROM, to: TO });
+    /*
+      **ETH antes que SOL**: `CHAIN_ORDER` pasó a ser el del molde el 2026-09-05
+      —ETH · BNB · SOL, medido a 1440 en su DOM— y este caso ordena con
+      `orderChains`, así que refleja ese orden. Antes era Solana primero, que era
+      el orden de nuestra propia historia y no el de la pantalla que copiamos.
+    */
     expect(orderChains(byKol.get(id)!)).toEqual([
-      { chain: "solana", realized: "12.5", realizedUsd: "1875", unpriced: 0 },
       { chain: "ethereum", realized: "0.8", realizedUsd: "2400", unpriced: 0 },
+      { chain: "solana", realized: "12.5", realizedUsd: "1875", unpriced: 0 },
     ]);
   });
 

@@ -479,7 +479,7 @@ comentario porque un topic público y una wallet no son la misma clase de cosa
 aunque compartan la forma — y porque presentarlos como direcciones ya produjo un
 error una vez (§ "Las direcciones de Robinhood Chain").
 
-Los tres se verificaron por RPC el 2026-09-04: **0 bytes de bytecode, saldo 0,
+Los tres primeros se verificaron por RPC el 2026-09-04: **0 bytes de bytecode, saldo 0,
 nonce 0**. No son cuentas.
 
 Los valores completos se copiaron de `smartmoney/src/robinhood/rpc.ts:11-14`, que es
@@ -494,6 +494,8 @@ equivocado. Se corrigió leyendo la fuente antes de escribir.
 | `0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455` | CURVE_BUY |
 | `0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df` | CURVE_SELL |
 | `0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607` | TOKEN_LAUNCHED |
+| `0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822` | PancakeSwap V2 `Swap`, BNB 56 |
+| `0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67` | PancakeSwap V3 `Swap`, BNB 56 |
 <!-- /allowlist:topics -->
 
 

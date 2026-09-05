@@ -28,6 +28,8 @@ function trade(overrides: Partial<PublicTrade> = {}): PublicTrade {
       cabalTag: null,
       avatarUrl: "/api/avatar/00000000-0000-4000-8000-000000000000",
       hideWallets: false,
+      // Sin verificar: es el estado de casi todo el padrón, sembrado por admin.
+      verified: false,
     },
     side: "buy",
     mint: "mint-placeholder",
@@ -55,6 +57,8 @@ function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
       cabalTag: "ORB",
       avatarUrl: "/api/avatar/00000000-0000-4000-8000-000000000000",
       hideWallets: false,
+      // Sin verificar: es el estado de casi todo el padrón, sembrado por admin.
+      verified: false,
     },
     publicWallets: 1,
     privateWallets: 2,

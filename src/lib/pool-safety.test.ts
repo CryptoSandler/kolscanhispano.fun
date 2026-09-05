@@ -20,11 +20,19 @@ import { describe, expect, it } from "vitest";
  *
  * Two passes over tracked source:
  *
- * 1. Find every exported function that reaches the module pool — directly
- *    through `query(`, or by calling another function already known to. Repeated
- *    until the set stops growing, so a helper three modules deep still counts.
+ * 1. Find every function that reaches the module pool — directly through
+ *    `query(`, or by calling another already known to. Repeated until the set
+ *    stops growing, so a helper three modules deep still counts.
  * 2. For every `withTransaction(` body, flag a call to `query(` or to anything
- *    in that set.
+ *    in that set **that the file actually has** — one it imports, or declares
+ *    itself.
+ *
+ * **Step 2's last clause was missing and produced a false positive.** The set is
+ * built from names across the whole repository, and `scripts/seed-cabals-preview.ts`
+ * declares a helper called `cabal()` that queries. That put `cabal` in the set
+ * for every file, and `cabal-actions.ts` was reported for a call it does not
+ * make. A name is only a pool user *in a file that can reach it*, which is what
+ * the import list says.
  *
  * ponytail: regex and brace-matching, not a TypeScript AST. It reads the shapes
  * this repository actually writes — `export async function f(`, and calls
@@ -106,11 +114,28 @@ describe("no second connection inside a transaction", () => {
     expect(total).toBeGreaterThan(3);
   });
 
+  /** The names a file can actually call: its imports plus its own declarations. */
+  function reachable(text: string): Set<string> {
+    const names = new Set<string>();
+    for (const match of text.matchAll(/import\s*\{([^}]*)\}/g)) {
+      for (const part of match[1].split(",")) {
+        const name = part.replace(/\bas\b[\s\S]*/, "").replace(/\btype\b/, "").trim();
+        if (name) names.add(name);
+      }
+    }
+    for (const match of text.matchAll(/function\s+([A-Za-z0-9_]+)\s*\(/g)) names.add(match[1]);
+    for (const match of text.matchAll(/const\s+([A-Za-z0-9_]+)\s*=\s*(?:async\s*)?\(/g)) {
+      names.add(match[1]);
+    }
+    return names;
+  }
+
   it("never calls the module pool from inside withTransaction", () => {
     const users = poolUsers(files);
     const offences: string[] = [];
 
     for (const { path, text } of files) {
+      const here = reachable(text);
       let from = 0;
       for (;;) {
         const at = text.indexOf("withTransaction(", from);
@@ -122,6 +147,8 @@ describe("no second connection inside a transaction", () => {
           // `tx(` is the correct spelling and never an offence; so is the
           // declaration line itself.
           if (user === "withTransaction" || user === "withLock") continue;
+          // And a name this file cannot reach is not this file's call.
+          if (user !== "query" && !here.has(user)) continue;
           const call = new RegExp(`(?<![.\\w])${user}\\s*[(<]`);
           if (call.test(body)) {
             const line = text.slice(0, at).split("\n").length;

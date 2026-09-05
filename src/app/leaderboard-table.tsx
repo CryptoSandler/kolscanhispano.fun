@@ -411,6 +411,31 @@ function Row({
             𝕏
           </a>
           {/*
+            **La tilde de verificado**, sólo si el handle se probó por el flujo
+            de `/registro`: tweet con el código más firma de la wallet
+            (`migrations/014`). Los KOL que el admin sembró a mano **no la
+            llevan** — se agregaron desde un cruce de trackers, nadie probó que
+            la cuenta sea suya, y una tilde ahí diría algo que no pasó.
+
+            No es lo mismo que estar aprobado: un admin puede aprobar un handle
+            sin verificar, y la auditoría registra que lo hizo.
+          */}
+          {entry.kol.verified && (
+            <span className="verified-tick" title="Handle verificado por tweet firmado">
+              <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+                <path
+                  d="M2.5 6.2l2.3 2.3 4.7-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="sr-only">Handle verificado por tweet firmado</span>
+            </span>
+          )}
+          {/*
             The address slot. Published wallets when the KOL opted them in
             (`is_public`, the owner\'s decision of 2026-09-05), `Wallets ocultas`
             otherwise — and `WalletChip` is handed nothing but public ones, so it

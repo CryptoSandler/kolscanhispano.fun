@@ -21,7 +21,7 @@ on:
     # rather than its freshness: fx.ts stops believing a quote after 96 hours,
     # which is eight missed runs in a row, not one. Hourly would be eight times
     # the runs for a figure that is an approximation either way.
-    - cron: "0 */3 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 # The GITHUB_TOKEN this workflow gets, declared at workflow level so it covers

@@ -155,7 +155,7 @@ describe("activeChains", () => {
       different condition: a real EVM wallet existing in the roster. The two are
       deliberately not the same switch, and this test is about the first.
     */
-    expect(activeChains()).toEqual(["solana", "robinhood"]);
+    expect(activeChains()).toEqual(["solana", "robinhood", "bnb"]);
   });
 });
 

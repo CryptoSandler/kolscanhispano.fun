@@ -151,7 +151,14 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     // The header's figure is the row's figure: both read `trade.realized_sol`
     // through the same window bounds, and the modal opens on the page's window.
     await expect(dialog.locator(".modal-pnl")).toContainText("+18,42 SOL");
-    await expect(rowAt(page, PUBLIC_ROW).locator(".pnl")).toHaveText("+18,42 SOL");
+    /*
+      En la fila, la cifra nativa vive ahora en su slot de cadena y el total del
+      paréntesis es fiat: la fila dejó de imprimir un total nativo el 2026-09-05
+      porque el molde no tiene uno y, al lado de las columnas, duplicaba el monto
+      de SOL. La igualdad que este caso mide —la cabecera del modal dice lo mismo
+      que la fila— se sigue midiendo, contra el slot.
+    */
+    await expect(rowAt(page, PUBLIC_ROW).locator(".chain-amount")).toHaveText("+18,42 SOL");
 
     /*
       **Four cards since 2026-09-03**, not five: `card-wallets` moved into the
@@ -167,12 +174,14 @@ test.describe("modal-kol opens from a row and shows that KOL's period", () => {
     await expect(dialog.getByText("Chain PnL")).toBeVisible();
 
     // Counts, never a list, and now on the header's third line. The seed gives
-    // this KOL one published wallet, so only the public half is stated — the
-    // private half is omitted rather than printed as a zero, which is
-    // DESIGN.md's rule that absence is rendered as absence.
+    // this KOL **two** published wallets — `chain-columns.spec.ts` needs a `+N`
+    // chip to expand, and a chip that expands needs a second wallet — so the
+    // count is what is asserted, plural and all. The private half is omitted
+    // rather than printed as a zero, which is DESIGN.md's rule that absence is
+    // rendered as absence.
     const wallets = dialog.locator(".identity-third");
     await expect(wallets).toBeVisible();
-    await expect(wallets).toContainText("wallet pública");
+    await expect(wallets).toContainText("2 wallets públicas");
     await expect(wallets).not.toContainText("privada");
     // And it names neither an address nor anything base58: the whole line is
     // two words and a number.

@@ -289,3 +289,34 @@ Así que la excepción además mejora lo que el clon tenía. Con
 pseudo-elemento entero en vez de congelar el degradado, porque un degradado
 detenido sigue siendo una decoración que alguien pidió no ver — y porque
 congelarlo cambiaría el color respecto del reposo.
+
+## §9.1 El panel de wallets sale del flujo — 2026-09-05
+
+El requisito de Fede sobre el desplegable era literal: *"la fila NO cambia;
+debajo se abre un panel indentado"*. La primera implementación lo envolvía dentro
+de `.identity-line`, y ahí la fila **sí** cambiaba: la línea crecía de 28 a 71 px,
+el bloque se recentraba y el nombre bajaba 14 px al abrir. Medido por
+`chain-columns.spec.ts` — `nameY` 201 → 215 — que es exactamente para lo que se
+escribió ese caso.
+
+El panel es ahora `position: absolute` contra `.wallet-cell`, y la tarjeta crece
+por un `padding-bottom` que aplica `:has(.wallet-panel:not([hidden]))` sobre el
+`<li>`. Las dos cosas que se pedían se cumplen a la vez: la primera línea no se
+mueve un píxel y la tarjeta crece, así que las filas siguientes bajan.
+
+`:has()` porque el estado abierto/cerrado vive en el panel, que es un componente
+cliente **dentro** del `<li>`: no hay forma de poner una clase en el `<li>` desde
+adentro sin subir el estado a la fila entera y volver cliente todo lo que hoy es
+servidor. Chromium, Firefox y WebKit lo soportan desde 2023 y los tres corren en
+la suite.
+
+## §9.2 Un fixture no rompe el caso de otro
+
+El seed de e2e le sumó una operación en otra cadena al KOL del índice 0 para
+tener una fila con dos montos. Ese KOL es Ana Cripto, cuyos totales fija
+`modal-kol.spec.ts` en `+18,42 SOL`: pasaron a `+19,92` y el caso ajeno se cayó
+sin que nada en él hubiera cambiado.
+
+La operación vive ahora en el último KOL de la lista, al que no mira ningún caso.
+Para `chain-columns.spec.ts` sirve cualquier fila con dos montos — no necesitaba
+la primera, solo la más fácil de escribir.

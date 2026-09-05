@@ -99,7 +99,10 @@ describe("serializeTrade", () => {
       ].sort(),
     );
     expect(Object.keys(out.kol).sort()).toEqual(
-      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug"].sort(),
+      // `verified` desde el 2026-09-05: la tilde de handle verificado por tweet
+      // firmado viaja con cada fila del feed, igual que con las de la
+      // clasificación.
+      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "verified"].sort(),
     );
   });
 

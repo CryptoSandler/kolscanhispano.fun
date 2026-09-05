@@ -3343,6 +3343,18 @@ a.cta {
 
 .wallet-panel {
   /*
+    **Fuera del flujo, para que el nombre no se mueva.**
+
+    Envolviendo dentro de `.identity-line`, la línea crecía de 28 a 71 px y el
+    bloque se recentraba: el nombre bajaba 14 px al abrir. La fila "no cambia"
+    quiere decir eso también. Absoluto contra `.wallet-cell`, y la tarjeta crece
+    por el `padding-bottom` de abajo, así que las filas siguientes bajan igual.
+  */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1;
+  /*
     `width: 0` con `min-width: 100%` es lo que evita que el panel participe del
     ancho **intrínseco** de la celda. Sin eso, abrirlo ensanchaba
     `.wallet-cell`, `.identity-line` repartía de nuevo y el nombre se encogía de
@@ -3404,4 +3416,123 @@ a.cta {
 */
 .identity-line .name {
   flex: none;
+}
+
+
+/*
+  La tilde de verificado. Va al lado del glifo de X en la fila y del handle en el
+  modal; el `title` explica qué significa y el `sr-only` lo dice para quien no ve
+  el ícono.
+
+  Verde de `--gain` no: en este sitio el verde es dirección de plata y nada más
+  (`DESIGN.md`). Esto no es una ganancia, es una prueba — va en el violeta de la
+  marca, el mismo del botón, que sobre el lienzo da 7,96:1.
+*/
+.verified-tick {
+  display: inline-flex;
+  align-items: center;
+  color: #ab9ff2;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+
+/* La línea de privacidad en el alta, y la lista de /trade. */
+.privacy-lead {
+  margin: 0 0 var(--stack);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.privacy-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-subtle);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.privacy-list > li + li {
+  margin-top: 8px;
+}
+
+
+/*
+  **A 390, las pistas fijas no caben.**
+
+  520 px de columnas (120+130+130+140) dentro de una tarjeta de ~358 hacen que el
+  documento se desplace en horizontal, que es lo que `DESIGN.md` prohíbe de
+  frente: *"La página nunca se desplaza en horizontal, en ninguno de los dos
+  tamaños"*. Tres casos de `viewport.spec.ts` lo agarraron — los mismos que ya
+  existían para esto, funcionando.
+
+  Los anchos medidos en el molde son de **su** disposición de escritorio; a lo
+  ancho de un teléfono ellos ni siquiera muestran esta fila (su marcado móvil es
+  otro, `hidden md:flex`). Así que las pistas se vuelven fraccionarias y el
+  bloque se encoge con la tarjeta: la alineación entre filas se mantiene, que es
+  la propiedad que importaba, y ya no hay nada que empuje el documento.
+*/
+@media (max-width: 900px) {
+  .board .row-leaderboard {
+    grid-template-columns: 40px minmax(0, 1fr) minmax(0, auto);
+  }
+
+  .row-figures {
+    grid-template-columns: repeat(4, minmax(0, auto));
+    gap: 0 10px;
+  }
+
+  .chain-amount,
+  .row-leaderboard .pnl-fiat {
+    font-size: 14px;
+  }
+}
+
+/*
+  **Un teléfono con la cotización en pesos.**
+
+  A 390 con `?unit=ars` la lista medía 395: cinco píxeles, y el documento se
+  movía de costado igual que si fueran cincuenta. Las pistas son `auto`, así que
+  se dimensionan por el contenido, y `(AR$4.340.700,00)` es bastante más largo
+  que `(US$3.100,50)` — el peso es la unidad más ancha que este sitio imprime.
+
+  Se achica la tipografía y el gap en vez de esconder columnas: no medí el molde
+  a 390, y esconderle a un lector las tres cadenas para ganar cinco píxeles es
+  una decisión de producto tomada por una restricción de layout.
+*/
+@media (max-width: 430px) {
+  .row-figures {
+    gap: 0 8px;
+  }
+
+  .chain-amount,
+  .row-leaderboard .pnl-fiat {
+    font-size: 12px;
+  }
+}
+
+
+/* La celda es el marco del panel absoluto. */
+.wallet-cell {
+  position: relative;
+}
+
+/*
+  La tarjeta crece cuando el panel está abierto, sin que nada de la primera
+  línea se mueva. `:has()` porque el estado vive en el panel y no hay forma de
+  poner una clase en el `<li>` desde un componente que vive dentro de él.
+*/
+.board > li.row-leaderboard:has(.wallet-panel:not([hidden])) {
+  padding-bottom: 58px;
 }

@@ -35,6 +35,8 @@ function trade(overrides: Partial<PublicTrade> = {}): PublicTrade {
       cabalTag: null,
       avatarUrl: "",
       hideWallets: false,
+      // Sin verificar: es el estado de casi todo el padrón, sembrado por admin.
+      verified: false,
     },
     side: "buy",
     mint: "mint-placeholder",

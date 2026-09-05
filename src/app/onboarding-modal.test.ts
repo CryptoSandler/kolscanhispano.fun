@@ -147,9 +147,9 @@ describe("only the chains with live ingestion", () => {
       **changed on 2026-09-04**: `CHAIN_ROBINHOOD_INGESTION=on` since the
       registration batch, so the sentence names two chains where it named one.
 
-      The two that are still off stay out, which is the half of this case that
-      does not move: a chain with no flag is not mentioned to a reader, because
-      naming it would promise a date nobody has.
+      Y **tres desde el 2026-09-05**, cuando se encendió BNB. La mitad de este
+      caso que no se mueve es la otra: la cadena que sigue apagada no se nombra,
+      porque nombrarla prometería una fecha que nadie tiene.
     */
     // `activeChains()` explicitly: this case is about what the live flags say,
     // and it used to lean on a default that has been removed because reading
@@ -157,9 +157,11 @@ describe("only the chains with live ingestion", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingModal, { wallets: [solana], available: activeChains() }),
     );
-    expect(html).toContain("Por ahora indexamos Solana y Robinhood.");
+    expect(html).toContain("Por ahora indexamos Solana, Robinhood y BNB Chain.");
+    // La única que queda apagada. `BNB Chain` salió de esta lista el día que se
+    // encendió — dejarlo habría convertido el caso en una contradicción consigo
+    // mismo, porque la frase de arriba ya la nombra.
     expect(html).not.toContain("Ethereum");
-    expect(html).not.toContain("BNB Chain");
   });
 
   it("promises the profile rather than a second registration", () => {

@@ -92,7 +92,17 @@ describe("fetchFx", () => {
     // the whole point is that the module that renders the figure accepts what
     // the cron wrote.
     const rate = await readArsRate(NOW.getTime());
-    expect(rate).toEqual({ rate: "1545", source: "blue", asOf: "2026-09-02T11:55:00.000Z" });
+    // `stale` y `ageMinutes` se sumaron el 2026-09-05: la cotización vieja se
+    // muestra con aviso en vez de esconderse, y el tooltip necesita la edad.
+    // `expect.any(Number)` para la edad porque este caso corre contra el reloj
+    // real y fijarla la volvería un test que falla solo con el tiempo.
+    expect(rate).toEqual({
+      rate: "1545",
+      source: "blue",
+      asOf: "2026-09-02T11:55:00.000Z",
+      stale: expect.any(Boolean),
+      ageMinutes: expect.any(Number),
+    });
 
     // And every other casa is there, which is what makes switching the
     // configured source cost no re-fetch — `docs/round-ars.md` §3.4.

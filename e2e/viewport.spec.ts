@@ -115,7 +115,8 @@ test.describe("the home page at 1280×900", () => {
     await expect(page.locator(".row-feed")).toHaveCount(0);
     // The title is `page-title` since the clone batch of 2026-09-03, not
     // `display-lg`, and it names the screen the way DESIGN.md does.
-    await expect(page.locator("h1.page-title")).toHaveText("Clasificación de KOLs");
+    // `KOL Leaderboard` desde el 2026-09-05, el título del molde.
+    await expect(page.locator("h1.page-title")).toHaveText("KOL Leaderboard");
 
     const heights = await page
       .locator(".row-leaderboard")
@@ -291,7 +292,13 @@ for (const { name, viewport } of SIZES) {
      */
     test("keeps the ranked figure on screen, unscrolled", async ({ page }) => {
       await page.goto("/leaderboard");
-      const pnl = page.locator(".row-leaderboard .pnl").first();
+      /*
+        `.pnl-fiat`, no `.pnl`: la fila dejó de imprimir un total nativo el
+        2026-09-05 —el molde no tiene uno, y al lado de las columnas por chain
+        duplicaba el monto de SOL— así que la cifra por la que se ordena y que
+        tiene que quedar a la vista es la del paréntesis en fiat.
+      */
+      const pnl = page.locator(".row-leaderboard .pnl-fiat").first();
       await expect(pnl).toBeVisible();
 
       // Nothing may have been scrolled to make this true.
@@ -322,7 +329,9 @@ for (const { name, viewport } of SIZES) {
       );
       // And it is a figure, not an empty box that would satisfy every rect
       // assertion above.
-      expect(box.text).toMatch(/^[+-]/);
+      // La cifra por la que se ordena es el total en fiat entre paréntesis: la
+      // fila dejó de imprimir un total nativo con signo.
+      expect(box.text).toMatch(/^\((US\$|AR\$)/);
     });
 
     /**

@@ -285,7 +285,22 @@ describe("GET /api/leaderboard", () => {
    * The loss is real and is recorded in `leaderboard.ts`: there is no longer a
    * way to rank by USD.
    */
-  it("orders by SOL whichever currency the caller asks for", async () => {
+  /**
+   * **Ordena por USD cotizado, y el toggle no lo cambia** — decisión del dueño
+   * del 2026-09-05.
+   *
+   * Ordenaba por `realized_sol` hasta entonces, y este caso está construido
+   * justo para distinguir los dos: con 10 SOL/100 USD, 5/500 y 1/900, el orden
+   * nativo es `a,b,c` y el de dólares es `c,b,a`. La reversión, escrita: si
+   * alguna vez se vuelve a ordenar por el monto nativo, este caso vuelve a
+   * `a,b,c` — y `DECISIONES.md` explica por qué no debería, que es que sumar SOL
+   * con ETH no da una cantidad de nada.
+   *
+   * Lo que **no** cambió, y es lo que este caso siempre midió: la moneda que
+   * elige el lector no reordena el tablero. Sólo cambia el número entre
+   * paréntesis.
+   */
+  it("orders by quoted USD whichever currency the caller asks for", async () => {
     const a = await insertKol({ slug: "a" });
     const b = await insertKol({ slug: "b" });
     const c = await insertKol({ slug: "c" });
@@ -295,9 +310,9 @@ describe("GET /api/leaderboard", () => {
       { kolId: c.id, day: "2026-08-25", sol: "1", usd: "900" },
     ]);
 
-    expect(await ranking("?window=1d&unit=usd")).toEqual(["a", "b", "c"]);
-    expect(await ranking("?window=1d&unit=ars")).toEqual(["a", "b", "c"]);
-    expect(await ranking("?window=1d")).toEqual(["a", "b", "c"]);
+    expect(await ranking("?window=1d&unit=usd")).toEqual(["c", "b", "a"]);
+    expect(await ranking("?window=1d&unit=ars")).toEqual(["c", "b", "a"]);
+    expect(await ranking("?window=1d")).toEqual(["c", "b", "a"]);
   });
 
   it("breaks a tie on slug so the order does not move between two loads", async () => {
@@ -447,10 +462,33 @@ describe("GET /api/leaderboard", () => {
     const [entry] = (await board(response)).entries;
 
     expect(Object.keys(entry).sort()).toEqual(
-      ["kol", "losses", "rank", "realizedSol", "realizedUsd", "winRate", "wins"].sort(),
+      [
+        "kol",
+        "losses",
+        "rank",
+        "realizedSol",
+        "realizedUsd",
+        "winRate",
+        "wins",
+        // Añadidos el 2026-09-05: el desglose por chain que alimenta las columnas
+        // y las wallets que el KOL eligió publicar. Este caso existe para que
+        // agregar un campo a una respuesta pública sea una decisión y no un
+        // descuido, así que se actualiza a mano y no se afloja.
+        "chains",
+        "publicWalletList",
+      ].sort(),
     );
     expect(Object.keys(entry.kol).sort()).toEqual(
-      ["avatarUrl", "cabalTag", "hideWallets", "name", "slug", "xHandle"].sort(),
+      [
+        "avatarUrl",
+        "cabalTag",
+        "hideWallets",
+        "name",
+        "slug",
+        "xHandle",
+        // La tilde de verificado: si el handle se probó por tweet firmado.
+        "verified",
+      ].sort(),
     );
     for (const column of ["kol_id", "display_name", "cabal_tag", "realized_sol", "realized_usd",
       "hide_wallets", "wallet_id", "address", "x_handle"]) {
