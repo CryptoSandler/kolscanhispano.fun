@@ -31,6 +31,28 @@ import { query } from "./db";
  * A dissolved cabal is not an orphan: it is finished, and its tag is on the
  * thirty-day clock in `release-cabal-tags.ts`.
  */
+/**
+ * **The one definition of "orphaned", as SQL.**
+ *
+ * Read by the list below and by `reassign-cabal.ts`, which refuses to touch a
+ * cabal that does not satisfy it. Two copies of this predicate would be two
+ * definitions, and the day they disagreed the admin would be able to reassign
+ * something the screen never called an orphan — which is exactly the power the
+ * round argued must not exist.
+ *
+ * `c` is the `cabal` alias and `k` the `kol` alias of its leader.
+ */
+export const ORPHAN_PREDICATE = `
+  c.dissolved_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM cabal_co_leader cl WHERE cl.cabal_id = c.id)
+  AND (
+    c.leader_kol_id IS NULL
+    OR k.status <> 'approved'
+    OR NOT EXISTS (
+      SELECT 1 FROM kol_wallet w WHERE w.kol_id = k.id AND w.status = 'active'
+    )
+  )`;
+
 export type OrphanCabal = {
   id: string;
   tag: string | null;
@@ -63,20 +85,7 @@ export async function readOrphanCabals(): Promise<OrphanCabal[]> {
             (SELECT count(*) FROM kol m WHERE m.cabal_id = c.id) AS members
        FROM cabal c
        LEFT JOIN kol k ON k.id = c.leader_kol_id
-      WHERE c.dissolved_at IS NULL
-        -- A deputy is exactly what stops a cabal being an orphan: §4's decision
-        -- is "orphan unless there is a co-leader".
-        AND NOT EXISTS (SELECT 1 FROM cabal_co_leader cl WHERE cl.cabal_id = c.id)
-        AND (
-          c.leader_kol_id IS NULL
-          OR k.status <> 'approved'
-          -- The gate resolves a signature through an ACTIVE wallet. A leader
-          -- whose wallets are all withdrawn cannot pass it, whatever the roster
-          -- still says about them.
-          OR NOT EXISTS (
-            SELECT 1 FROM kol_wallet w WHERE w.kol_id = k.id AND w.status = 'active'
-          )
-        )
+      WHERE ${ORPHAN_PREDICATE}
       ORDER BY c.tag NULLS LAST, c.name`,
   );
 

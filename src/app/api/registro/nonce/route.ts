@@ -6,7 +6,16 @@ import type { ProofAction } from "@/lib/wallet-proof";
 
 export const runtime = "nodejs";
 
-const ACTIONS: ProofAction[] = ["alta de perfil", "agregar wallet"];
+/**
+ * The actions this endpoint will issue a nonce for: the ones whose subject **is
+ * the signing wallet**, so there is no subject to bind and no target to get
+ * wrong. `retirar wallet` joined them on 2026-09-05 for exactly that reason —
+ * the wallet that signs is the wallet withdrawn.
+ *
+ * Every cabal action goes through `/api/cabal/nonce` instead, which requires a
+ * subject and normalises it.
+ */
+const ACTIONS: ProofAction[] = ["alta de perfil", "agregar wallet", "retirar wallet"];
 
 /**
  * `POST /api/registro/nonce` — a nonce to sign, bound to one address.

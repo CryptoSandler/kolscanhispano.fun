@@ -2,6 +2,7 @@ import { canonicalAddress, isChain, type Chain } from "@/lib/chain";
 import {
   acceptRequest,
   appointCoLeader,
+  claimCabal,
   createCabal,
   expel,
   isCabalAction,
@@ -49,6 +50,8 @@ const STATUS: Record<ActionRefusal, number> = {
   not_found: 404,
   already_in_cabal: 409,
   already_requested: 409,
+  expired: 410,
+  not_orphaned: 409,
   already_co_leader: 409,
   no_slot: 409,
   not_a_co_leader: 409,
@@ -122,6 +125,7 @@ export async function POST(request: Request): Promise<Response> {
     "revocar co-líder": () => revokeCoLeader(proof),
     "ver solicitudes": () => readRequests(proof),
     "ver mi solicitud": () => readOwnRequest(proof),
+    "reclamar cabal": () => claimCabal(proof),
   };
 
   const result = await handlers[body.action]();

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   acceptRequest,
   appointCoLeader,
+  claimCabal,
   createCabal,
   expel,
   readOwnRequest,
@@ -167,7 +168,7 @@ async function entries(): Promise<{ actor: string; action: string; subject: stri
 }
 
 beforeEach(async () => {
-  await query("TRUNCATE cabal_request, cabal_co_leader, wallet_proof_nonce");
+  await query("TRUNCATE cabal_request, cabal_co_leader, cabal_nomination, wallet_proof_nonce");
   await query("UPDATE kol SET cabal_id = NULL");
   await query("TRUNCATE kol, kol_wallet, cabal CASCADE");
   await resetAuditLog();
@@ -1046,5 +1047,157 @@ describe("ver solicitudes and ver mi solicitud", () => {
     expect(
       await query("SELECT id FROM audit_log WHERE action = 'ver mi solicitud'"),
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * The eleventh action, and the one that **removed** an unsigned write rather
+ * than adding a signed one.
+ *
+ * `docs/round-reasignacion.md`: the operator used to hand an orphaned cabal over
+ * directly, the only cabal mutation no party signed. Now they nominate, and the
+ * nominee claims it here — so the beneficiary's own signature is what moves the
+ * group.
+ */
+describe("reclamar cabal", () => {
+  /** An orphan whose leader cannot sign, plus a nominated heir. */
+  async function orphanWithNomination(handle = "beto") {
+    const gone = await newKol("ana");
+    const cabalId = await makeCabal(gone, "ARG");
+    // Every wallet withdrawn: the leader can no longer pass the gate.
+    await query("UPDATE kol_wallet SET status = 'withdrawn' WHERE kol_id = $1::uuid", [gone.id]);
+    const heir = await newKol(handle);
+    const nomination = crypto.randomUUID();
+    await query(
+      `INSERT INTO cabal_nomination (id, cabal_id, kol_id, reason, expires_at)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 'El líder perdió la wallet.',
+               now() + interval '7 days')`,
+      [nomination, cabalId, heir.id],
+    );
+    return { gone, cabalId, heir, nomination };
+  }
+
+  it("moves the cabal, dates it, and closes the nomination", async () => {
+    const { cabalId, heir } = await orphanWithNomination();
+
+    const result = await claimCabal(await prove(heir, "reclamar cabal", "ARG"));
+    expect(result.ok && result.value.tag).toBe("ARG");
+
+    const [cabal] = await query<{
+      leader_kol_id: string;
+      reassigned_to_kol_id: string;
+      reassigned_at: Date | null;
+    }>(
+      `SELECT leader_kol_id, reassigned_to_kol_id, reassigned_at
+         FROM cabal WHERE id = $1::uuid`,
+      [cabalId],
+    );
+    expect(cabal.leader_kol_id).toBe(heir.id);
+    // Kept separately from the leader, so a later transfer cannot rewrite who
+    // the public notice says claimed it.
+    expect(cabal.reassigned_to_kol_id).toBe(heir.id);
+    expect(cabal.reassigned_at).not.toBeNull();
+
+    const [nomination] = await query<{ status: string; claimed_at: Date | null }>(
+      "SELECT status, claimed_at FROM cabal_nomination",
+    );
+    expect(nomination.status).toBe("claimed");
+    expect(nomination.claimed_at).not.toBeNull();
+  });
+
+  /** The whole point: this entry has a signature, which the direct version never could. */
+  it("carries a signature that reconstructs the actor, action and nonce", async () => {
+    const { heir } = await orphanWithNomination();
+    const request = await prove(heir, "reclamar cabal", "ARG");
+    await claimCabal(request);
+
+    const [entry] = await query<{ id: string }>(
+      "SELECT id FROM audit_log WHERE action = 'reclamar cabal'",
+    );
+    expect(await checkSignature(entry.id)).toEqual({
+      ok: true,
+      actor: "@beto",
+      action: "reclamar cabal",
+      nonce: request.nonce,
+    });
+    expect(await verifyAuditChain()).toEqual([]);
+  });
+
+  /** Negative: a proof issued for a different action. */
+  it("refuses a claim carrying a nonce for another action", async () => {
+    const { heir } = await orphanWithNomination();
+    const issued = await issueNonce(heir.wallet.address, CHAIN, "pedir entrar al cabal", "ARG");
+    const request = await prove(heir, "reclamar cabal", "ARG", {
+      nonce: issued.nonce,
+      expiresAt: issued.expiresAt,
+    });
+    expect(await claimCabal(request)).toEqual(refusal("bad_proof"));
+    const [cabal] = await query<{ reassigned_at: Date | null }>(
+      "SELECT reassigned_at FROM cabal WHERE tag = 'ARG'",
+    );
+    expect(cabal.reassigned_at).toBeNull();
+  });
+
+  /** Negative: the seven days ran out. */
+  it("refuses an expired nomination and frees the slot", async () => {
+    const { heir } = await orphanWithNomination();
+    await query("UPDATE cabal_nomination SET expires_at = now() - interval '1 hour'");
+
+    expect(await claimCabal(await prove(heir, "reclamar cabal", "ARG"))).toEqual(
+      refusal("expired"),
+    );
+    const [row] = await query<{ status: string }>("SELECT status FROM cabal_nomination");
+    // Cancelled on the way out, so the admin can nominate again without first
+    // clearing it by hand.
+    expect(row.status).toBe("cancelled");
+  });
+
+  /** Negative: claiming twice. */
+  it("refuses a second claim", async () => {
+    const { heir } = await orphanWithNomination();
+    expect((await claimCabal(await prove(heir, "reclamar cabal", "ARG"))).ok).toBe(true);
+    // The first claim closed the nomination, so there is no pending offer left:
+    // the same answer as never having been nominated.
+    expect(await claimCabal(await prove(heir, "reclamar cabal", "ARG"))).toEqual(
+      refusal("not_found"),
+    );
+    expect(await query("SELECT id FROM cabal_nomination WHERE status = 'claimed'")).toHaveLength(1);
+  });
+
+  /** Negative: somebody else's nomination, and no nomination at all. */
+  it("refuses a KOL the nomination does not name", async () => {
+    await orphanWithNomination();
+    const stranger = await newKol("zoe");
+    // Same answer as no nomination, so nobody can probe who was offered a cabal.
+    expect(await claimCabal(await prove(stranger, "reclamar cabal", "ARG"))).toEqual(
+      refusal("not_found"),
+    );
+  });
+
+  /**
+   * Seven days is long enough for the cabal to heal itself. A repair applied to
+   * something that is no longer broken is a seizure.
+   */
+  it("refuses when the cabal stopped being an orphan in the meantime", async () => {
+    const { gone, cabalId, heir } = await orphanWithNomination();
+    // The old leader registers a wallet again.
+    await query("UPDATE kol_wallet SET status = 'active' WHERE kol_id = $1::uuid", [gone.id]);
+
+    expect(await claimCabal(await prove(heir, "reclamar cabal", "ARG"))).toEqual(
+      refusal("not_orphaned"),
+    );
+    const [cabal] = await query<{ leader_kol_id: string }>(
+      "SELECT leader_kol_id FROM cabal WHERE id = $1::uuid",
+      [cabalId],
+    );
+    expect(cabal.leader_kol_id).toBe(gone.id);
+  });
+
+  it("spends the nonce when the rule refuses", async () => {
+    const { heir } = await orphanWithNomination();
+    await query("UPDATE cabal_nomination SET expires_at = now() - interval '1 hour'");
+    const request = await prove(heir, "reclamar cabal", "ARG");
+    expect(await claimCabal(request)).toEqual(refusal("expired"));
+    expect(await claimCabal(request)).toEqual(refusal("bad_proof"));
   });
 });

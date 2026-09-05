@@ -76,6 +76,17 @@ export const PROOF_ACTIONS = [
   // so both are questions somebody has to be entitled to ask.
   "ver solicitudes",
   "ver mi solicitud",
+  // The eleventh, and the one that removed an unsigned write rather than adding
+  // a signed one: the admin nominates a new leader for an orphaned cabal, and
+  // **the nominee claims it here**. Before this existed the operator handed the
+  // cabal over directly, which was the only cabal write nobody signed.
+  "reclamar cabal",
+  // The fourteenth, and the only one that **removes** a power from the operator.
+  // Nothing in the product used to set `kol_wallet.status = 'withdrawn'`, so the
+  // orphan condition the reassignment path repairs was one the operator could
+  // manufacture by hand. Now withdrawing is signed, and signed by the wallet
+  // being withdrawn — see `migrations/023`.
+  "retirar wallet",
 ] as const;
 
 export type ProofAction = (typeof PROOF_ACTIONS)[number];

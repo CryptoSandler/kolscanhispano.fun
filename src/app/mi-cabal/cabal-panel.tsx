@@ -112,6 +112,13 @@ const FORMS: {
     label: "Sigla del cabal",
     placeholder: "ARG",
   },
+  {
+    action: "reclamar cabal",
+    title: "Reclamar un cabal",
+    hint: "Solo si un admin te nominó para un cabal huérfano. La nominación dura 7 días.",
+    label: "Sigla del cabal",
+    placeholder: "ARG",
+  },
 ];
 
 /**
@@ -152,6 +159,8 @@ const MESSAGES: Record<string, string> = {
   not_a_member: "Esa persona no está en tu cabal.",
   tag_taken: "Esa sigla ya está en uso.",
   bad_input: "Revisa los datos y prueba otra vez.",
+  expired: "La nominación venció. Pídele al admin que la haga de nuevo.",
+  not_orphaned: "Ese cabal ya tiene quien lo dirija.",
   bad_subject: "Revisa los datos y prueba otra vez.",
   no_provider:
     "No encontramos ninguna wallet en este navegador. Instala una extensión que firme " +
@@ -171,6 +180,7 @@ const DONE: Record<CabalAction, string> = {
   // The two reads render their answer instead of this line.
   "ver solicitudes": "",
   "ver mi solicitud": "",
+  "reclamar cabal": "Cabal reclamado. Ya eres su líder.",
 };
 
 const READS: CabalAction[] = ["ver solicitudes", "ver mi solicitud"];
@@ -186,6 +196,8 @@ export function CabalPanel({ chains }: { chains: readonly Chain[] }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [read, setRead] = useState<ReadResult | null>(null);
+  /** Whether the withdraw warning has been shown and acknowledged. */
+  const [withdrawing, setWithdrawing] = useState(false);
 
   const form = FORMS.find((f) => f.action === action)!;
 
@@ -303,6 +315,76 @@ export function CabalPanel({ chains }: { chains: readonly Chain[] }) {
     }
   }
 
+  /**
+   * `retirar wallet` — the fourteenth signed action, and the only one on this
+   * page that is not about a cabal.
+   *
+   * **The warning is unconditional, and that is deliberate.** Whether this is
+   * the reader's last active wallet is a fact about their KOL, and asking the
+   * server would mean an endpoint that turns any address into a fact about a
+   * person — the enumeration this product refuses everywhere else (`hide_wallets`
+   * is the default). So the sentence is conditional instead: it costs a reader
+   * with three wallets one line of text, and it costs a reader with one the
+   * thing they needed to know.
+   */
+  async function withdraw() {
+    if (!connected) return;
+    setError(null);
+    setDone(null);
+    setRead(null);
+    setBusy(true);
+    try {
+      const { choice, address } = connected;
+      const chain = choice.chain;
+
+      const issued = await fetch("/api/registro/nonce", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address, chain, action: "retirar wallet" }),
+      });
+      if (!issued.ok) return fail(((await issued.json()) as { error?: string }).error ?? "");
+      const proof = (await issued.json()) as { nonce: string; expiresAt: string };
+
+      // No subject: the wallet that signs is the wallet withdrawn, so there is
+      // no field a proof could be pointed through.
+      const fields: ProofFields = {
+        domain: PROOF_DOMAIN,
+        address,
+        chain,
+        action: "retirar wallet",
+        nonce: proof.nonce,
+        expiresAt: proof.expiresAt,
+      };
+      const signature = await signChoice(choice, address, proofMessage(fields));
+
+      const response = await fetch("/api/wallet/retirar", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          address,
+          chain,
+          signature,
+          nonce: proof.nonce,
+          expiresAt: proof.expiresAt,
+        }),
+      });
+      if (!response.ok) return fail(((await response.json()) as { error?: string }).error ?? "");
+      const body = (await response.json()) as { remaining: number };
+      setWithdrawing(false);
+      setConnected(null);
+      setDone(
+        body.remaining === 0
+          ? "Wallet retirada. Era la última: ya no puedes firmar nada con este perfil."
+          : `Wallet retirada. Te quedan ${body.remaining} activas.`,
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      fail(reason in MESSAGES ? reason : "rejected");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="page">
       {choices && (
@@ -402,6 +484,41 @@ export function CabalPanel({ chains }: { chains: readonly Chain[] }) {
 
           {error && <p role="alert">{error}</p>}
           {done && <p role="status">{done}</p>}
+
+          {/*
+            Retirar la wallet. Two steps on purpose: the warning is the point,
+            and a single button would put an irreversible act one click from a
+            reader who came here to do something else.
+          */}
+          <hr />
+          {withdrawing ? (
+            <div className="state-empty is-card" role="group" aria-label="Retirar wallet">
+              <p>
+                Vas a retirar esta wallet. Deja de contar para la clasificación y deja de
+                poder firmar.
+              </p>
+              <p>
+                <strong>
+                  Si es tu última wallet activa, te quedas sin poder actuar: no vas a poder
+                  firmar ninguna acción, y si lideras un cabal queda huérfano hasta que un
+                  admin nomine a alguien y esa persona lo reclame.
+                </strong>
+              </p>
+              <p className="hidden-wallets">
+                Se hace con una firma de esta misma wallet. No se puede deshacer.
+              </p>
+              <button type="button" className="registro" onClick={withdraw} disabled={busy}>
+                Firmar y retirar
+              </button>{" "}
+              <button type="button" onClick={() => setWithdrawing(false)}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setWithdrawing(true)} disabled={busy}>
+              Retirar esta wallet
+            </button>
+          )}
 
           {read?.kind === "queue" &&
             (read.pending.length === 0 ? (

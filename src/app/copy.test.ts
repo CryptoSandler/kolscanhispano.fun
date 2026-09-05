@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { STATUS_LABEL } from "./admin/page";
+import { STATUS_LABEL } from "./admin/admin-screen";
 
 /**
  * `CLAUDE.md`: *"Site UI copy: neutral Spanish (not Rioplatense)."*
@@ -47,6 +47,10 @@ const VOSEO = [
   "tenés", "podés", "querés", "sabés", "hacés", "sos", "vas a poder",
   // The pronoun itself, and the possessive that gives it away.
   "vos", "usás", "necesitás", "vení", "ponés", "recargá", "instalá", "pulsá",
+  // Added 2026-09-05: the withdraw warning was dictated as "quedás sin poder
+  // actuar" and went in as "te quedas". The list only ever grows from forms
+  // that actually came close to shipping, which is what keeps it honest.
+  "quedás", "quedáte",
 ];
 
 const VOSEO_SET = new Set(VOSEO);

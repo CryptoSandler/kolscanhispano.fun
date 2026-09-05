@@ -39,6 +39,19 @@ export type PublicCabal = {
   tag: string;
   name: string;
   members: number;
+  /**
+   * When the operator handed this cabal to a new leader, if it ever happened.
+   *
+   * `docs/round-reasignacion.md` §3: a reassignment is the only cabal write no
+   * party signs, so the page says **that** it happened and **when**. The reason
+   * is mandatory and stays in `audit_log` — it describes somebody's
+   * circumstances, and publishing it would make a repair into a punishment.
+   *
+   * `null` for every cabal nobody ever had to repair, which is almost all of them.
+   */
+  reassignedAt: string | null;
+  /** The `@handle` that claimed it, kept so a later transfer cannot rewrite history. */
+  reassignedTo: string | null;
   realizedSol: string;
   realizedUsd: string;
   /**
@@ -54,6 +67,8 @@ export type PublicCabal = {
 type CabalRow = {
   tag: string;
   name: string;
+  reassigned_at: Date | null;
+  reassigned_to: string | null;
   members: number;
   realized_sol: string;
   realized_usd: string;
@@ -73,18 +88,19 @@ type CabalRow = {
   count of sells answers exactly that question. It is not published as a record.
 */
 const SELECT = `
-  SELECT c.tag, c.name,
+  SELECT c.tag, c.name, c.reassigned_at, r.x_handle AS reassigned_to,
          count(DISTINCT k.id)::int        AS members,
          COALESCE(SUM(t.realized_sol), 0) AS realized_sol,
          COALESCE(SUM(t.realized_usd), 0) AS realized_usd,
          count(t.id)::int                 AS closed
     FROM cabal c
+    LEFT JOIN kol r ON r.id = c.reassigned_to_kol_id
     JOIN kol k ON k.cabal_id = c.id AND k.status = 'approved'
     LEFT JOIN trade t
            ON t.kol_id = k.id
           AND t.realized_sol IS NOT NULL
           AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz
-   GROUP BY c.id, c.tag, c.name
+   GROUP BY c.id, c.tag, c.name, c.reassigned_at, r.x_handle
    ORDER BY COALESCE(SUM(t.realized_sol), 0) DESC, c.tag ASC`;
 
 export type CabalRanking = {
@@ -128,6 +144,8 @@ export async function readCabals(options: {
       tag: row.tag,
       name: row.name,
       members: row.members,
+      reassignedAt: row.reassigned_at === null ? null : row.reassigned_at.toISOString(),
+      reassignedTo: row.reassigned_to,
       realizedSol: row.realized_sol,
       realizedUsd: row.realized_usd,
       closed: row.closed,

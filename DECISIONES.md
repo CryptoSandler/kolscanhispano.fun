@@ -543,3 +543,139 @@ Tres consecuencias que quedan escritas porque no son obvias:
 3. **La entrada audita la cantidad, nunca los handles.** Listarlos volvería a
    publicar dentro de `audit_log` justamente lo que la lectura existe para
    mantener angosto. Hay un test que busca el handle en el `after::text`.
+
+
+## La reasignación es nominación + reclamo firmado — 2026-09-05
+
+**Tomada, y borra una escritura sin firma en vez de agregar una.** Hasta hoy el
+plan era que el admin entregara el cabal huérfano directamente: era la única
+mutación de cabal que **nadie firmaba** —el líder saliente no puede, y al
+entrante no se le preguntaba— y la historia que habilitaba era "el operador movió
+un grupo a un amigo", indistinguible de una reparación porque cada fila de la
+auditoría sería genuina.
+
+Ahora son **dos actos de dos personas**, y el segundo se firma:
+
+1. **El admin nomina.** Huérfano obligatorio (mismo `ORPHAN_PREDICATE` que usa la
+   pantalla), motivo obligatorio, confirmación explícita. **No mueve nada**: ni
+   líder, ni membresía, ni aviso público. El cabal sigue huérfano y sigue en la
+   lista, porque hasta que alguien firme no pasó nada. Una nominación sin
+   reclamar deja el mundo tal como lo encontró, que es la dirección segura.
+2. **El nominado reclama** con `reclamar cabal`, la undécima acción firmada,
+   contra la misma puerta que las otras diez. La firma del beneficiario es lo que
+   mueve el grupo, y la entrada de auditoría la lleva al lado.
+
+**No cierra el agujero de la ronda §0** —nada en el producto pone
+`kol_wallet.status = 'withdrawn'`, así que un operador puede fabricar un
+huérfano— pero **fabricarlo ya no alcanza**: además necesita a un KOL dispuesto a
+firmar el resultado, en público, contra un nonce.
+
+**N = 7 días.** Una nominación es una ventana de coordinación humana: hay que
+avisarle a alguien por fuera, que abra la wallet y firme. Un día no le alcanza a
+quien está de viaje; un mes deja un derecho vivo sobre un grupo mucho después de
+que todos se olvidaron de la conversación. Siete cubren una semana afuera y vencen
+mientras el motivo todavía está fresco para escribirlo de nuevo.
+
+El vencimiento se **compara, nunca se indexa**: `WHERE expires_at > now()` en un
+predicado de índice lo rechaza Postgres, y `migrations/016` tiene la versión larga
+de por qué ese rechazo es correcto. `status` lleva el hecho, el índice único
+parcial cubre `pending`, y tanto nominar como reclamar miran el reloj.
+
+**El reclamo revalida que siga huérfano.** Siete días alcanzan para que el líder
+viejo registre otra wallet o aparezca un co-líder. Una reparación aplicada sobre
+algo que ya no está roto es una toma.
+
+**El aviso público dice las dos mitades**: *"Reasignado por admin, reclamado por
+@x el D"*. Nombrar solo al operador esconde quién se benefició; nombrar solo a
+quien reclamó se lee como una transferencia común. La fecha es la del **reclamo**.
+El motivo sigue sin publicarse: vive en `cabal_nomination` y en `audit_log`, que
+solo lee el operador.
+
+## El operador ya no puede fabricar un huérfano — 2026-09-05
+
+`docs/round-reasignacion.md` §0 encontró el agujero y §3 admitió que no se podía
+cerrar desde adentro de la base: **nada en el producto ponía
+`kol_wallet.status = 'withdrawn'`** —verificado el 2026-09-05, cada aparición
+fuera de los tests era un comentario— así que ese valor lo escribía el operador a
+mano en SQL y nadie más.
+
+Eso hacía que `líder sin wallet activa`, la razón de orfandad para la que existe
+todo el camino de reasignación, fuera **un estado que el operador podía fabricar**:
+retirar la wallet del líder, esperar a que el cabal aparezca en la lista de
+huérfanos, nominar. Cada fila de la auditoría resultante sería genuina y la
+secuencia indistinguible de una reparación.
+
+**`retirar wallet` es la decimocuarta acción firmada, y la firma tiene que venir
+de la wallet que se retira.** No hay sujeto: la wallet que firma es la que se
+retira, así que la prueba no se puede apuntar a la de otro ni en principio — no
+hay campo al que apuntar. Es la misma forma que las dos acciones de `/registro`.
+
+**No hay ruta de admin que escriba esa columna, y hay un test que falla si
+aparece una.** `wallet-actions.test.ts` recorre el código versionado buscando
+`SET status = 'withdrawn'` y exige que el único escritor sea
+`src/lib/wallet-actions.ts`; otro test exige que ningún archivo bajo
+`src/app/api/admin` ni `src/app/admin` mencione la palabra.
+
+Con acceso directo a la base el operador sigue pudiendo — nada acá pretende lo
+contrario, igual que `migrations/018` es honesta sobre sus disparadores. Lo que
+cambió es que **ya no puede hacerlo a través del producto**, y hacerlo por otro
+lado es un acto separado que no deja entrada de auditoría, lo cual es en sí mismo
+la señal.
+
+### La última wallet se puede retirar, y es una decisión
+
+Un KOL que retira su única wallet no puede firmar nada más, y cualquier cabal que
+lidere queda huérfano. Negarlo evitaría eso — y también significaría que **una
+wallet única comprometida no se puede revocar**, que es justamente el caso para el
+que existe la acción. Una llave que no se puede revocar es peor que un grupo que
+necesita una nominación para repararse, y ese camino está construido y probado.
+
+## Tres guardianes nuevos, y por qué son tests y no convenciones — 2026-09-05
+
+**`pool-safety.test.ts`** — `db.ts` corre el pool en `max: 1`, así que una llamada
+al pool desde adentro de `withTransaction` espera por el cliente que la propia
+transacción tiene tomado y se cuelga hasta el timeout. No es hipotético: la capa
+de cabals se escribió con `authorise` llamando a `consumeNonce` adentro de la
+transacción y **todas las acciones se habrían colgado**; se encontró leyendo
+`db.ts`, que es exactamente como una regla se aplica una vez y después se olvida.
+El test recorre el código versionado, calcula por punto fijo qué funciones llegan
+al pool (directo o a través de otras) y marca cualquier llamada adentro de un
+`withTransaction`. Verificado que muerde: reintroduciendo el bug original,
+`cabal-actions.ts:422 calls consumeNonce() inside withTransaction`.
+
+**`action-contract.test.ts`** — una tabla acción × precondición × refusal para las
+catorce acciones. Es prosa que falla: se verifica que cubra **todas** las de
+`PROOF_ACTIONS`, que cada refusal que nombra exista en `ACTION_REFUSALS`, y que
+ningún refusal del código quede sin documentar. Agregar una acción ya eran dos
+cambios; ahora son tres, y el tercero es pensar qué contesta.
+
+**`api/cabal/route.test.ts`** — las cinco formas de arruinar una prueba contestan
+**bytes idénticos**, comparados en la respuesta HTTP (status + cuerpo), no en la
+librería. Un refusal que filtrara la diferencia por un código de estado o un campo
+de más pasaría un test de librería y falla acá.
+
+### Retirar la última wallet: permitido, con aviso antes de firmar — 2026-09-05
+
+**Tomada por el dueño.** Un KOL puede retirar su única wallet activa. Queda sin
+poder firmar nada, y cualquier cabal que lidere queda huérfano hasta que un admin
+nomine a alguien y esa persona lo reclame.
+
+El motivo de permitirlo: negarlo significaría que **una wallet única comprometida
+no se puede revocar**, que es justamente el caso para el que existe la acción. Una
+llave que no se puede revocar es peor que un grupo que necesita una nominación
+para repararse, y ese camino está construido y probado.
+
+**El aviso en `/mi-cabal` es incondicional, y eso es a propósito.** Si esta es o
+no la última wallet del lector es un hecho sobre su KOL, y preguntárselo al
+servidor querría decir un endpoint que convierte cualquier dirección en un hecho
+sobre una persona — la enumeración que este producto rechaza en todos lados
+(`hide_wallets` es el default). Así que la frase es condicional: le cuesta una
+línea de texto a quien tiene tres wallets, y le dice lo que necesitaba saber a
+quien tiene una.
+
+Son **dos pasos**: el aviso primero, la firma después. Un solo botón pondría un
+acto irreversible a un click de alguien que entró a hacer otra cosa.
+
+`quedás` entró a la lista de voseo de `copy.test.ts` el mismo día: el aviso se
+dictó con esa forma y se escribió `te quedas`. La lista solo crece con formas que
+estuvieron cerca de salir, que es lo que la mantiene honesta.

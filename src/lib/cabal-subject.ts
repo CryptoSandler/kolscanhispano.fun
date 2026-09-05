@@ -38,7 +38,7 @@ export function subjectForHandle(handle: string): string {
 }
 
 /**
- * The ten actions this module handles, and which kind of subject each takes.
+ * The eleven actions this module handles, and which kind of subject each takes.
  *
  * Exported because the route that **issues** the nonce has to write the same
  * subject the handler will later spend, and the only safe way to guarantee that
@@ -57,6 +57,7 @@ export const CABAL_ACTIONS = {
   // queue, and an applicant asks about the one cabal they asked to join.
   "ver solicitudes": "tag",
   "ver mi solicitud": "tag",
+  "reclamar cabal": "tag",
 } as const satisfies Partial<Record<ProofAction, "tag" | "handle">>;
 
 export type CabalAction = keyof typeof CABAL_ACTIONS;

@@ -251,6 +251,8 @@ describe("the cabal board's two states", () => {
       tag: `C${rank}`,
       name: `Cabal ${rank}`,
       members: 3,
+      reassignedAt: null,
+      reassignedTo: null,
       realizedSol: "0",
       realizedUsd: "0",
       closed: 0,

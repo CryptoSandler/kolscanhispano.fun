@@ -1,68 +1,22 @@
-import { appendAudit } from "./audit";
-import { storeSignature } from "./audit-signature";
-import { blindIndex } from "./crypto";
-import { query, withTransaction, type TxQuery } from "./db";
+import { withTransaction, type TxQuery } from "./db";
+import type { ProofAction } from "./wallet-proof";
+import { ORPHAN_PREDICATE } from "./orphan-cabals";
 import { COLORS, TAG, handleFromSubject } from "./cabal-subject";
-import { consumeNonce } from "./wallet-proof-store";
-import { PROOF_DOMAIN, verifyProof, type ProofAction, type ProofFields } from "./wallet-proof";
-import type { Chain } from "./chain";
+import {
+  authorise,
+  record,
+  type ActionResult,
+  type SignedRequest,
+} from "./signed-action";
 
 /**
- * The six things a cabal leader can do, and the one gate all of them pass.
+ * The eleven things a KOL can do to a cabal, each one signed.
  *
- * `docs/round-cabals.md` §4: **no KOL session.** Authority is proved per
- * request over a nonce this server issued, exactly as `/registro` does — so
- * there is no cookie to steal, no CSRF surface and no logout to get wrong. The
- * whole class is absent rather than defended.
- *
- * ## The order of the gate, which is the security
- *
- * Every action runs the same five steps, in this order:
- *
- * 1. **Verify the signature** — pure, no database. A bad proof costs one
- *    `secp256k1`/`ed25519` check and never touches a row.
- * 2. **Burn the nonce**, bound to the subject. `consumeNonce` is an `UPDATE …
- *    WHERE used_at IS NULL` returning a row, so two concurrent requests cannot
- *    both spend it — the check and the write are one statement, which is what
- *    `docs/wallet-proof.md` §2.3 requires.
- * 3. **Resolve the signer to a KOL**, through the wallet's blind index. A
- *    signature proves a wallet; only this step turns it into a person.
- * 4. **Check the rule** — is this KOL the leader, is that KOL a member, does the
- *    tag exist. Last, because it is the only step that needs the state.
- * 5. **Do it, and append the audit entry with its signature**, in one
- *    transaction. An action with no entry, or an entry for an action that
- *    rolled back, are both worse than either failing.
- *
- * **Steps 1 to 3 happen before that transaction opens, and steps 4 and 5 inside
- * it.** Two reasons, and they agree.
- *
- * The first is mechanical: `db.ts` runs the pool at `max: 1`, so a module-level
- * {@link query} issued from inside `withTransaction` waits for the one client
- * the transaction is already holding, and hangs until the connection timeout.
- * Burning the nonce is such a query.
- *
- * The second is the one worth keeping. Because the burn commits on its own
- * connection, **a nonce that reached the gate is spent whatever happens next** —
- * the rule refused it, or the process died between burning and writing. The
- * caller asks for another nonce and signs again, which costs one round trip;
- * the alternative is a signature that stays replayable after a failure nobody
- * has diagnosed yet. `DECISIONES.md` carries this, and a test kills the process
- * between the two halves to pin it.
- *
- * **The nonce is burnt before the rule is checked**, and that is deliberate: a
- * proof that fails the rule is still spent. Otherwise a caller could probe the
- * state — "is @ana in this cabal?" — by replaying one signature against
- * different subjects until one is accepted, and each failure would cost them
- * nothing.
- *
- * ## Every refusal is one word, and the words are few
- *
- * `SECURITY.md`: a refusal never carries an address, a signature or a nonce.
- * And the four ways a proof can be wrong — never issued, wrong wallet, wrong
- * action, wrong subject — all answer `bad_proof`, because telling them apart
- * lets a caller map who holds what.
+ * **The gate they all pass moved to `signed-action.ts`** when a fourteenth
+ * action appeared that is not about cabals at all — `retirar wallet`. The order
+ * of its five steps is the security and the reasoning lives there; this file is
+ * now only the rules, which is what differs per action.
  */
-
 export {
   CABAL_ACTIONS,
   isCabalAction,
@@ -71,138 +25,8 @@ export {
   subjectForTag,
   type CabalAction,
 } from "./cabal-subject";
-
-export type ActionRefusal =
-  /** The proof is not good: never issued, wrong wallet, wrong action, wrong subject. */
-  | "bad_proof"
-  /** A valid signature from a wallet no approved KOL holds. */
-  | "unknown_wallet"
-  /** The signer does not lead the cabal this action is about. */
-  | "not_leader"
-  /** No cabal with that tag, or no pending request from that KOL. */
-  | "not_found"
-  /** The KOL this is about already belongs to a cabal. */
-  | "already_in_cabal"
-  /** The KOL this is about is not in the signer's cabal. */
-  | "not_a_member"
-  /** Somebody else holds the tag. Decided by `cabal_tag_held`, not by a read. */
-  | "tag_taken"
-  /** A live request from this KOL to this cabal is already queued. */
-  | "already_requested"
-  /** That KOL is already a deputy of this cabal. */
-  | "already_co_leader"
-  /** Both co-leader slots are taken. `migrations/020` makes two a constraint. */
-  | "no_slot"
-  /** That KOL is not a deputy, so there is nothing to revoke. */
-  | "not_a_co_leader"
-  /**
-   * The leader cannot be expelled from their own cabal. Separate from
-   * `not_a_member` because it is not a fact about membership, and because a
-   * cabal's leader is public — this reveals nothing a page does not.
-   */
-  | "cannot_expel_leader"
-  /** Malformed input, or a subject the signature does not cover. */
-  | "bad_input";
-
-export type ActionResult<T> = { ok: true; value: T } | { ok: false; reason: ActionRefusal };
-
-export type SignedRequest = {
-  address: string;
-  chain: Chain;
-  signature: string;
-  nonce: string;
-  expiresAt: string;
-  /** What the action is about, as it was signed. See `migrations/017`. */
-  subject?: string;
-};
-
-/** The KOL a proof resolves to. */
-export type Signer = { kolId: string; handle: string };
-
-/**
- * Steps 1 to 3, shared by all six, and **outside the caller's transaction**.
- *
- * Returns the signer and burns the nonce, or a refusal. **It does not know what
- * the action is about** beyond the subject it was handed — the rules live with
- * each action, because each one has a different rule.
- */
-async function authorise(
-  action: ProofAction,
-  request: SignedRequest,
-  nowMs: number,
-): Promise<ActionResult<Signer>> {
-  const fields: ProofFields = {
-    domain: PROOF_DOMAIN,
-    address: request.address,
-    chain: request.chain,
-    action,
-    subject: request.subject,
-    nonce: request.nonce,
-    expiresAt: request.expiresAt,
-  };
-
-  const proof = verifyProof({
-    signature: request.signature,
-    fields,
-    expected: { domain: PROOF_DOMAIN, chain: request.chain, action, nonce: request.nonce },
-    nowMs,
-  });
-  if (!proof.ok) return { ok: false, reason: "bad_proof" };
-
-  const claim = await consumeNonce(
-    request.nonce,
-    proof.address,
-    request.chain,
-    action,
-    request.subject,
-  );
-  if (!claim.ok) return { ok: false, reason: "bad_proof" };
-
-  // A wallet proves control; the roster says whose it is. `status = 'active'`
-  // because a wallet a KOL removed must stop authorising anything, and
-  // `kol.status = 'approved'` because a suspended KOL is not acting on anything
-  // (spec §9, the same rule the ranking applies).
-  const [signer] = await query<{ kol_id: string; x_handle: string }>(
-    `SELECT k.id AS kol_id, k.x_handle
-       FROM kol_wallet w
-       JOIN kol k ON k.id = w.kol_id
-      WHERE w.address_hmac = $1 AND w.status = 'active' AND k.status = 'approved'
-      LIMIT 1`,
-    [blindIndex(proof.address, "address")],
-  );
-  if (!signer) return { ok: false, reason: "unknown_wallet" };
-
-  return { ok: true, value: { kolId: signer.kol_id, handle: signer.x_handle } };
-}
-
-/** Step 5: the entry and the signature that authorised it, in one transaction. */
-async function record(
-  tx: TxQuery,
-  signer: Signer,
-  action: ProofAction,
-  request: SignedRequest,
-  detail: { targetType: string; targetId: string; before?: unknown; after?: unknown },
-): Promise<void> {
-  const { id } = await appendAudit(tx, {
-    actor: `@${signer.handle}`,
-    action,
-    subject: request.subject,
-    targetType: detail.targetType,
-    targetId: detail.targetId,
-    before: detail.before,
-    after: detail.after,
-    nonce: request.nonce,
-  });
-
-  await storeSignature(tx, {
-    auditId: id,
-    nonce: request.nonce,
-    chain: request.chain,
-    address: request.address,
-    signature: request.signature,
-    expiresAt: request.expiresAt,
-  });
-}
+export { ACTION_REFUSALS } from "./signed-action";
+export type { ActionRefusal, ActionResult, SignedRequest, Signer } from "./signed-action";
 
 /** `23505`: a unique index refused the row. Anything else is not ours to reinterpret. */
 function isUniqueViolation(error: unknown): boolean {
@@ -793,6 +617,130 @@ export async function readOwnRequest(
         status: own.status,
         decidedAt: own.decided_at ? own.decided_at.toISOString() : null,
       },
+    };
+  });
+}
+
+/**
+ * The nominee claims an orphaned cabal. The subject is the cabal's tag.
+ *
+ * **This is the act that removed an unsigned write from the system.** Until
+ * 2026-09-05 the operator handed an orphaned cabal to its new leader directly,
+ * and it was the only cabal mutation nobody signed — `docs/round-reasignacion.md`
+ * §1 has the argument against it, and §3 proposed this instead. The outgoing
+ * leader still cannot sign; the incoming one can, and now must.
+ *
+ * `nominateCabal` writes a standing offer and changes nothing else. Everything
+ * that actually moves — the leader, the membership, the public notice — happens
+ * here, behind the same gate as every other cabal action: verify, burn the
+ * nonce, resolve the wallet to a KOL, check the rule, act and record. The audit
+ * entry gets a **signature beside it**, which the direct version could never
+ * have had.
+ *
+ * ## The rule, and why it is re-checked
+ *
+ * The cabal must **still be orphaned at the moment of the claim**, not merely
+ * when the admin nominated. Seven days is long enough for the original leader to
+ * register a new wallet, or for a deputy to appear — and if either happened, the
+ * repair is not needed and must not be applied over a cabal that healed itself.
+ */
+export async function claimCabal(
+  request: SignedRequest,
+  nowMs = Date.now(),
+): Promise<ActionResult<{ tag: string; reassignedAt: string }>> {
+  const tag = request.subject ?? "";
+  if (!TAG.test(tag)) return { ok: false, reason: "bad_input" };
+
+  const auth = await authorise("reclamar cabal", request, nowMs);
+  if (!auth.ok) return auth;
+  const signer = auth.value;
+
+  return withTransaction(async (tx) => {
+    const [cabal] = await tx<{
+      id: string;
+      tag: string | null;
+      leader_handle: string | null;
+      orphaned: boolean;
+    }>(
+      `SELECT c.id, c.tag, k.x_handle AS leader_handle, (${ORPHAN_PREDICATE}) AS orphaned
+         FROM cabal c
+         LEFT JOIN kol k ON k.id = c.leader_kol_id
+        WHERE c.tag = $1
+          FOR UPDATE OF c`,
+      [tag],
+    );
+    if (!cabal) return { ok: false, reason: "not_found" as const };
+
+    // The offer, and it has to be this signer's: a nomination naming somebody
+    // else is not one this KOL can act on, and it answers the same as no
+    // nomination at all so that nobody can probe who was offered a cabal.
+    const [nomination] = await tx<{ id: string; expires_at: Date }>(
+      `SELECT id, expires_at FROM cabal_nomination
+        WHERE cabal_id = $1::uuid AND kol_id = $2::uuid AND status = 'pending'
+        FOR UPDATE`,
+      [cabal.id, signer.kolId],
+    );
+    // A second claim lands here: the first one set `status = 'claimed'`, so
+    // there is no pending row left and this is `not_found`, not a double write.
+    if (!nomination) return { ok: false, reason: "not_found" as const };
+    if (nomination.expires_at.getTime() <= nowMs) {
+      // Cancelled on the way out, so the slot frees for a fresh nomination
+      // without waiting for the admin to nominate over it.
+      await tx("UPDATE cabal_nomination SET status = 'cancelled' WHERE id = $1::uuid", [
+        nomination.id,
+      ]);
+      return { ok: false, reason: "expired" as const };
+    }
+
+    // Seven days is long enough for the cabal to have healed itself — the old
+    // leader registering a wallet, or a deputy appearing. A repair applied to
+    // something that is no longer broken is just a seizure.
+    if (!cabal.orphaned) return { ok: false, reason: "not_orphaned" as const };
+
+    const [current] = await tx<{ cabal_id: string | null }>(
+      "SELECT cabal_id FROM kol WHERE id = $1::uuid",
+      [signer.kolId],
+    );
+    if (current?.cabal_id !== null && current?.cabal_id !== cabal.id) {
+      return { ok: false, reason: "already_in_cabal" as const };
+    }
+
+    // If they sat in a deputy slot it goes first: the trigger refuses a deputy
+    // who is also the leader. (A cabal with a deputy is not an orphan, so this
+    // can only be reached if the row appeared after the orphan test — the lock
+    // makes that impossible, and the delete costs nothing to keep correct.)
+    await tx("DELETE FROM cabal_co_leader WHERE cabal_id = $1::uuid AND kol_id = $2::uuid", [
+      cabal.id,
+      signer.kolId,
+    ]);
+
+    const [updated] = await tx<{ reassigned_at: Date }>(
+      `UPDATE cabal
+          SET leader_kol_id = $1::uuid,
+              reassigned_to_kol_id = $1::uuid,
+              reassigned_at = now()
+        WHERE id = $2::uuid
+        RETURNING reassigned_at`,
+      [signer.kolId, cabal.id],
+    );
+    await tx("UPDATE kol SET cabal_id = $1::uuid WHERE id = $2::uuid", [cabal.id, signer.kolId]);
+    await tx(
+      "UPDATE cabal_nomination SET status = 'claimed', claimed_at = now() WHERE id = $1::uuid",
+      [nomination.id],
+    );
+
+    // Through `record`, so this one carries a signature: the whole reason the
+    // redesign happened.
+    await record(tx, signer, "reclamar cabal", request, {
+      targetType: "cabal",
+      targetId: cabal.id,
+      before: { leader: cabal.leader_handle === null ? null : `@${cabal.leader_handle}` },
+      after: { leader: `@${signer.handle}` },
+    });
+
+    return {
+      ok: true as const,
+      value: { tag, reassignedAt: updated.reassigned_at.toISOString() },
     };
   });
 }

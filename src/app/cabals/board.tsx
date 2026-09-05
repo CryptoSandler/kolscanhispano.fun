@@ -62,6 +62,7 @@ export function CabalsBoard({ entries }: { entries: PublicCabal[] }) {
                   <Avatar name={entry.name} src="" size={36} />
                   <span className="identity-lines">
                     <span className="name">{entry.name}</span>
+                    <ReassignedNote at={entry.reassignedAt} by={entry.reassignedTo} />
                     <span className="identity-second">
                       <span className="handle">({entry.tag})</span>
                     </span>
@@ -95,6 +96,38 @@ function members(count: number): string {
  * branching on the count, so a missing rank is an absent card and never a gap
  * the layout has to hold open.
  */
+/**
+ * "Reasignado por admin, reclamado por @x el <fecha>".
+ *
+ * **Both halves are the point.** `docs/round-reasignacion.md`: an orphaned cabal
+ * is repaired in two acts by two people — the operator nominates, and the
+ * nominee claims it with their own signature. Naming only the operator would
+ * hide who benefited; naming only the claimer would read like an ordinary
+ * transfer. A reader is owed the difference between a group that changed hands
+ * by an act of its leader and one that changed hands because the operator
+ * offered it and somebody signed for it.
+ *
+ * The date is the **claim**, not the nomination: until somebody signed, nothing
+ * had happened.
+ *
+ * **The reason is not here.** It is mandatory and it lives in `audit_log`,
+ * because a reason describes somebody's circumstances — a lost wallet, a
+ * suspension — and publishing it would turn a repair into a punishment.
+ *
+ * It renders nothing at all for the cabals nobody ever had to repair, which is
+ * almost every one: the rows `DESIGN.md` measures against the mould keep exactly
+ * the geometry they were measured at, and only the exceptional row grows a line.
+ */
+function ReassignedNote({ at, by }: { at: string | null; by: string | null }) {
+  if (at === null) return null;
+  return (
+    <span className="hidden-wallets">
+      Reasignado por admin, reclamado por {by === null ? "su líder" : `@${by}`} el{" "}
+      <time dateTime={at}>{new Date(at).toLocaleDateString("es")}</time>
+    </span>
+  );
+}
+
 function Podium({ entries }: { entries: PublicCabal[] }) {
   return (
     <ol className="podium">
@@ -105,6 +138,7 @@ function Podium({ entries }: { entries: PublicCabal[] }) {
           </span>
           <Avatar name={entry.name} src="" size={64} />
           <span className="podium-name">{entry.name}</span>
+          <ReassignedNote at={entry.reassignedAt} by={entry.reassignedTo} />
           <span className="podium-tag label">({entry.tag})</span>
           <span className={`num-lg podium-pnl ${amountDirection(entry.realizedSol)}`}>
             {formatSignedSol(entry.realizedSol)}
