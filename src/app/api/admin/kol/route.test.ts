@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { query } from "@/lib/db";
+import { resetAuditLog } from "@/lib/fixtures/audit";
 import { blindIndex } from "@/lib/crypto";
 import { inventAddress, inventEvmAddress } from "@/lib/ids";
 import { POST } from "./route";
@@ -19,7 +20,11 @@ let previousToken: string | undefined;
 beforeEach(async () => {
   previousToken = process.env.ADMIN_TOKEN;
   process.env.ADMIN_TOKEN = TOKEN;
-  await query("TRUNCATE kol, kol_wallet, audit_log CASCADE");
+  await query("TRUNCATE kol, kol_wallet CASCADE");
+  // `audit_log` refuses `TRUNCATE` since `migrations/018`, and the cases below
+  // count its rows — so it is cleared through the fixture that turns the
+  // trigger off and back on, which is the tripwire's own proof.
+  await resetAuditLog();
 });
 
 afterEach(() => {

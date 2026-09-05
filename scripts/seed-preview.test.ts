@@ -422,6 +422,38 @@ describe("the trades are the only thing the seed invents", () => {
     // The check the third part relies on, proved to be capable of failing.
     await expect(withTransaction(assertReconciled)).rejects.toThrow(/still dirty/);
   });
+
+  /**
+   * **The seed runs against a real schema, and that is the point of running it
+   * here at all.**
+   *
+   * `migrations/016` replaced `cabal`'s outright `UNIQUE (tag)` with a *partial*
+   * index over the cabals that still hold one, and `ON CONFLICT (tag)` stopped
+   * matching any constraint — *"there is no unique or exclusion constraint
+   * matching the ON CONFLICT specification"*, raised at plan time, on every run.
+   * The seed would have failed whole. It was caught by the `writeRoster` calls
+   * in this file rather than by the next preview deploy, which is what a gate is
+   * for.
+   *
+   * This case pins the specific state the partial index exists to allow: a
+   * dissolved cabal holding `tag = NULL`, alongside a live one holding a tag.
+   * A future change that made the index total again, or that dropped the
+   * predicate from the `ON CONFLICT`, fails here — the first with a NOT NULL
+   * violation, the second at plan time — instead of in production.
+   */
+  it("upserts its cabals with dissolved, tagless ones already in the table", async () => {
+    await query(
+      `INSERT INTO cabal (id, tag, name, dissolved_at)
+       VALUES (gen_random_uuid(), NULL, 'disuelto', now() - INTERVAL '90 days')`,
+    );
+    // A second full write over the top: the upsert meets both the tagless row
+    // and its own tags from the first run.
+    await expect(withTransaction(writeRoster)).resolves.toBeDefined();
+    const [row] = await query<{ tagless: string }>(
+      "SELECT count(*)::text AS tagless FROM cabal WHERE tag IS NULL",
+    );
+    expect(row.tagless).toBe("1");
+  });
 });
 
 /**

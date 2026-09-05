@@ -1,0 +1,70 @@
+name: Schema parity
+
+# Is the `preview` database at the same level as this checkout?
+#
+# THE CASE THIS CLOSES, dated 2026-08-27 in CLAUDE.md: preview was five
+# migrations behind, and every Preview deployment would have met a schema it did
+# not have. It happened again in miniature on 2026-09-02 -- a route answering
+# 500 with `relation "listing_attempts" does not exist` -- and both times the
+# suite was green and right to be. `npm test` runs against `tests`; it says
+# nothing about a database it never opened.
+#
+# scripts/schema-versions.mts already asks this of all three databases, and it
+# is a MANUAL step in /cierre. This is the same question asked by a machine, of
+# the one database a deploy reads, before that deploy happens.
+#
+# It is deliberately NOT the suite against preview: the suite truncates tables,
+# and preview is what the owner's visual gate reads. One query, one connection.
+#
+# It does not gate Vercel -- nothing in GitHub Actions can. It goes red on the
+# push, which is the signal a person acts on before merging.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schema-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview-is-current:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # Pinned to a commit with the tag beside it, for the reason the other
+      # workflows here give: a tag is a promise from whoever can move it, and
+      # this job holds a database URL.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      # --ignore-scripts: a dependency's install script would otherwise run in
+      # this job, with this job's environment, before the step that was reasoned
+      # about -- and that environment holds PREVIEW_DATABASE_URL.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Assert preview has every migration in this checkout
+        env:
+          # The only secret this job needs. Not DATABASE_URL and neither
+          # WALLET_* key: the script's whole import graph is schema-parity.ts
+          # and pg, and it reads one table of version strings.
+          PREVIEW_DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # No emptiness guard here: the script itself fails on an unset
+          # variable, which keeps "the secret is missing" and "preview is
+          # behind" as two different messages in the same place.
+          npx tsx scripts/assert-preview-current.mts

@@ -1,41 +1,11 @@
 "use client";
 
-import bs58 from "bs58";
 import { useState } from "react";
 import { OnboardingModal, type OnboardingWallet } from "../onboarding-modal";
 import { WalletPicker } from "../wallet-picker";
 import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof";
-import {
-  connect as connectWallet,
-  discoverWallets,
-  signMessage,
-  solanaWallets,
-  type StandardWallet,
-} from "@/lib/wallet-standard";
-import {
-  connectEvm,
-  discoverEvmWallets,
-  signPersonal,
-  type Eip6963Wallet,
-} from "@/lib/eip6963";
-import { isEvm, type Chain } from "@/lib/chain";
-
-/**
- * A wallet the reader may pick, with the chain it will register on.
- *
- * **Two namespaces, one list.** Solana wallets announce over Wallet Standard and
- * EVM wallets over EIP-6963; the two handshakes have nothing in common and both
- * end here, as a row with a name and a chain. The reader is choosing a wallet,
- * not a protocol.
- *
- * The EVM half only appears when `activeChains()` says so — the flag that keeps
- * a chain nothing indexes from being offered (`chain.ts`). A wallet registered
- * on a chain with no ingestion produces no trades, appears in no feed and moves
- * no rank, which is `DESIGN.md`'s last Don't.
- */
-type Choice =
-  | { kind: "solana"; chain: Chain; name: string; wallet: StandardWallet }
-  | { kind: "evm"; chain: Chain; name: string; wallet: Eip6963Wallet };
+import { connectChoice, discoverChoices, signChoice, type Choice } from "../wallet-choice";
+import type { Chain } from "@/lib/chain";
 
 /**
  * `/registro` — spec §6, the only page in the product that connects a wallet.
@@ -113,34 +83,10 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
   function openPicker() {
     setError(null);
 
-    /*
-      **Both handshakes, every time.** Wallet Standard for Solana and EIP-6963
-      for EVM: a reader with MetaMask and Phantom installed has two wallets, not
-      one, and which of the two protocols they speak is not their problem.
-
-      The EVM half is gated on `activeChains()` rather than on anything this
-      file knows: a chain whose ingestion is off produces no trades and moves no
-      rank, so offering it would be a control that does not work.
-    */
-    const found: Choice[] = [
-      ...solanaWallets(discoverWallets()).map(
-        (wallet): Choice => ({ kind: "solana", chain: "solana", name: wallet.name, wallet }),
-      ),
-      ...(chains.some(isEvm)
-        ? discoverEvmWallets().map(
-            (wallet): Choice => ({
-              // The first active EVM chain: today that is Robinhood and there
-              // is exactly one. A reader with two would have to be asked, and
-              // that question does not exist until a second chain is switched
-              // on — `docs/multichain.md` §6.
-              kind: "evm",
-              chain: chains.find(isEvm)!,
-              name: wallet.info.name,
-              wallet,
-            }),
-          )
-        : []),
-    ];
+    // Both handshakes, every time, and the EVM half gated on `activeChains()`.
+    // `wallet-choice.ts` has the reasoning; `/mi-cabal` runs the same three
+    // steps, which is why they stopped living here.
+    const found = discoverChoices(chains);
 
     if (found.length === 0) return fail("no_provider");
     if (found.length === 1) {
@@ -157,10 +103,7 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
     setBusy(true);
     try {
       const chain = choice.chain;
-      const address =
-        choice.kind === "solana"
-          ? await connectWallet(choice.wallet)
-          : await connectEvm(choice.wallet);
+      const address = await connectChoice(choice);
       if (wallets.some((w) => w.address === address)) return fail("already_added");
 
       const issued = await fetch("/api/registro/nonce", {
@@ -181,27 +124,7 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
         nonce,
         expiresAt,
       };
-      /*
-        **The same text, two signatures that are not the same shape.**
-
-        `proofMessage` builds one string — `docs/wallet-proof.md` §2, with its
-        `Cadena:` line in CAIP-2 — and each namespace signs it its own way: a
-        Solana wallet over the raw bytes, an EVM wallet as EIP-191
-        `personal_sign`. What travels differs too: base58 for one, `0x` hex for
-        the other, which is what each verifier expects.
-
-        The message itself is never branched on. One definition of what gets
-        signed is the rule `docs/wallet-proof.md` §2.2 rests on: the server
-        rebuilds the text it expects, so a client that composed its own would
-        simply fail there.
-      */
-      const message = proofMessage(fields);
-      const signature =
-        choice.kind === "solana"
-          ? bs58.encode(
-              await signMessage(choice.wallet, address, new TextEncoder().encode(message)),
-            )
-          : await signPersonal(choice.wallet, address, message);
+      const signature = await signChoice(choice, address, proofMessage(fields));
 
       setWallets((current) => [
         ...current,

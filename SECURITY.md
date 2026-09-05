@@ -50,6 +50,14 @@ Stated plainly, because a control that oversells itself is worse than none:
   over a single-use nonce, so nobody with database access can forge one or move it to a different
   action. That is the only part of this account that does not rest on trusting us — and it covers
   only the entries a KOL signed, never the admin's own, which are authorised by a token we hold.
+
+  **The chain covers both principals; the signature covers one.** The admin's `approve` and a
+  leader's `transferir el cabal` go into the same table through the same writer, so there is no
+  seam between two accounts where a row could go missing without breaking a link. What tells them
+  apart is what authorised the row — a nonce and a signature, or the admin token — and an entry
+  with no signature is exactly that and says so by the row's absence rather than by a claim. So an
+  administrator's own actions are guarded only by the tripwires, which is the honest reading of the
+  threat this bullet names: we are not able to prove our own good behaviour to you.
 - **Inherent chain exposure.** Amount, mint and timestamp are enough to locate a transaction in any
   public explorer, and from there the signer. "Wallets ocultas" means *we do not publish the
   address*. It is not anonymity, and both the KOL page and the terms say so in those words. Anyone

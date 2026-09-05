@@ -626,7 +626,11 @@ export async function writeRoster(tx: TxQuery): Promise<RosterResult> {
   await tx(
     `INSERT INTO cabal (id, tag, name)
      SELECT gen_random_uuid(), t, t FROM unnest($1::text[]) AS t
-     ON CONFLICT (tag) DO NOTHING`,
+     -- WHERE tag IS NOT NULL because migration 016 made the index partial: a
+     -- tag is held by the cabals that still have one, and a bare
+     -- ON CONFLICT (tag) no longer matches any constraint. The predicate has to
+     -- be repeated here for Postgres to infer the same index.
+     ON CONFLICT (tag) WHERE tag IS NOT NULL DO NOTHING`,
     [tags],
   );
   const cabalIds = new Map(

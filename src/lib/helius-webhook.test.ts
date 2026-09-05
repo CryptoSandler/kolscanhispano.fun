@@ -68,7 +68,7 @@ function fakeHelius(
 let previous: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
-  await query("TRUNCATE kol, kol_wallet, audit_log CASCADE");
+  await query("TRUNCATE kol, kol_wallet CASCADE");
   await query("DELETE FROM setting WHERE key = $1", [WEBHOOK_SETTING_KEY]);
   previous = {
     key: process.env.HELIUS_API_KEY,

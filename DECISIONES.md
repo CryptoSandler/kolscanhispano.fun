@@ -409,3 +409,137 @@ sería una tercera copia de la misma lista — exactamente lo que se está trata
 
 Verificado que muerde: agregando una acción sólo en el código, falla con *"in wallet-proof.ts but
 not in the CHECK — the migration is missing"*.
+
+## El nonce se quema ANTES de comprobar la regla — 2026-09-04
+
+`src/lib/cabal-actions.ts` corre los mismos cinco pasos en las seis acciones: verificar la
+firma, **quemar el nonce**, resolver la wallet a un KOL, comprobar la regla, actuar y anotar.
+El segundo paso va antes del cuarto a propósito, y es la decisión de seguridad de toda la capa.
+
+**Si la regla corriera primero, una firma sería una pregunta gratis.** El sujeto está dentro
+del texto firmado, pero nada obliga a que la pregunta se haga una sola vez: con la regla
+adelante, un `no_encontrado` devolvería el nonce intacto y quien tuviera una firma podría
+reintentarla contra sujeto tras sujeto —"¿@beto está en este cabal?", "¿existe MEX?"— hasta
+que una entrara. Cada respuesta saldría gratis y el conjunto de respuestas es el padrón.
+Quemando primero, **cada pregunta cuesta una firma que una persona tiene que aprobar en su
+wallet**, que es el único precio que un atacante no puede bajar.
+
+El costo es que un rechazo legítimo también gasta el nonce: quien se equivoca de tag pide
+otro y vuelve a firmar. Un viaje de ida y vuelta contra un padrón enumerable no es un
+intercambio parejo.
+
+Lo cubre *"spends the nonce even when the rule refuses"* en `cabal-actions.test.ts`: la misma
+prueba, reenviada después de un `not_found`, contesta `bad_proof`.
+
+### Si el proceso cae entre quemar y actuar
+
+El nonce queda gastado y **la acción no ocurrió**. Se pide otro nonce y se firma de nuevo.
+
+Esto no es un efecto secundario: es la razón por la que los pasos 1 a 3 corren **fuera** de la
+transacción que hacen los pasos 4 y 5. La quema se compromete en su propia conexión, así que
+el rollback de la acción no la devuelve. La invariante que queda es de una sola línea:
+
+> Un nonce que llegó a la puerta está gastado, pase lo que pase después.
+
+La alternativa —quemar dentro de la transacción— haría que un fallo cualquiera devolviera una
+firma reutilizable, y devolvería justo la que menos se entiende: la de un proceso que se murió
+sin decir por qué. Entre "el usuario firma de nuevo" y "una firma sobrevive a una caída que
+nadie diagnosticó", la primera cuesta un viaje.
+
+**Hay además un motivo mecánico que apunta al mismo lado, y se descubrió antes de escribir el
+primer test.** `db.ts` corre el pool en `max: 1`, así que una llamada a `query` desde adentro
+de `withTransaction` espera por el único cliente que la transacción ya tiene y se cuelga hasta
+el timeout de conexión. `consumeNonce` es una de esas llamadas. La primera versión de
+`authorise` la hacía adentro y habría colgado cada acción de cabal en producción con la
+apariencia de una base lenta.
+
+Lo cubre `cabal-actions.crash.test.ts`, que mockea `appendAudit` para que tire —el pie de
+cualquier fallo posterior a la quema: caída, conexión perdida, timeout— y verifica las dos
+mitades: no hay cabal, ni membresía, ni entrada de auditoría, **y** el nonce quedó usado y la
+misma prueba reenviada contesta `bad_proof`.
+
+## Co-líderes: los nombra el líder, y son dos — 2026-09-05
+
+**Tomada.** `nombrar co-líder` y `revocar co-líder` son acciones firmadas, por la
+misma puerta y con la misma auditoría que las otras ocho. **Solo el líder nombra.**
+Un co-líder que pudiera nombrar co-líderes vuelve el tope una formalidad —dos se
+nombran reemplazos entre ellos indefinidamente— y deja sin respuesta la única
+pregunta que importa después: quién delegó esta autoridad.
+
+**El tope de dos cambió una forma, no agregó una columna.** `migrations/016` tenía
+un solo `co_leader_kol_id`, porque §4 solo necesitaba alguien a quien transferir.
+Dos no entran en una columna, y una segunda columna es la opción que parece más
+barata y no lo es: cada consulta aprende a decir `co_leader_kol_id = $1 OR
+co_leader_2_kol_id = $1`, y el día que el tope sea tres, todas están mal de una
+forma que igual corre.
+
+`migrations/020` las mueve a `cabal_co_leader (cabal_id, kol_id, slot)`, y **el
+`slot` es lo que hace del tope una restricción en vez de una cuenta**:
+`CHECK (slot IN (1,2))` con `UNIQUE (cabal_id, slot)`. Un tercer nombramiento no
+tiene dónde ir y lo dice la base. Contar filas en el handler y negar en dos es un
+read-then-write: dos nombramientos que llegan juntos leen uno los dos. Es el mismo
+razonamiento de `cabal_tag_held` y de `wallet_proof_nonce` — la carrera la decide
+un índice o no la decide nadie.
+
+Revocar libera el slot y el siguiente nombramiento lo reusa. Un handler que solo
+contara hacia arriba negaría después de una revocación y el tope habría pasado a
+ser uno en silencio; hay un test para eso.
+
+### El cabal huérfano lo resuelve el admin, y nada más — 2026-09-05
+
+**Cerrado.** Un primer borrador de esta decisión se apoyaba en una disolución por
+inactividad que **no existe**: `dissolved_at` se lee en tres lugares y no lo
+escribe ningún camino de código —ni cron, ni handler, ni admin; solo los tests— y
+en este producto "inactividad" significa lo contrario (`docs/spec-v1.md` §72:
+*"Inactive approved KOLs stay in the list at zero"*).
+
+La decisión final no la construye. **No hay timer y no hay auto-promoción.** Un
+líder que no puede firmar y sin co-líder deja un cabal que solo mueve la
+reasignación por admin del §4, desde `/admin`, con entrada en `audit_log`.
+
+Es una respuesta coherente, pero trae una obligación: **un estado que solo se
+resuelve a mano y que nada muestra, se resuelve cuando alguien se queja.** Así que
+`/admin` lista los huérfanos (`src/lib/orphan-cabals.ts` detrás de
+`GET /api/admin/cabal`) y dice **por cuál de las tres razones** lo es, porque lo
+que el admin debería hacer cambia:
+
+- `sin líder` — `leader_kol_id IS NULL`.
+- `líder sin wallet activa` — todas retiradas. Es el caso del que hablaba §4: no
+  hay firma posible, así que ninguna acción suya pasa la puerta.
+- `líder no aprobado` — suspendido o vuelto a pendiente. `authorise` exige
+  `kol.status = 'approved'`, así que está igual de trabado, pero el arreglo
+  probablemente sea un estado y no un líder nuevo.
+
+Al lado va la cantidad de miembros: es lo que se pierde si queda trabado. Un cabal
+disuelto no es huérfano — está terminado, y su sigla corre los treinta días.
+
+**La lista no tiene botón.** Reasignar no está construido, y `docs/padron.md` §4
+sigue valiendo para todo control; un botón que no hace nada es el último Don't de
+`DESIGN.md`. Lo que cambió es que el estado se ve, en vez de haber que buscarlo.
+
+## La cola de solicitudes la leen líder y co-líderes, nunca es pública — 2026-09-05
+
+**Tomada.** `ver solicitudes` devuelve la cola a quien lidera o co-lidera ese
+cabal. `ver mi solicitud` le devuelve al solicitante el estado del **suyo** y nada
+más: ni la cola, ni su posición en ella, porque una posición es un hecho sobre las
+otras personas de la fila.
+
+Nunca pública, y esa es la mitad irreversible: mostrar quién pidió entrar publica
+un rechazo, y a alguien rechazado no se lo puede des-publicar.
+
+**Las dos lecturas se firman**, como toda escritura. Eso es el precio de *sin
+sesión de KOL* (§4) mostrándose, no una elección de esta pantalla: nada recuerda
+entre dos requests que una wallet lidera algo, así que "mostrame mi cola" tiene que
+probarlo igual que "aceptá a esta persona". Cuesta una firma por carga del panel.
+
+Tres consecuencias que quedan escritas porque no son obvias:
+
+1. **El sujeto se compara, no se busca.** Un líder que nombra la sigla de otro
+   cabal recibe `not_leader`, no la cola del suyo: la sigla es lo que firmó.
+2. **La lectura del líder se audita; la del solicitante no.** Leer quién quiere
+   entrar a un grupo es un acceso que la cuenta debería poder mostrar después;
+   "@ana preguntó si @ana fue aceptada" es ruido que entierra las entradas que
+   importan.
+3. **La entrada audita la cantidad, nunca los handles.** Listarlos volvería a
+   publicar dentro de `audit_log` justamente lo que la lectura existe para
+   mantener angosto. Hay un test que busca el handle en el `after::text`.

@@ -164,6 +164,21 @@ export const PUBLIC_LIMITS = {
   "registro-nonce": 20,
   registro: 6,
   "registro-tweet": 10,
+  /**
+   * The cabal panel's two endpoints. Tighter than `/registro`'s, because a
+   * leader acts a handful of times a day and every one of those actions costs
+   * somebody a wallet prompt they have to read and approve.
+   *
+   * - **`cabal-nonce` — 12.** One row in `wallet_proof_nonce` per call, and a
+   *   panel that issued twelve in a minute would be a panel with a loop in it.
+   * - **`cabal-action` — 6.** Verifies a signature and writes inside a
+   *   transaction. Six is a leader answering a queue briskly, and it is also
+   *   what bounds the probing the gate's ordering already makes expensive:
+   *   `DECISIONES.md` makes each guess cost a signature, this makes it cost
+   *   ten seconds as well.
+   */
+  "cabal-nonce": 12,
+  "cabal-action": 6,
 } as const;
 
 export type PublicBucket = keyof typeof PUBLIC_LIMITS;

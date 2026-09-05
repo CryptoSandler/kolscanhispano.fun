@@ -145,6 +145,30 @@ now takes `--preview`, guarded by the same distinct-from-production assertion th
     npm run db:migrate:test        # tests
     npm run db:migrate:preview     # preview
 
+**And since 2026-09-04 a machine asks, on every push.**
+`.github/workflows/schema-parity.yml` runs `scripts/assert-preview-current.mts`,
+which compares `preview`'s `schema_migrations` against the migration files in the
+checkout and fails the build when preview is behind, naming the versions. It
+needs one CI secret, `PREVIEW_DATABASE_URL`, and it is one query — deliberately
+not the suite against preview, because the suite truncates tables and preview is
+what the owner's visual gate reads.
+
+**This closes the 2026-08-27 case.** That incident, and the smaller one on
+2026-09-02 (`relation "listing_attempts" does not exist` on a preview
+deployment), were the same shape and neither was a failure of care: `npm test`
+runs against `tests` and is silent about a database it never opens, so a green
+suite was never evidence. `scripts/schema-versions.mts` answered the question for
+all three databases but only when a person remembered to run it, which is the
+step a long batch drops at the end. The manual check stays — it covers
+production, which nothing automatic may be trusted to migrate — and the
+automatic one covers the database a deploy actually reads.
+
+Comparison is against the **checkout**, not against `tests`: `tests` is itself a
+database that could be behind, and the directory is what both are supposed to
+have. A database *ahead* of the checkout passes — that is every branch behind
+`main`, and a check that cried wolf there is one people learn to re-run until it
+goes green.
+
 **Production is named, never defaulted into.** `npm run db:migrate` with no flag
 used to mean production DDL, which made the shortest command in the repo the only
 unguarded one. It now refuses and asks which database you meant; the `--prod` has

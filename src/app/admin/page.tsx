@@ -16,7 +16,26 @@ import { activeChains, type Chain } from "@/lib/chain";
  * `docs/padron.md` §4 says plainly what §9 describes and this does not do:
  * editing, cabals, withdrawal, suspension, health. Nothing here pretends at
  * them, because a control that does not work is DESIGN.md's last Don't.
+ *
+ * **One exception since 2026-09-05, and it is a list rather than a control.**
+ * `docs/round-cabals.md` §5.1 closed the orphaned-cabal question: a cabal whose
+ * leader cannot sign and that has no co-leader is resolved **only** by an admin
+ * reassignment recorded in `audit_log` — no timer, no self-promotion. That makes
+ * the state something a person has to notice, and a state that only resolves by
+ * hand and that nothing surfaces is one that resolves when somebody complains.
+ * So the orphans are shown. Reassigning is not built and there is no button for
+ * it, which is the same Don't read the right way round.
  */
+
+/** `GET /api/admin/cabal`. A handle, a tag and a count — never an address. */
+type Orphan = {
+  id: string;
+  tag: string | null;
+  name: string;
+  leaderHandle: string | null;
+  reason: string;
+  members: number;
+};
 
 type Row = {
   id: string;
@@ -82,6 +101,7 @@ const REASONS: Record<string, string> = {
 export default function AdminPage() {
   const [token, setToken] = useState("");
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [orphans, setOrphans] = useState<Orphan[] | null>(null);
   const [handle, setHandle] = useState("");
   const [wallets, setWallets] = useState<WalletDraft[]>([
     { address: "", chain: "solana", isPublic: false },
@@ -119,6 +139,14 @@ export default function AdminPage() {
       }
       setRows(((await response.json()) as { kols: Row[] }).kols);
       setMessage(null);
+
+      // Loaded with the roster rather than behind its own button: an orphaned
+      // cabal is a thing to *notice*, and a list you have to ask for is one
+      // nobody asks for. A failure here leaves the roster on screen — the
+      // padrón is what this page is for, and a missing sidebar must not take it
+      // down with it.
+      const cabals = await fetch("/api/admin/cabal", authed());
+      setOrphans(cabals.ok ? ((await cabals.json()) as { orphans: Orphan[] }).orphans : null);
     } finally {
       setBusy(false);
     }
@@ -278,6 +306,48 @@ export default function AdminPage() {
           </button>
         </div>
       </section>
+
+      {/*
+        Orphaned cabals: leader unable to sign, and no deputy. `docs/round-cabals.md`
+        §5.1 — resolved only by an admin reassignment with an `audit_log` entry.
+
+        Above the padrón because it is an exception list: it is empty almost
+        always, and when it is not, it is the thing on this page that needs a
+        person. An empty state is rendered rather than the section disappearing,
+        so "there are none" and "it never loaded" do not look the same.
+      */}
+      {orphans !== null && (
+        <section className="card">
+          <div className="card-head">
+            <h2 className="label">Cabals huérfanos</h2>
+          </div>
+          {orphans.length === 0 ? (
+            <p className="label">Ninguno. Todos tienen líder o co-líder que puede firmar.</p>
+          ) : (
+            <>
+              <ul className="board">
+                {orphans.map((orphan) => (
+                  <li key={orphan.id}>
+                    <span className="handle">{orphan.tag ?? "—"}</span> {orphan.name}
+                    {" · "}
+                    <span className="hidden-wallets">
+                      {orphan.reason}
+                      {orphan.leaderHandle === null ? "" : ` (@${orphan.leaderHandle})`}
+                      {" · "}
+                      {orphan.members} {orphan.members === 1 ? "miembro" : "miembros"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {/* No button, deliberately: reassigning is not built, and a
+                  control that does not work is DESIGN.md's last Don't. */}
+              <p className="label">
+                Solo un admin puede reasignarlos, y queda registrado en la auditoría.
+              </p>
+            </>
+          )}
+        </section>
+      )}
 
       <section className="card">
         <div className="card-head">

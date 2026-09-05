@@ -47,9 +47,12 @@ export const PROOF_VALIDITY_MS = 5 * 60_000;
  * What a signature is for.
  *
  * Spec §6 defined the first two, whose subject is always the signer's own
- * wallet. The six that follow are a cabal leader's, added with
+ * wallet. The ten that follow are a cabal leader's, added with
  * `docs/round-cabals.md` §4's decision that there is **no KOL session** — every
- * one of them is proved per request, over a nonce this server issued.
+ * one of them is proved per request, over a nonce this server issued. The last
+ * four came with §5, on 2026-09-05: two that name and unname a deputy, and two
+ * reads, because a read of somebody else's pending queue is as much a thing to
+ * be entitled to as a write.
  *
  * They stay a closed union rather than becoming a free string: the action is
  * compared, and a comparison against something a caller can invent is not a
@@ -64,6 +67,15 @@ export const PROOF_ACTIONS = [
   "rechazar solicitud",
   "expulsar del cabal",
   "transferir el cabal",
+  "nombrar co-líder",
+  "revocar co-líder",
+  // **Two of these are reads**, and they are here for the same reason the writes
+  // are: with no KOL session, "show me my queue" has to prove authority exactly
+  // as "accept this person" does. `docs/round-cabals.md` §5 decided the queue is
+  // for the leader and the co-leaders, and the applicant sees only their own —
+  // so both are questions somebody has to be entitled to ask.
+  "ver solicitudes",
+  "ver mi solicitud",
 ] as const;
 
 export type ProofAction = (typeof PROOF_ACTIONS)[number];

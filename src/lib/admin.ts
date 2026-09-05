@@ -8,8 +8,9 @@
  * should not be reachable from here.
  */
 
-import { randomUUID, timingSafeEqual } from "node:crypto";
-import { query } from "./db";
+import { timingSafeEqual } from "node:crypto";
+import { appendAudit } from "./audit";
+import { withTransaction } from "./db";
 import { clientIp, ipHash } from "./rate-limit";
 
 /**
@@ -68,22 +69,29 @@ export type AuditEntry = {
  * trail that deanonymises the reader is not a safety feature.
  */
 export async function audit(entry: AuditEntry): Promise<void> {
-  await query(
-    `INSERT INTO audit_log (id, actor, action, target_type, target_id, before, after, ip_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [
-      randomUUID(),
-      entry.actor,
-      entry.action,
-      entry.targetType ?? null,
-      entry.targetId ?? null,
-      entry.before === undefined ? null : JSON.stringify(entry.before),
-      entry.after === undefined ? null : JSON.stringify(entry.after),
+  // Through `appendAudit` rather than a bare INSERT, so the admin's rows sit in
+  // the **same hash chain** as the KOLs' signed ones. They used to be written
+  // straight to the table, which left them with no `row_hash` — indistinguishable
+  // to `verifyAuditChain` from rows written before the chain existed, and
+  // therefore outside the thing that notices a rewrite. Two accounts of who did
+  // what, one of them unguarded, is the seam this closes.
+  //
+  // No nonce, because no signature: the admin is authorised by a token we hold,
+  // and `migrations/019` says the account states that by the absence of a
+  // signature row rather than by a claim.
+  await withTransaction((tx) =>
+    appendAudit(tx, {
+      actor: entry.actor,
+      action: entry.action,
+      targetType: entry.targetType,
+      targetId: entry.targetId,
+      before: entry.before,
+      after: entry.after,
       // `clientIp` from the limiter, not a second reading of
       // `x-forwarded-for`: two readings would put two different hashes in two
       // tables for one reader, and the audit trail would stop lining up with
       // the rate-limit rows it exists to explain.
-      entry.request ? ipHash(clientIp(entry.request)) : null,
-    ],
+      ipHash: entry.request ? ipHash(clientIp(entry.request)) : null,
+    }),
   );
 }

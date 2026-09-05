@@ -13,6 +13,25 @@ name: Recompute dirty positions
 # so any cron that runs at all is often enough -- and the two scripts take
 # different advisory locks, so neither can block the other.
 #
+# Then releases the tags of cabals dissolved more than thirty days ago, through
+# scripts/release-cabal-tags.ts. It is a THIRD step in this file and that
+# needs saying, because CLAUDE.md's rule about cron workflows is that the next
+# addition justifies itself in writing or the file gets split.
+#
+# It belongs here, and the test is the one that rule cares about: **is there an
+# ordering dependency that stops being visible?** There is none. The three
+# steps share no state — a replay, a delete of week-old counters, and a write
+# to cabal.tag — take three different advisory locks, and any order produces
+# the same result. What binds them is only that they are periodic database
+# maintenance that must not sit in front of ingestion, which is the same
+# sentence for all three. parse-pending.yml is the file with the real ordering
+# (sol_price before the parse, requeue between them), and that is the file the
+# rule was written about.
+#
+# Cadence: thirty days, checked every fifteen minutes, so the release is late
+# by at most a quarter of an hour against a window of a month. Late is the safe
+# direction and the script is written to fail that way.
+#
 # This runs the work directly on a GitHub-hosted runner instead of calling an
 # HTTP endpoint: outbid-tokens' reconcile workflow calls an endpoint because
 # its work lives in a deployed app and Vercel Cron cannot send an auth
@@ -130,3 +149,17 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx scripts/prune-rate-limit.ts
+
+      - name: Release the tags of long-dissolved cabals
+        env:
+          # DATABASE_URL only, for the same reason the prune step above takes
+          # only that one: the script's import graph is env.ts, lock.ts,
+          # lock-key.ts, db.ts and release-cabal-tags.ts, and none of them
+          # reads a WALLET_* key. wallets.ts is not on it.
+          #
+          # The emptiness guard is on the recompute step, which runs first in
+          # this job with the same secret.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npx tsx scripts/release-cabal-tags.ts

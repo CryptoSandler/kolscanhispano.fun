@@ -66,6 +66,14 @@ export default async function CabalsPage({
           <p className="page-subtitle">Grupos de traders compitiendo por ganancias</p>
           <Link className="panel-link" href="/">
             ← Volver a la clasificación
+          </Link>{" "}
+          {/* The only way into `/mi-cabal`, and it belongs here rather than in
+              the nav: the nav is the mould's, two items plus the feed, and a
+              fourth would break the 1:1 it is measured against. A page nothing
+              links to is an orphan, so it is linked from the page about the
+              thing it administers. */}
+          <Link className="panel-link" href="/mi-cabal">
+            Mi cabal →
           </Link>
         </div>
         {/* No currency group: every figure on this page is a SOL total with its

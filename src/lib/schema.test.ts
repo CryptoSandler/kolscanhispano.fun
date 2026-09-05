@@ -7,7 +7,7 @@ import { addWallet } from "./wallets";
 const uuid = () => crypto.randomUUID();
 
 async function truncate() {
-  await query("TRUNCATE kol, cabal, kol_wallet, raw_tx, trade, position, pnl_daily, token, sol_price, audit_log CASCADE");
+  await query("TRUNCATE kol, cabal, kol_wallet, raw_tx, trade, position, pnl_daily, token, sol_price CASCADE");
 }
 
 describe("core schema", () => {

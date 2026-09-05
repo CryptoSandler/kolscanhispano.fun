@@ -5,6 +5,13 @@ import type { ProofAction } from "./wallet-proof";
 /**
  * The account of who did what, as a chain.
  *
+ * **One chain, both principals.** A KOL's signed action and the admin's own
+ * `approve` land in the same table and the same chain, because a trail with two
+ * of them has a seam, and a seam is where a row goes missing without breaking
+ * anything. What differs between the two is what authorised the row — a
+ * signature (`audit_signature`) or the admin token — and that difference is
+ * visible by the presence or absence of a nonce, not by living somewhere else.
+ *
  * `migrations/018` makes `audit_log` append-only with a trigger and gives every
  * row a link to the one before it. This module is the only thing that writes
  * here, so the chain has exactly one place that can get it wrong.
@@ -49,7 +56,39 @@ export type AuditEntry = {
    * are not signed — the admin's own, which are authorised by the admin token.
    */
   nonce?: string;
+  /**
+   * The reader's IP under the same keyed digest `rate_limit` uses, never an
+   * address: spec §8 makes an IP personal data, and an audit trail that
+   * deanonymises the reader is not a safety feature. Only the admin's own
+   * entries carry one — a KOL's authority is a signature, not a network path.
+   */
+  ipHash?: Buffer | null;
 };
+
+/**
+ * A value serialised so that **Postgres and JavaScript agree**, which
+ * `JSON.stringify` alone does not give you.
+ *
+ * `jsonb` does not store a document, it stores a normalised one: it reorders
+ * keys by length and then bytewise. So `{status, cabal}` is written in that
+ * order and read back as `{cabal, status}`, and a hash over the raw
+ * `JSON.stringify` matches on the way in and not on the way out. That surfaced
+ * as `verifyAuditChain` reporting a `content` break on a row nobody had touched
+ * — a tamper alarm that fires on correct data is worse than no alarm, because
+ * the second time it goes off nobody looks.
+ *
+ * Sorting the keys here makes both sides agree by construction, whatever the
+ * database does with them.
+ */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, inner]) => [key, canonical(inner)]),
+  );
+}
 
 /** The bytes a row commits to. Field names included, so a value cannot slide between columns. */
 function digest(entry: AuditEntry, at: string, prevHash: string): string {
@@ -61,9 +100,14 @@ function digest(entry: AuditEntry, at: string, prevHash: string): string {
         subject: entry.subject ?? null,
         targetType: entry.targetType ?? null,
         targetId: entry.targetId ?? null,
-        before: entry.before ?? null,
-        after: entry.after ?? null,
+        before: canonical(entry.before ?? null),
+        after: canonical(entry.after ?? null),
         nonce: entry.nonce ?? null,
+        // Hex rather than the Buffer: `JSON.stringify` turns a Buffer into
+        // `{"type":"Buffer","data":[...]}`, and `pg` hands the same bytes back
+        // as a Buffer on read — so both sides have to agree on one spelling,
+        // and the one that survives a round trip is the string.
+        ipHash: entry.ipHash ? entry.ipHash.toString("hex") : null,
         at,
         prev: prevHash,
       }),
@@ -98,8 +142,9 @@ export async function appendAudit(
   const id = crypto.randomUUID();
   await tx(
     `INSERT INTO audit_log (id, actor, action, subject, target_type, target_id,
-                            before, after, nonce, prev_hash, row_hash, at)
-     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12::timestamptz)`,
+                            before, after, nonce, ip_hash, prev_hash, row_hash, at)
+     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12,
+             $13::timestamptz)`,
     [
       id,
       entry.actor,
@@ -110,6 +155,7 @@ export async function appendAudit(
       entry.before === undefined ? null : JSON.stringify(entry.before),
       entry.after === undefined ? null : JSON.stringify(entry.after),
       entry.nonce ?? null,
+      entry.ipHash ?? null,
       prevHash,
       rowHash,
       at,
@@ -146,12 +192,13 @@ export async function verifyAuditChain(limit = 10_000): Promise<ChainBreak[]> {
     before: unknown;
     after: unknown;
     nonce: string | null;
+    ip_hash: Buffer | null;
     prev_hash: string | null;
     row_hash: string | null;
     at: Date;
   }>(
     `SELECT id, actor, action, subject, target_type, target_id, before, after, nonce,
-            prev_hash, row_hash, at
+            ip_hash, prev_hash, row_hash, at
        FROM audit_log
       ORDER BY at ASC, id ASC
       LIMIT $1`,
@@ -178,6 +225,7 @@ export async function verifyAuditChain(limit = 10_000): Promise<ChainBreak[]> {
         before: row.before ?? undefined,
         after: row.after ?? undefined,
         nonce: row.nonce ?? undefined,
+        ipHash: row.ip_hash,
       },
       at,
       row.prev_hash ?? GENESIS_HASH,

@@ -170,3 +170,163 @@ mistake has a month to come back to its own name.
   batch-B nicety any more.
 - A `dissolved_at` on `cabal`, because the tag's 30 days are counted from it.
 - Every mutation signed, every mutation in `audit_log` with provenance.
+
+## 5. Decided by the owner, 2026-09-05
+
+The three questions §5 left open were answered the day after they were asked.
+Two are built in this batch; the third is a refusal that needed nothing built.
+
+### 5.1 The co-leader is named by the leader, and there are at most two
+
+A signed action each way — `nombrar co-líder` and `revocar co-líder` — through
+the same gate and the same audit as the other eight. **Only the leader may name
+one.** A deputy who could name deputies would make the cap a formality, since two
+of them could keep naming each other's replacements, and it would make "who
+delegated this authority" a question the trail cannot answer.
+
+**The cap changed a shape.** `migrations/016` gave `cabal` a single
+`co_leader_kol_id`, because §4 only needed somebody to transfer to. Two does not
+fit in a column, and a second column is the option that looks cheaper and is
+not — every query learns to say `co_leader_kol_id = $1 OR co_leader_2_kol_id =
+$1`, and the day the cap becomes three, every one of them is wrong in a way that
+still runs. So `migrations/020` moves them to `cabal_co_leader (cabal_id, kol_id,
+slot)`, and **`slot` is what makes the cap a constraint instead of a count**:
+`CHECK (slot IN (1,2))` with `UNIQUE (cabal_id, slot)` means a third appointment
+has nowhere to go. Counting rows in the handler and refusing at two is a
+read-then-write, and two appointments arriving together both read one.
+
+Revoking frees a slot and the next appointment reuses it — a handler that only
+counted upwards would refuse after one revoke and the cap would quietly have
+become one. That is a test.
+
+**The orphan is resolved by the admin, and by nothing else.** Closed 2026-09-05,
+after an earlier draft of this section leaned on a dissolution by inactivity that
+does not exist — `dissolved_at` is read in three places and written by nothing
+but tests, and "inactivity" elsewhere in this product means the opposite
+(`docs/spec-v1.md` §72: *"Inactive approved KOLs stay in the list at zero"*).
+**No timer and no auto-promotion get built.** A leader who cannot sign and has no
+deputy leaves a cabal that only §4's admin reassignment moves, from `/admin`,
+with an entry in `audit_log`.
+
+That is a coherent answer rather than a gap, but it carries one obligation: **a
+state that resolves only by hand, and that nothing surfaces, resolves when
+somebody complains.** So `/admin` lists the orphans — `src/lib/orphan-cabals.ts`
+behind `GET /api/admin/cabal` — and it names *which* of the three ways a cabal got
+there, because what the admin should do differs:
+
+- **`sin líder`** — `leader_kol_id IS NULL`, already reassigned away or seeded
+  before leaders existed.
+- **`líder sin wallet activa`** — every wallet withdrawn. This is the case §4 was
+  actually about: no signature is possible, so no action of theirs passes the gate.
+- **`líder no aprobado`** — suspended or back to pending. `authorise` requires
+  `kol.status = 'approved'`, so the cabal is equally stuck, but the fix is
+  probably a status and not a new leader.
+
+The member count goes beside each one: it is the stakes of leaving it stuck. A
+dissolved cabal is not an orphan — it is finished, and its tag is on the
+thirty-day clock.
+
+**The list has no button.** Reassigning is not built, and `docs/padron.md` §4's
+"`/admin` does not do cabals" still holds for every control; showing a
+reassignment that does nothing would be `DESIGN.md`'s last Don't. What changed is
+that the state is visible instead of being something to go looking for.
+
+### 5.2 The queue is read by the leader and the deputies, and is never public
+
+`ver solicitudes` returns the pending queue to whoever leads or deputises the
+cabal. `ver mi solicitud` returns an applicant the status of **their own** and
+nothing else: not the queue, not their position in it, because a position is a
+fact about the other people in it.
+
+Never public, and this is the one-way half: showing who asked to join publishes a
+rejection, and a KOL who was turned down cannot be un-published.
+
+**Both reads are signed**, like every write. That is §4's *no KOL session*
+showing its price rather than a choice made here — nothing remembers between two
+requests that a wallet leads anything, so "show me my queue" has to prove it
+exactly as "accept this person" does. It costs a wallet prompt per panel load.
+
+Two smaller things fall out of it and are worth naming:
+
+- **The subject is compared, not looked up.** A leader naming another cabal's tag
+  is refused rather than answered about their own, because the tag is what they
+  signed.
+- **The leader's read is audited, the applicant's is not.** Reading who wants
+  into a group is access an account should be able to show later; `@ana` asking
+  whether `@ana` was accepted is noise that makes the entries that matter harder
+  to find. The audited entry stores **the count, never the handles** — listing
+  them would republish inside `audit_log` the thing the read exists to keep
+  narrow.
+
+### 5.3 A deputy still cannot take a cabal whose leader is gone
+
+Unchanged, and nothing was built: `transfer` refuses a co-leader. Nothing in the
+database distinguishes "the leader is gone" from "the deputy would like the
+group", and a self-promotion that cannot be told from a theft is one the audit
+trail would record as legitimate. The lost-wallet path stays the admin's.
+
+## Appendix: how these three read while they were open — 2026-09-04
+
+Three things the action layer deliberately did **not** decide. Each is written
+here rather than in code because each is one-way: a published fact cannot be
+unpublished, and a mechanism built for one of two futures has to be rebuilt for
+the other (`CLAUDE.md`, *Decisions with a door*).
+
+### 5.1 Is the pending queue readable, and by whom?
+
+`cabal_request` records who asked to join which cabal. Nothing reads it back
+yet, so `/mi-cabal` has a leader accept or reject by naming the applicant's
+`@handle` — which the applicant already told them.
+
+The three futures, and what each costs:
+
+1. **Public, on the cabal's page.** Cheapest, and it publishes a rejection: a
+   KOL who asked and was turned down is visible to anybody who looks. Not
+   reversible once anyone has seen it.
+2. **Only the leader, behind a seventh signed action** — `ver solicitudes`,
+   proved the same way as the other six. Leaks nothing. Costs a wallet signature
+   per panel load, which is what *no KOL session* buys everywhere else, and two
+   changes (`PROOF_ACTIONS` plus a migration's `CHECK`, per `DECISIONES.md`).
+3. **Nobody: it stays as it is.** The applicant tells the leader out of band.
+
+**Recommendation: 2.** It is the only one of the three that makes the panel a
+panel, and the signature-per-read is the same price the owner already accepted
+for every write. It is also the only one that stays available whichever way 1 is
+later decided — the queue can always become public afterwards, and never
+un-public.
+
+The neutral wording, until it is decided: the site promises nothing about who
+can see a pending request, and no page says one way or the other.
+
+### 5.2 Nothing appoints a co-leader
+
+`co_leader_kol_id` exists, `cabal_co_leader_distinct` guards it, `expel` and
+`transfer` both maintain it — and **no action sets it**. That is a real gap, not
+an omission in the writing: §4's decision *"transfer only if there is a
+co-leader; otherwise the cabal is orphaned"* rests on a seat that today only the
+operator can fill by hand.
+
+It is a seventh action of the same shape as the six (`nombrar co-líder`, subject
+a `@handle`, signed by the leader), and it is two changes for the same reason
+5.1's is. It was left out because the batch was scoped to the five handlers that
+were asked for, and adding signable actions is a decision about what a signature
+can authorise — the owner's, not the implementer's.
+
+### 5.3 Can a co-leader take a cabal whose leader is gone?
+
+`transfer` refuses a co-leader, on purpose: **nothing in the database tells "the
+leader is gone" from "the deputy would like the group"**, and a self-promotion
+that cannot be distinguished from a theft is a theft the audit trail will
+record as legitimate.
+
+So the lost-wallet path is the admin's: reassign to the existing co-leader, with
+a reason in `audit_log`, which is exactly what §4 says the admin may do for an
+orphan. What §4 leaves open is whether *"transfer only if there is a co-leader"*
+was meant to happen **without** the admin. If it was, it needs an answer to "how
+does the server learn the leader is gone" first — a timeout on the leader's last
+signed action is the only candidate that does not require trusting the person
+who benefits.
+
+**Recommendation: leave it with the admin.** A cabal changing hands is rare
+enough to be worth a human, and the alternative buys convenience with the one
+guarantee the whole signature scheme exists to give.

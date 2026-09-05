@@ -74,7 +74,7 @@ beforeEach(async () => {
   previousToken = process.env.ADMIN_TOKEN;
   process.env.ADMIN_TOKEN = TOKEN;
   await query(
-    "TRUNCATE kol, kol_wallet, wallet_proof_nonce, rate_limit, audit_log, trade, position CASCADE",
+    "TRUNCATE kol, kol_wallet, wallet_proof_nonce, rate_limit, trade, position CASCADE",
   );
 });
 
