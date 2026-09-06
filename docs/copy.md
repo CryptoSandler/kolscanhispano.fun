@@ -164,3 +164,16 @@ rótulo**: decía `TU CUENTA DE X` arriba y `Usuario de X` abajo, dos nombres pa
 un campo.
 
 La línea de privacidad **no se repite** en este paso: ya se leyó en el anterior.
+
+
+## `Entrar al ranking`: la excepción del CTA — 2026-09-06
+
+Texto exacto del dueño para el botón primario del modal de conexión. Cae bajo la
+prohibición de arriba —`al` + `ranking` nombra la pantalla— y se permite igual,
+como ya se permitió `KOL Leaderboard` para el título de la home.
+
+**Está en `copy.test.ts` como una cadena literal permitida**, no como un agujero
+en la regla: cualquier otro `el ranking` en cualquier archivo sigue fallando la
+suite. Lo que se paga es que la lista vuelve a tener un segundo nombre, en un
+botón; lo que la regla evitaba era tener tres a la vez, en la prosa, el título y
+el nav, que es lo que efectivamente pasó y por lo que la regla existe.

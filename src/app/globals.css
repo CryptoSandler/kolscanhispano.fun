@@ -3756,8 +3756,9 @@ a.cta {
 }
 
 .connect-step .wallet-choice-icon {
-  width: 40px;
-  height: 40px;
+  /* 48 px: la fila es logo y nombre, así que el logo es lo que se mira. */
+  width: 48px;
+  height: 48px;
   border-radius: 10px;
   flex: none;
   object-fit: contain;
@@ -3793,6 +3794,18 @@ a.cta {
   display: inline-flex;
   gap: 4px;
   flex: none;
+}
+
+/*
+  La línea de "no estaba", debajo de su propia fila.
+
+  Aparece **después** del clic y sólo en la fila que se tocó: la lista no
+  anuncia quién está instalada, que es la decisión del dueño del 2026-09-06.
+*/
+.wallet-absent {
+  margin: 0 0 8px 60px;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
 .wallet-badge,

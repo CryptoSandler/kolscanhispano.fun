@@ -202,11 +202,28 @@ describe("the ranked list has one name in the UI", () => {
   /** The Spanish function words that mark the next noun as copy. */
   const ARTICLE = "el|la|los|las|un|una|del|al|de|en|tu|su|mi|nuestro";
 
+  /**
+   * **La única excepción, y es del dueño: `Entrar al ranking`.**
+   *
+   * Es el texto exacto del CTA del modal de conexión, fijado el 2026-09-06.
+   * Cae bajo la regla —`al` + `ranking` nombra la pantalla— y se permite igual
+   * porque quien puso la regla decidió esto, como ya había decidido
+   * `KOL Leaderboard` para el título de la home.
+   *
+   * **Lo que la regla cuidaba sigue en pie**, y conviene decir qué se paga: la
+   * lista tenía tres nombres a la vez y eso leía como tres pantallas. Esta
+   * excepción agrega un segundo nombre en **un** botón, no en la prosa ni en el
+   * título ni en el nav. Cualquier otro `el ranking` sigue fallando, que es la
+   * mitad que importa.
+   */
+  const ALLOWED = ["Entrar al ranking"];
+
   /** The two words, where they sit in Spanish prose rather than in code. */
   function bannedNames(source: string): string[] {
-    const prose = source
+    let prose = source
       .replace(/\/\*[\s\S]*?\*\//g, " ")
       .replace(/(^|[^:])\/\/.*$/gm, "$1 ");
+    for (const allowed of ALLOWED) prose = prose.split(allowed).join(" ");
     const inPhrase = new RegExp(`\\b(?:${ARTICLE})\\s+(ranking|leaderboard)\\b`, "gi");
     const headsPhrase = /\b(ranking|leaderboard)\s+de\s+\p{L}/giu;
     return [

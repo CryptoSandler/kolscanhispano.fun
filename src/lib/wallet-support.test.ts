@@ -11,11 +11,34 @@ import { WALLET_SUPPORT, supportedChains } from "./wallet-support";
 const ALL = ["solana", "robinhood", "bnb", "ethereum"] as const;
 
 describe("supportedChains", () => {
-  it("never offers Robinhood for Phantom, which is the bug this table exists for", () => {
-    const chains = supportedChains("Phantom", ["solana", "robinhood"], ALL);
+  /*
+    **Phantom sí ofrece Robinhood, y no ofrece BNB.**
+
+    Este caso decía lo contrario hasta el 2026-09-06, cuando `docs/wallets.md` se
+    verificó contra las docs oficiales: Phantom trae Robinhood Chain (4663) de
+    forma **nativa**. El razonamiento viejo —"anuncia EIP-6963, pero eso no
+    implica cualquier EVM"— era cierto como premisa y falso como conclusión.
+
+    Lo que sigue siendo verdad es que su lista es **cerrada**: no se le pueden
+    agregar redes arbitrarias, y BNB no está adentro.
+  */
+  it("offers Robinhood for Phantom, natively, and still not BNB", () => {
+    const chains = supportedChains("Phantom", ["solana"], ALL);
+    expect(chains).toContain("robinhood");
+    expect(chains).toContain("solana");
+    expect(chains).toContain("ethereum");
+    expect(chains).not.toContain("bnb");
+  });
+
+  it("offers Solana for MetaMask, which it has had since 2025", () => {
+    expect(supportedChains("MetaMask", [], ALL)).toContain("solana");
+  });
+
+  it("does not offer Robinhood for Backpack, whose closed list lacks it", () => {
+    const chains = supportedChains("Backpack", ["solana"], ALL);
+    expect(chains).toContain("solana");
     expect(chains).not.toContain("robinhood");
     expect(chains).not.toContain("bnb");
-    expect(chains).toContain("solana");
   });
 
   it("offers Robinhood and BNB for the RPC-configurable wallets", () => {
@@ -26,9 +49,16 @@ describe("supportedChains", () => {
     }
   });
 
-  it("ignores what a known wallet reported, because the report is what was wrong", () => {
-    // Phantom reportando Robinhood no la habilita: la tabla manda.
+  it("ignores what a known wallet reported: the table decides", () => {
+    // Solflare anunciando BNB no la habilita — su lista cerrada es sólo Solana.
     expect(supportedChains("Solflare", ["solana", "bnb"], ALL)).toEqual(["solana"]);
+  });
+
+  it("leaves out chains this product does not index, though the table names them", () => {
+    // La tabla dice `base` y `polygon` porque las wallets las soportan; el cruce
+    // con las cadenas activas es lo que las deja afuera de la pantalla.
+    expect(supportedChains("Phantom", [], ALL)).not.toContain("base");
+    expect(supportedChains("Phantom", [], ALL)).not.toContain("polygon");
   });
 
   it("keeps an unknown wallet's own report, because inventing a list is worse", () => {
@@ -36,8 +66,14 @@ describe("supportedChains", () => {
   });
 
   it("never offers a chain that is switched off", () => {
-    // Una cadena apagada no es una opción, ni siquiera para MetaMask.
-    expect(supportedChains("MetaMask", ["robinhood"], ["solana"])).toEqual([]);
+    /*
+      Una cadena apagada no es una opción. El caso usa Rabby y no MetaMask
+      porque MetaMask **sí** tiene Solana desde 2025 (`docs/wallets.md`,
+      verificado el 2026-09-06): con `["solana"]` activo devolvía `["solana"]`,
+      correctamente, y el caso fallaba por su propia premisa vencida.
+    */
+    expect(supportedChains("Rabby", ["robinhood"], ["solana"])).toEqual([]);
+    expect(supportedChains("Solflare", ["solana"], ["bnb"])).toEqual([]);
   });
 
   it("lists no wallet twice under names that differ only in spacing", () => {

@@ -3,20 +3,31 @@
 import { useEffect, useState } from "react";
 import type { Chain } from "@/lib/chain";
 import { supportedChains } from "@/lib/wallet-support";
-import { discoverChoices, groupChoices, type Choice, type WalletOption } from "./wallet-choice";
+import {
+  discoverChoices,
+  groupChoices,
+  type Choice,
+  type WalletOption,
+} from "./wallet-choice";
 
 /**
- * Paso 1: elegir la wallet. Y paso 2, si esa wallet firma en más de una cadena.
+ * El selector de wallets: una lista fija, con logo y nombre, y nada más.
  *
- * **Los dos pasos pasan en el mismo panel**, no en un diálogo encima del otro.
- * Un modal adentro de un modal fue lo que el dueño marcó en el gate, y el
- * estándar que se copió —RainbowKit, Reown AppKit— tampoco lo hace.
+ * **Versión final del dueño, 2026-09-06.** Las anteriores mostraban lo que el
+ * navegador había encontrado —secciones `Instaladas` y `Otras`, chips de cadena,
+ * badges `Detectada`, enlaces `Instalar →`— y eso convertía una lista de tres
+ * marcas en un informe sobre el estado de las extensiones. Ahora:
  *
- * La estructura es la de esas dos: `Instaladas` primero, con el ícono real que
- * la extensión publica por Wallet Standard o EIP-6963; `Otras` después, con el
- * logo del brand kit si está en `public/wallets/` y la inicial en un círculo si
- * todavía no llegó. **Nunca un logo inventado**: dibujar la marca de un tercero
- * es peor que no dibujarla.
+ * - **Siempre las mismas tres, en el mismo orden**: Phantom, MetaMask, Rabby.
+ *   Un lector que abre esto dos veces ve lo mismo las dos veces.
+ * - **Sólo logo y nombre.** Nada anuncia antes del clic si está instalada o no,
+ *   ni en qué cadenas firma: son cosas que importan *después* de elegir.
+ * - **`Mostrar más`** despliega Backpack, Solflare y Trust Wallet.
+ *
+ * Lo que pasa al hacer clic depende de lo que haya, y recién ahí: si está
+ * instalada, conecta —y si firma en más de una cadena, la pregunta viene
+ * después, en este mismo panel—; si no está, se abre su página oficial y queda
+ * una línea debajo de la fila.
  */
 
 const CHAIN_LABEL: Record<string, string> = {
@@ -26,40 +37,56 @@ const CHAIN_LABEL: Record<string, string> = {
   ethereum: "ETH",
 };
 
-/**
- * Las wallets que se ofrecen instalar, con su enlace oficial.
- *
- * El logo se lee de `public/wallets/<slug>.svg`. Si el archivo no está, la fila
- * sale con la inicial en un círculo — que es honesto — en vez de con un dibujo
- * nuestro que se parezca al logo, que no lo sería. Cowork los está trayendo.
- */
-const INSTALLABLE: { name: string; slug: string; url: string; chains: Chain[] }[] = [
-  { name: "MetaMask", slug: "metamask", url: "https://metamask.io/download/", chains: ["robinhood", "bnb", "ethereum"] },
-  { name: "Phantom", slug: "phantom", url: "https://phantom.com/download", chains: ["solana", "ethereum"] },
-  { name: "Rabby", slug: "rabby", url: "https://rabby.io/", chains: ["robinhood", "bnb", "ethereum"] },
-  { name: "Backpack", slug: "backpack", url: "https://backpack.app/download", chains: ["solana", "ethereum"] },
-  { name: "Solflare", slug: "solflare", url: "https://solflare.com/download", chains: ["solana"] },
+type Listed = { name: string; slug: string; url: string };
+
+/** Las tres de siempre, en este orden. */
+const PRIMARY: Listed[] = [
+  { name: "Phantom", slug: "phantom", url: "https://phantom.com/download" },
+  { name: "MetaMask", slug: "metamask", url: "https://metamask.io/download/" },
+  { name: "Rabby", slug: "rabby", url: "https://rabby.io/" },
 ];
 
-function Chips({ chains }: { chains: readonly string[] }) {
-  return (
-    <span className="wallet-choice-chains">
-      {chains.map((chain) => (
-        <span key={chain} className="wallet-choice-chain">
-          {CHAIN_LABEL[chain] ?? chain}
-        </span>
-      ))}
-    </span>
-  );
+/** Las que aparecen al tocar `Mostrar más`. */
+const SECONDARY: Listed[] = [
+  { name: "Backpack", slug: "backpack", url: "https://backpack.app/download" },
+  { name: "Solflare", slug: "solflare", url: "https://solflare.com/download" },
+  {
+    name: "Trust Wallet",
+    slug: "trust",
+    url: "https://trustwallet.com/download",
+  },
+];
+
+/**
+ * `Rabby` y `Rabby Wallet` son la misma extensión con dos nombres según el
+ * handshake. Se normaliza para que la fila de la lista encuentre la instalada
+ * sin importar cuál de los dos reportó.
+ */
+function normalise(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\s*wallet$/, "")
+    .trim();
 }
 
-/** La inicial en un círculo, para cuando no hay logo. Nunca uno inventado. */
-function Monogram({ name }: { name: string }) {
-  return (
-    <span aria-hidden="true" className="wallet-choice-icon is-monogram">
-      {name.slice(0, 1)}
-    </span>
-  );
+/**
+ * Las cadenas que **se le pueden ofrecer** a una wallet acá: las que la tabla
+ * dice que soporta, cruzadas con las que este sitio indexa, y cruzadas otra vez
+ * con **las que esa wallet anunció en este navegador**.
+ *
+ * El tercer cruce evita un error real. La tabla dice que Phantom firma en
+ * Robinhood, y es cierto; pero si en este navegador Phantom se anunció sólo por
+ * Wallet Standard, lo único que tenemos es un `Choice` de Solana. Ofrecer
+ * Robinhood ahí terminaba en `choices.find(...) ?? choices[0]`, o sea firmando
+ * en Solana un mensaje que decía Robinhood.
+ *
+ * Lo que la tabla aporta sigue siendo **recortar**: una wallet que anuncia una
+ * cadena que no soporta no la ofrece igual.
+ */
+function offerable(option: WalletOption, active: readonly Chain[]): Chain[] {
+  const supported = supportedChains(option.name, option.chains, active);
+  const announced = new Set<string>(option.choices.map((choice) => choice.chain));
+  return supported.filter((chain) => announced.has(chain));
 }
 
 export function WalletStep({
@@ -75,33 +102,29 @@ export function WalletStep({
 }) {
   const [installed, setInstalled] = useState<WalletOption[]>([]);
   const [chosen, setChosen] = useState<WalletOption | null>(null);
-  const [missingLogos, setMissingLogos] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState(false);
+  const [missingLogo, setMissingLogo] = useState<Set<string>>(new Set());
+  /** La wallet que se tocó y no estaba: su fila muestra la línea de abajo. */
+  const [absent, setAbsent] = useState<string | null>(null);
 
-  /*
-    El descubrimiento corre al montar **y** deja un reintento: una wallet que se
-    instala o se desbloquea con el panel abierto aparece al volver a mirar, sin
-    recargar. `discoverChoices` habla los dos handshakes.
-  */
   useEffect(() => {
     /*
-      **Se busca más de una vez, y esa es la corrección.**
-
-      La primera versión descubría una sola vez al montar. Una extensión que
-      responde el `app-ready` unos milisegundos más tarde —porque se está
-      desbloqueando, o porque el navegador la despertó recién— no aparecía
-      nunca, y la lista se quedaba vacía sin nada que reintentar. Se vio en el
-      gate: con dos wallets registradas, la sección `Instaladas` no salió.
-
-      Tres pasadas cubren el arranque, y `focus` cubre el caso de instalarla en
-      otra pestaña y volver. `discoverChoices` es idempotente y barato: vuelve a
-      preguntar por los dos handshakes y no guarda nada.
+      Se busca más de una vez. Una extensión que responde el `app-ready` unos
+      milisegundos más tarde —porque se está desbloqueando— no aparecía nunca
+      con una sola pasada, y no había nada que reintentar. `focus` cubre además
+      el caso de instalarla en otra pestaña y volver, que es exactamente lo que
+      la línea `Instálala y vuelve a intentar` invita a hacer.
     */
     let cancelled = false;
     const find = () => {
       if (cancelled) return;
       setInstalled(groupChoices(discoverChoices(chains)));
     };
-    const timers = [setTimeout(find, 0), setTimeout(find, 250), setTimeout(find, 900)];
+    const timers = [
+      setTimeout(find, 0),
+      setTimeout(find, 250),
+      setTimeout(find, 900),
+    ];
     window.addEventListener("focus", find);
     return () => {
       cancelled = true;
@@ -110,17 +133,39 @@ export function WalletStep({
     };
   }, [chains]);
 
-  const installedNames = new Set(installed.map((option) => option.name));
-  const others = INSTALLABLE.filter((wallet) => !installedNames.has(wallet.name)).filter((wallet) =>
-    wallet.chains.some((chain) => chains.includes(chain)),
+  const byName = new Map(
+    installed.map((option) => [normalise(option.name), option]),
   );
 
-  // Paso 2: la cadena, cuando la wallet elegida firma en más de una.
+  /*
+    **Las detectadas que no están en la lista fija.**
+
+    Glow, OKX, la que sea: si el navegador la anunció, se puede firmar con ella,
+    y esconderla sería ofrecer menos de lo que hay. Van al final de
+    `Mostrar más` con el ícono que anunciaron y en el mismo formato — sin chips,
+    como el resto.
+
+    No van arriba: la lista fija es fija justamente para que sea la misma en dos
+    lectores distintos, y una wallet que aparece o no según lo que cada uno tenga
+    instalado no puede empujar a las que siempre están.
+  */
+  const known = new Set(
+    [...PRIMARY, ...SECONDARY].map((wallet) => normalise(wallet.name)),
+  );
+  const extras = installed.filter(
+    (option) => !known.has(normalise(option.name)),
+  );
+
+  // Paso 2: la cadena, sólo si la wallet elegida firma en más de una.
   if (chosen !== null) {
-    const options = supportedChains(chosen.name, chosen.chains, chains);
+    const options = offerable(chosen, chains);
     return (
       <div className="connect-step">
-        <button type="button" className="connect-back" onClick={() => setChosen(null)}>
+        <button
+          type="button"
+          className="connect-back"
+          onClick={() => setChosen(null)}
+        >
           ← Volver
         </button>
         <p className="connect-step-title">
@@ -134,7 +179,9 @@ export function WalletStep({
               className="chain-choice"
               disabled={busy}
               onClick={() => {
-                const choice = chosen.choices.find((c) => c.chain === chain) ?? chosen.choices[0];
+                const choice =
+                  chosen.choices.find((c) => c.chain === chain) ??
+                  chosen.choices[0];
                 onPick(choice);
               }}
             >
@@ -151,10 +198,74 @@ export function WalletStep({
     );
   }
 
+  const row = (wallet: Listed) => {
+    const found = byName.get(normalise(wallet.name));
+    // El ícono de la extensión si está; si no, el SVG del brand kit; y si ese
+    // archivo todavía no llegó, la inicial en un círculo. Nunca uno inventado.
+    const icon =
+      found?.icon ??
+      (missingLogo.has(wallet.slug) ? null : `/wallets/${wallet.slug}.svg`);
+
+    return (
+      <li key={wallet.name}>
+        <button
+          type="button"
+          className="wallet-choice"
+          disabled={busy}
+          onClick={() => {
+            if (found === undefined) {
+              /*
+                No estaba. Se abre su página oficial en una pestaña nueva y la
+                fila explica qué hacer al volver. **Nada de esto se anuncia
+                antes del clic**: la lista no dice quién está instalada.
+              */
+              window.open(wallet.url, "_blank", "noopener,noreferrer");
+              setAbsent(wallet.name);
+              return;
+            }
+            setAbsent(null);
+            const shown = offerable(found, chains);
+            if (shown.length <= 1) {
+              onPick(
+                found.choices.find((c) => c.chain === shown[0]) ??
+                  found.choices[0],
+              );
+              return;
+            }
+            setChosen(found);
+          }}
+        >
+          {icon !== null ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URI de la extensión o SVG propio
+            <img
+              alt=""
+              aria-hidden="true"
+              className="wallet-choice-icon"
+              src={icon}
+              onError={() =>
+                setMissingLogo((current) => new Set(current).add(wallet.slug))
+              }
+            />
+          ) : (
+            <span aria-hidden="true" className="wallet-choice-icon is-monogram">
+              {wallet.name.slice(0, 1)}
+            </span>
+          )}
+          <span className="wallet-choice-name">{wallet.name}</span>
+        </button>
+
+        {absent === wallet.name && (
+          <p className="wallet-absent" role="status">
+            Instálala y vuelve a intentar.
+          </p>
+        )}
+      </li>
+    );
+  };
+
   return (
     <div className="connect-step">
       {busy && (
-        // El estado va en el mismo panel: nada se abre encima.
         <p className="connect-working" role="status">
           <span className="spinner" aria-hidden="true" />
           Confirma en tu wallet…
@@ -167,81 +278,66 @@ export function WalletStep({
         </p>
       )}
 
-      {installed.length > 0 && (
-        <>
-          <p className="connect-section">Instaladas</p>
-          <ul className="wallet-choices">
-            {installed.map((option) => {
-              const shown = supportedChains(option.name, option.chains, chains);
-              return (
-                <li key={option.name}>
-                  <button
-                    type="button"
-                    className="wallet-choice"
-                    disabled={busy}
-                    onClick={() => {
-                      // Una sola cadena: no hay nada que preguntar.
-                      if (shown.length <= 1) {
-                        const choice =
-                          option.choices.find((c) => c.chain === shown[0]) ?? option.choices[0];
-                        onPick(choice);
-                        return;
-                      }
-                      setChosen(option);
-                    }}
-                  >
-                    {option.icon !== undefined ? (
-                      // El ícono lo publica la extensión, como data URI.
-                      // eslint-disable-next-line @next/next/no-img-element -- data URI
-                      <img alt="" aria-hidden="true" className="wallet-choice-icon" src={option.icon} />
-                    ) : (
-                      <Monogram name={option.name} />
-                    )}
-                    <span className="wallet-choice-name">{option.name}</span>
-                    <Chips chains={shown} />
-                    <span className="wallet-badge">Detectada</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
+      <ul className="wallet-choices">{PRIMARY.map(row)}</ul>
 
-      {others.length > 0 && (
-        <>
-          <p className="connect-section">Otras</p>
-          <ul className="wallet-choices">
-            {others.map((wallet) => (
-              <li key={wallet.name}>
-                <a
-                  className="wallet-choice is-install"
-                  href={wallet.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
-                  {missingLogos.has(wallet.slug) ? (
-                    <Monogram name={wallet.name} />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element -- asset propio del brand kit
-                    <img
-                      alt=""
-                      aria-hidden="true"
-                      className="wallet-choice-icon"
-                      src={`/wallets/${wallet.slug}.svg`}
-                      onError={() =>
-                        setMissingLogos((current) => new Set(current).add(wallet.slug))
-                      }
-                    />
-                  )}
-                  <span className="wallet-choice-name">{wallet.name}</span>
-                  <Chips chains={wallet.chains.filter((chain) => chains.includes(chain))} />
-                  <span className="wallet-install">Instalar →</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </>
+      {expanded ? (
+        <ul className="wallet-choices">
+          {SECONDARY.map(row)}
+          {/* Y las detectadas que no están en la lista fija, al final. */}
+          {extras.map((option) => (
+            <li key={option.name}>
+              <button
+                type="button"
+                className="wallet-choice"
+                disabled={busy}
+                onClick={() => {
+                  setAbsent(null);
+                  const shown = supportedChains(
+                    option.name,
+                    option.chains,
+                    chains,
+                  );
+                  if (shown.length <= 1) {
+                    onPick(
+                      option.choices.find((c) => c.chain === shown[0]) ??
+                        option.choices[0],
+                    );
+                    return;
+                  }
+                  setChosen(option);
+                }}
+              >
+                {option.icon !== undefined ? (
+                  // El ícono que anunció la extensión, como data URI. Nunca uno
+                  // nuestro: de estas wallets no tenemos ni el logo ni por qué.
+                  // eslint-disable-next-line @next/next/no-img-element -- data URI
+                  <img
+                    alt=""
+                    aria-hidden="true"
+                    className="wallet-choice-icon"
+                    src={option.icon}
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="wallet-choice-icon is-monogram"
+                  >
+                    {option.name.slice(0, 1)}
+                  </span>
+                )}
+                <span className="wallet-choice-name">{option.name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <button
+          type="button"
+          className="connect-secondary"
+          onClick={() => setExpanded(true)}
+        >
+          Mostrar más
+        </button>
       )}
     </div>
   );

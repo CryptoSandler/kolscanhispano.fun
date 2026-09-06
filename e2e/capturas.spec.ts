@@ -177,7 +177,9 @@ for (const { name, viewport } of SIZES) {
       const dialog = page.locator("dialog.modal-connect");
       await expect(dialog).toBeVisible({ timeout: 30_000 });
       // Waits for the row, so the shot is never of an empty dialog.
-      await expect(dialog.getByText("Prueba Solana 1")).toBeVisible();
+      // La lista es fija desde el 2026-09-06: Phantom, MetaMask, Rabby, y tres
+      // más detrás de `Mostrar más`. No muestra quién está instalada.
+      await expect(dialog.getByText("Phantom")).toBeVisible();
 
       await page.screenshot({ path: `${OUT}/wallet-picker-${name}.png`, fullPage: true });
     });

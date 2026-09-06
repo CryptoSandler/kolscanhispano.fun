@@ -27,60 +27,90 @@ import { installWallets } from "./fake-wallet";
 const PANEL = "dialog.modal-connect";
 
 test.describe("el selector de wallets en /registro", () => {
-  test("lists the installed wallets as soon as the modal opens", async ({ page }) => {
-    // Sin paso previo: `/registro` abre el modal y el modal abre en la lista.
-    await installWallets(page, 2);
+  test("always lists the same three, in the same order, with nothing else on the row", async ({
+    page,
+  }) => {
+    /*
+      **La lista es fija.** Antes mostraba lo que el navegador había encontrado,
+      con secciones y badges, y eso convertía tres marcas en un informe sobre el
+      estado de las extensiones. Un lector que abre esto dos veces ve lo mismo.
+    */
     await page.goto("/registro");
-
     const panel = page.locator(PANEL);
     await expect(panel).toBeVisible({ timeout: 30_000 });
-    await expect(panel.getByText("Prueba Solana 1")).toBeVisible();
-    await expect(panel.getByText("Prueba Solana 2")).toBeVisible();
-    // Abrirlo no conecta nada.
-    await expect(page.getByText("Casi listo")).toHaveCount(0);
+
+    const names = await panel.locator(".wallet-choice-name").allTextContents();
+    expect(names).toEqual(["Phantom", "MetaMask", "Rabby"]);
+
+    // Nada anuncia antes del clic si está instalada ni en qué cadena firma.
+    await expect(panel.locator(".wallet-choice-chain")).toHaveCount(0);
+    await expect(panel.getByText("Detectada")).toHaveCount(0);
+    await expect(panel.getByText("Instalar")).toHaveCount(0);
   });
 
-  test("groups the installed wallets under `Instaladas`", async ({ page }) => {
-    await installWallets(page, 2);
+  test("`Mostrar más` reveals the other three in the same format", async ({ page }) => {
     await page.goto("/registro");
-
-    const panel = page.locator(PANEL);
-    await expect(panel.getByText("Instaladas")).toBeVisible({ timeout: 30_000 });
-  });
-
-  /**
-   * El caso Rabby. La wallet EVM-only se registra bien y no aparece porque no
-   * declara ninguna cadena de Solana — no porque acá se sepa su nombre.
-   */
-  test("leaves an EVM-only wallet out of the installed list", async ({ page }) => {
-    await installWallets(page, 2);
-    await page.goto("/registro");
-
     const panel = page.locator(PANEL);
     await expect(panel).toBeVisible({ timeout: 30_000 });
-    await expect(panel.getByText("Prueba Solo EVM")).toHaveCount(0);
-    // Dos filas detectadas; las de `Otras` son enlaces, no botones.
-    await expect(panel.locator("button.wallet-choice")).toHaveCount(2);
+
+    await panel.getByRole("button", { name: "Mostrar más" }).click();
+
+    const names = await panel.locator(".wallet-choice-name").allTextContents();
+    expect(names).toEqual(["Phantom", "MetaMask", "Rabby", "Backpack", "Solflare", "Trust Wallet"]);
+    await expect(panel.locator(".wallet-choice-chain")).toHaveCount(0);
   });
 
-  /**
-   * **`Otras` cuando no hay nada instalado.**
-   *
-   * Antes esto era un mensaje de error. Ahora es la sección que el estándar
-   * pone en su lugar: las wallets que se pueden instalar, con su enlace. Un
-   * lector sin extensiones no se encuentra con un fallo — se encuentra con lo
-   * que puede hacer.
-   */
-  test("offers wallets to install when none is present", async ({ page }) => {
+  test("the list looks the same whether or not a wallet is installed", async ({ page }) => {
+    // La lista no dice quién está: es la decisión del dueño, y es lo que hace
+    // que la pantalla sea estable entre dos lectores distintos.
+    await installWallets(page, 2);
     await page.goto("/registro");
-
     const panel = page.locator(PANEL);
     await expect(panel).toBeVisible({ timeout: 30_000 });
-    await expect(panel.getByText("Otras")).toBeVisible();
-    await expect(panel.getByText("MetaMask")).toBeVisible();
-    await expect(panel.locator("a.wallet-choice").first()).toHaveAttribute("href", /metamask/);
-    // Y nada detectado, porque no hay nada.
-    await expect(panel.getByText("Instaladas")).toHaveCount(0);
+
+    const names = await panel.locator(".wallet-choice-name").allTextContents();
+    expect(names).toEqual(["Phantom", "MetaMask", "Rabby"]);
+    await expect(panel.getByText("Detectada")).toHaveCount(0);
+  });
+
+  test("clicking an installed wallet connects and carries the flow on", async ({ page }) => {
+    await installWallets(page, 2);
+    await page.goto("/registro");
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+
+    await panel.getByRole("button", { name: "Phantom" }).click();
+
+    // Mismo panel: no se abrió nada encima ni se navegó.
+    await expect(panel).toBeVisible();
+    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+  });
+
+  test("clicking a wallet that is not installed says so, after the click", async ({ page }) => {
+    /*
+      Sin extensiones, tocar `Phantom` abre su página oficial en otra pestaña y
+      deja la línea debajo de esa fila. **Después del clic**, nunca antes.
+    */
+    await page.goto("/registro");
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText("Instálala y vuelve a intentar")).toHaveCount(0);
+
+    /*
+      Se mide la línea y no la pestaña. `window.open` no levanta un evento `page`
+      de forma confiable en un contexto de Playwright —el caso esperó 30 s por
+      uno que no llegó— y lo que importa acá es lo que el lector ve en el panel,
+      no cuántas pestañas abrió el navegador. Que la URL sea la oficial lo fija
+      la lista en `wallet-step.tsx` y lo mira una revisión, no un test de humo.
+    */
+    await panel.getByRole("button", { name: "Phantom" }).click();
+
+    await expect(panel.getByText("Instálala y vuelve a intentar")).toBeVisible();
+    // Y sólo en esa fila.
+    await expect(panel.locator(".wallet-absent")).toHaveCount(1);
+    // Sin navegar: el panel sigue abierto y en la lista.
+    await expect(panel).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/registro");
   });
 
   test("Esc closes the panel without connecting anything", async ({ page }) => {
@@ -95,52 +125,31 @@ test.describe("el selector de wallets en /registro", () => {
   });
 
   /**
-   * Elegir una wallet corre el flujo real hasta donde el navegador puede: la
-   * página pide el nonce, arma el texto de la prueba y se lo da a `signMessage`.
-   * La wallet devuelve una firma fija, así que el servidor la va a rechazar
-   * después — que es correcto y no es lo que este caso mide.
-   */
-  test("picking a wallet carries the flow to the last step", async ({ page }) => {
-    await installWallets(page, 2);
-    await page.goto("/registro");
-    await page.locator(PANEL).getByRole("button", { name: /Prueba Solana 2/ }).click();
-
-    // Sigue siendo el mismo panel: no se abrió nada encima ni se navegó.
-    await expect(page.locator(PANEL)).toBeVisible();
-    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
-  });
-
-  /**
    * `Casi listo` son tres controles y un botón, y nada más.
    *
    * Era un muro de texto: cada control arrastraba dos o tres frases y el CTA
-   * quedaba fuera de pantalla a 390. `docs/copy.md` fija ahora una línea de
-   * ayuda por control.
+   * quedaba fuera de pantalla a 390. `docs/copy.md` fija una línea de ayuda por
+   * control.
    */
   test("the last step is three controls and one primary button", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.locator(PANEL).getByRole("button", { name: /Prueba Solana 2/ }).click();
+    await page.locator(PANEL).getByRole("button", { name: "Phantom" }).click();
     await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
 
     const panel = page.locator(PANEL);
-    // La fila de la wallet, con su toggle.
     await expect(panel.locator(".almost-wallet")).toHaveCount(1);
     await expect(panel.getByRole("button", { name: "Privada" })).toBeVisible();
-    // El campo del handle.
     await expect(panel.getByPlaceholder("@usuario")).toBeVisible();
-    // Un solo CTA primario.
     await expect(panel.locator(".connect-cta")).toHaveCount(1);
     await expect(panel.getByRole("button", { name: "Entrar al ranking" })).toBeVisible();
-    // Sin signos de admiración, que es lo que pedía `docs/copy.md`.
     await expect(panel.getByText("¡Casi listo!")).toHaveCount(0);
   });
 
   test("the visibility toggle starts private and says so", async ({ page }) => {
-    // Privada por defecto: publicar es una decisión, no un default.
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.locator(PANEL).getByRole("button", { name: /Prueba Solana 2/ }).click();
+    await page.locator(PANEL).getByRole("button", { name: "Phantom" }).click();
     await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
 
     const toggle = page.locator(PANEL).getByRole("button", { name: "Privada" });
@@ -150,5 +159,60 @@ test.describe("el selector de wallets en /registro", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  /*
+    **Una wallet detectada que no está en la lista fija.**
+
+    Glow, OKX, la que sea: si el navegador la anunció, se puede firmar con ella,
+    y esconderla sería ofrecer menos de lo que hay. Va al final de `Mostrar más`
+    con el ícono que anunció, y **no** empuja a las que siempre están: la lista
+    fija es fija justamente para ser la misma en dos lectores distintos.
+  */
+  test("appends a detected wallet that is not on the fixed list", async ({ page }) => {
+    await installWallets(page, 2, ["Glow", "Backpack"]);
+    await page.goto("/registro");
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+
+    // Cerrada, la lista no cambió: Glow no se cuela arriba.
+    expect(await panel.locator(".wallet-choice-name").allTextContents()).toEqual([
+      "Phantom",
+      "MetaMask",
+      "Rabby",
+    ]);
+
+    await panel.getByRole("button", { name: "Mostrar más" }).click();
+
+    // Y desplegada, aparece al final.
+    expect(await panel.locator(".wallet-choice-name").allTextContents()).toEqual([
+      "Phantom",
+      "MetaMask",
+      "Rabby",
+      "Backpack",
+      "Solflare",
+      "Trust Wallet",
+      "Glow",
+    ]);
+    // Mismo formato: sin chips.
+    await expect(panel.locator(".wallet-choice-chain")).toHaveCount(0);
+  });
+
+  test("without it, the expanded list is exactly the fixed six", async ({ page }) => {
+    // La otra mitad del caso de arriba: sin nada raro instalado, la lista es la
+    // fija y nada más.
+    await page.goto("/registro");
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await panel.getByRole("button", { name: "Mostrar más" }).click();
+
+    expect(await panel.locator(".wallet-choice-name").allTextContents()).toEqual([
+      "Phantom",
+      "MetaMask",
+      "Rabby",
+      "Backpack",
+      "Solflare",
+      "Trust Wallet",
+    ]);
   });
 });
