@@ -1,3 +1,4 @@
+import { isAdmin } from "@/lib/admin";
 import { readFeedPage, readFeedValidator, type FeedCursor } from "@/lib/feed";
 import { rateLimited } from "@/lib/rate-limit";
 
@@ -52,6 +53,26 @@ function parseCursor(raw: string): FeedCursor | null {
  * polls.
  */
 export async function GET(request: Request): Promise<Response> {
+  /*
+    **Desde el 2026-09-06 esta ruta es de admin, y ya no es pública.**
+
+    Decisión del dueño: una operación individual publica el token, el monto
+    exacto y la hora, y con esas tres cosas cualquiera encuentra la wallet en el
+    explorador. Eso contradice lo que el modal de conexión promete —*"tus
+    wallets nunca se publican"*—, porque publicar la operación publica la wallet
+    por un camino más largo. `DECISIONES.md`, 2026-09-06.
+
+    El feed sigue existiendo para operar, detrás de `ADMIN_TOKEN`, en
+    `/admin/en-vivo`. Lo que desaparece es el acceso anónimo.
+
+    **El guard va antes del rate limit** y no después: un 401 no debe costar una
+    consulta, y el limitador existe para proteger a esta ruta de un cliente que
+    la puede llamar. Ahora no la puede llamar nadie sin token.
+  */
+  if (!isAdmin(request.headers.get("authorization"))) {
+    return new Response("unauthorized", { status: 401 });
+  }
+
   const limited = await rateLimited(request, "feed");
   if (limited) return limited;
 

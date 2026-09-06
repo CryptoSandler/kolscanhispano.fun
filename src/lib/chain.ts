@@ -146,3 +146,28 @@ export function canonicalAddress(address: string, chain: Chain): string {
   if (!pattern.test(trimmed)) throw new Error(`not a valid address for chain ${chain}`);
   return isEvm(chain) ? trimmed.toLowerCase() : trimmed;
 }
+
+/**
+ * Qué cadena puede ser una dirección pegada, mirando sólo su forma.
+ *
+ * Lo pide el campo de "+ Agregar" del perfil: el lector pega y el formulario
+ * decide sin preguntarle nada que pueda deducir. `0x` más 40 hex es EVM, y ahí
+ * **hay que preguntar cuál** — la misma dirección es una wallet distinta en
+ * Robinhood, BNB y Ethereum (`migrations/011` lo hace explícito con
+ * `UNIQUE (chain, address_hmac)`). Base58 de 32 a 44 es Solana y no hay nada
+ * que preguntar.
+ *
+ * Devuelve **las cadenas activas** que encajan, no todas las que existirían: una
+ * opción por una cadena apagada es un control que no funciona.
+ *
+ * Esto **no** valida que la dirección exista ni que sea de quien la pega. Sólo
+ * dice qué forma tiene; lo demás lo deciden el índice ciego (que no esté tomada)
+ * y la firma (que sea suya).
+ */
+export function chainsForAddress(address: string, env: ChainEnv = process.env): Chain[] {
+  const trimmed = address.trim();
+  const active = activeChains(env);
+  if (EVM_ADDRESS.test(trimmed)) return active.filter((chain) => isEvm(chain));
+  if (BASE58_ADDRESS.test(trimmed)) return active.filter((chain) => chain === "solana");
+  return [];
+}

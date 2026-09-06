@@ -26,7 +26,7 @@ test.describe("the wallet chooser on /registro", () => {
     await installWallets(page, 1);
     await page.goto("/registro");
 
-    await page.getByRole("button", { name: "Conectar wallet" }).click();
+    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
     await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
     await expect(page.getByText("¡Casi listo!")).toBeVisible({ timeout: 30_000 });
@@ -41,7 +41,7 @@ test.describe("the wallet chooser on /registro", () => {
     await installWallets(page, 2);
     await page.goto("/registro");
 
-    await page.getByRole("button", { name: "Conectar wallet" }).click();
+    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
     const dialog = page.locator("dialog.modal-wallets");
     await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
@@ -59,7 +59,7 @@ test.describe("the wallet chooser on /registro", () => {
   test("leaves an EVM-only wallet out of the chooser", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Conectar wallet" }).click();
+    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
     const dialog = page.locator("dialog.modal-wallets");
     await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
@@ -69,7 +69,7 @@ test.describe("the wallet chooser on /registro", () => {
 
   test("says so, and opens nothing, when no wallet is installed", async ({ page }) => {
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Conectar wallet" }).click();
+    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
     await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
     // `.state-error` and not `getByRole("alert")`: Next injects its own
@@ -95,14 +95,14 @@ test.describe("the wallet chooser on /registro", () => {
   test("Esc closes the chooser without connecting anything", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Conectar wallet" }).click();
+    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
     await expect(page.locator("dialog.modal-wallets")).toHaveAttribute("open", "");
 
     await page.keyboard.press("Escape");
 
     await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
     // Still on the first step: nothing was connected, so no wallet list rendered.
-    await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect Wallet" }).last()).toBeVisible();
   });
 
   /**
@@ -114,7 +114,7 @@ test.describe("the wallet chooser on /registro", () => {
   test("picking from the chooser carries the flow past the connect step", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Conectar wallet" }).click();
+    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
     await page.getByRole("button", { name: "Prueba Solana 2" }).click();
 
     await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);

@@ -34,10 +34,26 @@ export function fiatTotal(
   rate: ArsRate | null,
   sign: "signed" | "unsigned" = "unsigned",
 ): string | null {
-  if (fiat === "usd") {
+  if (fiat === "usd" || rate === null) {
+    /*
+      **Sin cotización se muestra el dólar, no un guión.**
+
+      Decisión del dueño, 2026-09-06, y viene de mirar la pantalla: sin
+      cotización cada fila imprimía `(—)`, y una columna entera de guiones no se
+      lee como *"falta la cotización del peso"* — se lee como *"este sitio no
+      tiene datos"*. La cifra en dólares existe, está medida y es la misma que
+      el ranking ordena; esconderla porque falta una conversión es perder el
+      dato bueno por culpa del que falta.
+
+      El aviso va **una vez**, arriba de la lista (`ARS no disponible:
+      cotización vencida`), y no una vez por fila. La ausencia se nombra en el
+      lugar donde se explica, no en cada casilla donde se nota.
+
+      Esto no toca la otra ausencia: un KOL cuyo PnL no cotiza en **ningún**
+      lado sigue mostrando `(—)`, porque ahí no hay cifra de la que caer.
+    */
     return sign === "signed" ? formatSignedUsd(usdText) : formatUnsignedUsd(usdText);
   }
-  if (rate === null) return null;
   const pesos = usdToArs(usdText, rate.rate);
   return sign === "signed" ? formatSignedArs(pesos) : formatUnsignedArs(pesos);
 }

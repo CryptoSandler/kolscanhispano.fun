@@ -79,3 +79,49 @@ Any listed KOL can ask to be removed and it will be honoured. Removal is the adm
 operation: the profile disappears from every public surface, including already-closed leaderboards,
 indexing stops, and their addresses leave the Helius webhook. The rows and their audit trail stay in
 the database; they are not published anywhere.
+
+
+# Qué protege cada capa, y qué no — 2026-09-06
+
+Escrito porque un documento de seguridad que sólo enumera defensas es un
+documento que se lee como una promesa. Cada capa dice acá **contra quién**
+sirve, y la última sección dice contra quién no sirve ninguna.
+
+## Las capas que hay hoy
+
+| Capa | Protege contra | **No** protege contra |
+|---|---|---|
+| `address_enc`: AES-GCM con AAD ligada al id de la fila | Un dump de la base, una réplica, un backup de Neon filtrado — la clave vive en Vercel, no en Postgres | Cualquiera que tenga la app corriendo o sus variables de entorno |
+| `WALLET_HMAC_KEY` distinta de `WALLET_ENC_KEY` | Que quien obtenga una de las dos pueda hacer el trabajo de la otra: el índice ciego no se puede construir con la clave de cifrado ni al revés | Que se filtren las dos, que viven en el mismo lugar |
+| Índice ciego (HMAC) en vez de la dirección en claro | Buscar por dirección sin descifrar; y que un `WHERE address = …` deje la dirección en un log de consultas | Un atacante que ya tiene la clave del HMAC y una lista de direcciones candidatas: puede confirmar cuáles están |
+| `public-wallets.ts` como único módulo que descifra para superficie pública | Que una ruta nueva publique una dirección por descuido | Un cambio deliberado en ese módulo |
+| `is_public` por wallet | Que se publique una dirección que su dueño no eligió publicar | Nada, si el dueño la publica |
+| Sin operaciones individuales en superficie pública (2026-09-06) | Reconstruir una transacción desde el sitio y llegar a la wallet por el explorador | Que alguien mire la cadena directamente: las direcciones públicas son públicas |
+| `no-money-path.test.ts` | Que una API que construye o manda transacciones se vuelva importable | Un atacante que ya ejecuta código en el proceso |
+| Rate limit por IP y bucket | Barrido anónimo de las rutas públicas | Un atacante distribuido, o uno con el token de admin |
+| `ADMIN_TOKEN` comparado en tiempo constante | Adivinar el token midiendo tiempos | Un token filtrado: no tiene expiración |
+
+## Lo que ninguna capa protege, y se dice
+
+**El operador con la clave y la base puede descifrar todo.** Nosotros. No hay
+nada acá que lo impida, ninguna de estas capas lo intenta, y un documento que
+sugiriera lo contrario sería peor que no tener documento.
+
+Lo que este sistema protege es **el vínculo entre una dirección y un handle de
+X** —que es lo que tiene valor, porque las direcciones ya son públicas en la
+cadena— y lo protege **contra terceros**: un dump sin las variables de entorno,
+una superficie pública, un backup filtrado, un barrido anónimo.
+
+Las otras cuatro cosas que no cubre, dichas en voz alta:
+
+1. **Vercel, o quien tenga sus variables de entorno**, tiene la clave.
+2. **Ejecución de código en el proceso** (RCE, una dependencia comprometida) lee
+   lo que el proceso lee, que es todo.
+3. **`ADMIN_TOKEN` no expira.** Un token filtrado sirve hasta que alguien lo
+   rota a mano.
+4. **`public-surfaces.test.ts` es un escaneo de código**, no una prueba de
+   comportamiento: atrapa la regresión distraída, no a alguien decidido.
+
+La ronda del 2026-09-06 (`docs/round-hardening-wallets.md`) discute qué de esto
+vale la pena cerrar y en qué orden, y por qué tres de las siete capas propuestas
+no cambian ninguna de estas cuatro filas.

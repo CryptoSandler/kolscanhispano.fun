@@ -3261,7 +3261,7 @@ a.cta {
      que dos pasadas seguidas casi nunca traen el mismo par de colores. */
   animation:
     shimmer-flow 4s linear infinite,
-    shimmer-nations 69s linear infinite;
+    shimmer-nations 16s linear infinite;
   pointer-events: none;
 }
 
@@ -3270,31 +3270,44 @@ a.cta {
   100% { background-position: -200% 0%; }
 }
 
+/*
+  **Dos paletas, y cada una se tiene que leer.**
+
+  Decisión del dueño, 2026-09-06: sólo España (rojo `#AA151B` / amarillo
+  `#F1BF00`) y Argentina (celeste `#74ACDF` / blanco), alternándose. Las otras 21
+  banderas salieron del ciclo y quedan abajo, comentadas, por si vuelven.
+
+  **El problema no era cuántas eran sino cómo pasaban.** Los 23 stops estaban
+  repartidos parejo y la animación interpola de forma continua, así que en
+  cualquier momento dado lo que se veía era una mezcla entre dos banderas — un
+  degradado pastel que no era ninguna. Con dos paletas eso empeoraría: la mitad
+  del ciclo sería un celeste sucio entre el rojo y el celeste.
+
+  La forma de arreglarlo es **sostener y saltar**: cada paleta se queda quieta
+  casi la mitad del ciclo y cambia en un 2 % de tiempo. Los pares de stops con
+  el mismo valor (`0%`/`46%`) son la parte que sostiene; el salto corto entre
+  `46%` y `50%` es lo único que interpola, y a esa velocidad se lee como un
+  cambio y no como una mezcla.
+
+  Las 21 que salieron, si algún día vuelven:
+
+    mexico       #006341 #FFFFFF #CE1126      colombia   #FCD116 #003893 #CE1126
+    chile        #0039A6 #FFFFFF #D52B1E      peru       #D91023 #FFFFFF #D91023
+    venezuela    #FCE300 #00247D #CF142B      uruguay    #0038A8 #FFFFFF #FCD116
+    paraguay     #D52B1E #FFFFFF #0038A8      bolivia    #D52B1E #F9E300 #007934
+    ecuador      #FFDD00 #0072CE #EF3340      guatemala  #4997D0 #FFFFFF #4997D0
+    honduras     #0073CF #FFFFFF #0073CF      elsalvador #0F47AF #FFFFFF #0F47AF
+    nicaragua    #0067C6 #FFFFFF #0067C6      costarica  #002B7F #FFFFFF #CE1126
+    panama       #005293 #FFFFFF #D21034      cuba       #002A8F #FFFFFF #CF142B
+    dominicana   #002D62 #FFFFFF #CE1126      puertorico #0050F0 #FFFFFF #ED0000
+    guineaecuatorial #3E9A00 #FFFFFF #E32118
+*/
 @keyframes shimmer-nations {
-  0.0% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* espana */
-  4.348% { --shine-1: #75AADB; --shine-2: #FFFFFF; --shine-3: #F6B40E; } /* argentina */
-  8.696% { --shine-1: #006341; --shine-2: #FFFFFF; --shine-3: #CE1126; } /* mexico */
-  13.043% { --shine-1: #FCD116; --shine-2: #003893; --shine-3: #CE1126; } /* colombia */
-  17.391% { --shine-1: #0039A6; --shine-2: #FFFFFF; --shine-3: #D52B1E; } /* chile */
-  21.739% { --shine-1: #D91023; --shine-2: #FFFFFF; --shine-3: #D91023; } /* peru */
-  26.087% { --shine-1: #FCE300; --shine-2: #00247D; --shine-3: #CF142B; } /* venezuela */
-  30.435% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* espana */
-  34.783% { --shine-1: #0038A8; --shine-2: #FFFFFF; --shine-3: #FCD116; } /* uruguay */
-  39.13% { --shine-1: #D52B1E; --shine-2: #FFFFFF; --shine-3: #0038A8; } /* paraguay */
-  43.478% { --shine-1: #D52B1E; --shine-2: #F9E300; --shine-3: #007934; } /* bolivia */
-  47.826% { --shine-1: #FFDD00; --shine-2: #0072CE; --shine-3: #EF3340; } /* ecuador */
-  52.174% { --shine-1: #4997D0; --shine-2: #FFFFFF; --shine-3: #4997D0; } /* guatemala */
-  56.522% { --shine-1: #0073CF; --shine-2: #FFFFFF; --shine-3: #0073CF; } /* honduras */
-  60.87% { --shine-1: #75AADB; --shine-2: #FFFFFF; --shine-3: #F6B40E; } /* argentina */
-  65.217% { --shine-1: #0F47AF; --shine-2: #FFFFFF; --shine-3: #0F47AF; } /* elsalvador */
-  69.565% { --shine-1: #0067C6; --shine-2: #FFFFFF; --shine-3: #0067C6; } /* nicaragua */
-  73.913% { --shine-1: #002B7F; --shine-2: #FFFFFF; --shine-3: #CE1126; } /* costarica */
-  78.261% { --shine-1: #005293; --shine-2: #FFFFFF; --shine-3: #D21034; } /* panama */
-  82.609% { --shine-1: #002A8F; --shine-2: #FFFFFF; --shine-3: #CF142B; } /* cuba */
-  86.957% { --shine-1: #002D62; --shine-2: #FFFFFF; --shine-3: #CE1126; } /* dominicana */
-  91.304% { --shine-1: #0050F0; --shine-2: #FFFFFF; --shine-3: #ED0000; } /* puertorico */
-  95.652% { --shine-1: #3E9A00; --shine-2: #FFFFFF; --shine-3: #E32118; } /* guineaecuatorial */
-  100% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* espana, cierra el ciclo */
+  0%   { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* españa */
+  46%  { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; }
+  50%  { --shine-1: #74ACDF; --shine-2: #FFFFFF; --shine-3: #74ACDF; } /* argentina */
+  96%  { --shine-1: #74ACDF; --shine-2: #FFFFFF; --shine-3: #74ACDF; }
+  100% { --shine-1: #AA151B; --shine-2: #F1BF00; --shine-3: #AA151B; } /* cierra el ciclo */
 }
 
 /*
@@ -3323,14 +3336,59 @@ a.cta {
   Visible en todos los anchos, a diferencia del de `milliondollarpage`, que se
   esconde por debajo de 1400 porque allá vive en una franja que se apila.
 */
+/*
+  **El crédito es un badge flotante, no una línea del pie.**
+
+  Decisión del dueño, 2026-09-06, y el mismo componente se copia después a los
+  otros repos no-doxx. Sale del flujo: `position: fixed` a 16 px de las dos
+  esquinas de abajo a la derecha, fondo blanco, texto oscuro, radio completo y
+  una sombra suave que lo despega de lo que tenga detrás.
+
+  Fondo blanco a propósito y no el violeta de antes: el badge se apoya sobre
+  cualquier cosa que haya en esa esquina —una fila, una tarjeta, el fondo— y el
+  blanco es el único que se lee igual contra todos. Contraste del texto
+  `#111315` sobre `#FFFFFF`: 18,62:1.
+
+  `z-index` por debajo de los diálogos: un `<dialog>` abierto con `showModal()`
+  vive en el top layer, así que no hay número que lo tape — pero el backdrop sí
+  lo cubre, que es lo correcto.
+*/
 .built-by {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
-  color: #ab9ff2;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111315;
   font-size: 12px;
+  font-weight: 600;
   text-decoration: none;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.28);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.built-by:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.34);
+}
+
+.built-by:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A 390 el badge no puede taparle la última fila al lector. */
+@media (max-width: 430px) {
+  .built-by {
+    right: 12px;
+    bottom: 12px;
+    padding: 6px 10px;
+  }
 }
 
 .built-by:hover {
@@ -3437,7 +3495,43 @@ a.cta {
   los 4 px. Lo que cede es la celda de la wallet, que tiene su propio panel
   debajo para lo que no entra.
 */
+/*
+  **La identidad se trunca; nunca invade las columnas de monto.**
+
+  Los tres slots de cadena y el fiat son pistas fijas de 520 px, y la columna de
+  identidad es `minmax(0, 1fr)`. El `0` de ese `minmax` es lo que le permite
+  encogerse — sin él, un nombre largo la empuja y la fila se desborda hacia la
+  primera columna de montos, que es lo que pasaba con `prueba miembro 2`: el
+  chip EVM terminaba debajo de `+0,42 ETH`.
+
+  El orden de sacrificio es **nombre primero, chip después**: el nombre puede
+  cortarse con elipsis porque sigue siendo legible cortado, y el chip ya es una
+  dirección truncada — cortarlo otra vez lo vuelve ruido. Por eso el nombre
+  encoge (`min-width: 0` y `flex: 1 1 auto`) y el chip no (`flex: none`), y la
+  línea entera oculta lo que se pase.
+
+  **Decía `flex: none` en el nombre**, y eso era de cuando el panel de wallets
+  vivía dentro de la línea y al abrirse le robaba 4 px al nombre. El panel salió
+  del flujo el 2026-09-05, así que esa razón ya no existe — y lo que quedaba era
+  un nombre que no se podía encoger empujando todo lo demás.
+*/
+.identity-line {
+  overflow: hidden;
+}
+
 .identity-line .name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* El chip conserva su ancho: ya es una dirección truncada. */
+.identity-line .wallet-cell,
+.identity-line .cabal-chip,
+.identity-line .x-glyph,
+.identity-line .verified-tick {
   flex: none;
 }
 
@@ -3562,21 +3656,32 @@ a.cta {
 
 
 /*
-  **`Connect Wallet` como modal.**
+  **`Connect Wallet` como modal, y es una caja.**
 
   Hereda del `modal-kol` todo lo que un lector ya aprendió —fondo, Esc, clic
   afuera, la × arriba a la derecha— porque dos convenciones de cierre en un
   mismo sitio es una que se olvida. Lo que cambia es el ancho: acá hay un
   formulario de una columna, no una tarjeta de dos.
+
+  **Los tokens son los del molde, y la primera versión usó dos que no existen.**
+  Decía `var(--surface)` y `var(--line)`; los que este sitio define son
+  `--surface-1` y `--hairline`. Una variable CSS inexistente no es un error: la
+  propiedad simplemente no se aplica, así que el diálogo quedó **transparente**
+  y el texto flotaba sobre la página. Se ve en el gate y no en ninguna suite,
+  que es exactamente la clase de cosa para la que sirve un gate visual.
 */
 .modal-connect {
   width: min(440px, calc(100vw - 32px));
   max-height: min(88vh, 760px);
+  margin: auto;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--surface-1);
   color: var(--text);
+  /* La sombra es lo que despega la caja del fondo oscurecido; sin ella el
+     panel y el backdrop se leen como una sola superficie. */
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.55);
   overflow: auto;
 }
 
@@ -3595,6 +3700,24 @@ a.cta {
 }
 
 /*
+  El botón del modal es el del header: violeta Phantom con texto oscuro.
+
+  Antes heredaba el celeste de `.cta`, y el resultado eran dos botones de
+  "conectar" de dos colores distintos en la misma pantalla — el del header y el
+  del modal que ese header abre. Contraste medido: 7,96:1.
+*/
+.modal-connect .cta {
+  background: #ab9ff2;
+  color: #111315;
+  border: 0;
+}
+
+.modal-connect .cta:hover:not(:disabled) {
+  background: #9a8ce8;
+}
+
+
+/*
   La línea de privacidad: primera pantalla, antes de cualquier control.
 
   Va en el color del texto y no en el secundario. Es el argumento por el que
@@ -3606,4 +3729,301 @@ a.cta {
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
+}
+
+/*
+  **El perfil del KOL.** Copia el flujo del molde (`docs/clone-map.md` §11) y no
+  su estética: allá los tamaños se mezclan y todo se apoya sobre el mismo gris.
+
+  La jerarquía acá es de tres niveles y uno solo por nivel — cabecera 20, título
+  de sección 12 en `label`, contenido 14 — y el espaciado es 8/16/24, el mismo
+  ritmo que el resto del sitio. Las wallets son tarjetas con el fondo y el borde
+  de las filas del ranking, así que la pantalla se lee como parte del producto y
+  no como un panel aparte.
+*/
+.modal-profile {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(88vh, 820px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  color: var(--text);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.55);
+  overflow: auto;
+}
+
+.modal-profile::backdrop {
+  background: rgb(0 0 0 / 0.62);
+}
+
+.modal-profile .modal-card {
+  position: relative;
+  padding: 24px;
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.profile-avatar {
+  border-radius: 999px;
+  flex: none;
+}
+
+.profile-head .headline {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.profile-handle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.profile-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.profile-chain {
+  margin-bottom: 16px;
+}
+
+.chain-badge {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.profile-wallets {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* La tarjeta de una wallet: el mismo fondo y borde que una fila del ranking. */
+.profile-wallet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface-1));
+  font-size: 14px;
+}
+
+.profile-wallet__address {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.chip-validated,
+.chip-pending {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* `validada` es la única etiqueta que el molde publica. */
+.chip-validated {
+  background: color-mix(in srgb, var(--gain) 18%, transparent);
+  color: var(--gain);
+}
+
+.chip-pending {
+  background: color-mix(in srgb, var(--text-dim) 18%, transparent);
+  color: var(--text-dim);
+}
+
+/* El mensaje de wallet equivocada ocupa la fila entera, debajo. */
+.profile-wallet__message {
+  flex: 1 0 100%;
+  margin: 4px 0 0;
+}
+
+.eye {
+  flex: none;
+  display: inline-flex;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.eye.is-on {
+  color: var(--accent);
+}
+
+.eye:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.eye:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.profile-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.profile-add-form input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+/*
+  El CTA del perfil es el violeta del header, no el celeste de `.cta`.
+
+  En la captura del gate quedaba un `+ Agregar` celeste debajo de un chip de
+  usuario violeta, en la misma pantalla: dos acciones primarias de dos colores
+  sin que la diferencia significara nada. Contraste `#111315` sobre `#AB9FF2`:
+  7,96:1.
+*/
+.modal-profile .cta {
+  background: #ab9ff2;
+  color: #111315;
+  border: 0;
+}
+
+.modal-profile .cta:hover:not(:disabled) {
+  background: #9a8ce8;
+}
+
+.profile-add {
+  margin-top: 16px;
+}
+
+/*
+  `Validar` y `Ocultar todas` son botones y tienen que leerse como botones.
+
+  Heredaban `.panel-link`, que va en versalitas: en la captura `VALIDAR` parecía
+  una etiqueta apagada al lado de `Esperando validación`, o sea justo lo
+  contrario de la única cosa accionable de esa fila.
+*/
+.modal-profile .panel-link {
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.modal-profile .panel-link:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.modal-profile .panel-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Las dos acciones del pie se ven iguales: son del mismo rango. */
+.profile-actions .segment {
+  flex: 1 1 auto;
+  text-align: center;
+  text-decoration: none;
+  line-height: 1.6;
+}
+
+.profile-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* El chip del header, con sesión. */
+.profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-chip__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--brand-hispano) 20%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.profile-chip__avatar {
+  border-radius: 999px;
+}
+
+.profile-chip__leave {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.profile-chip__open:focus-visible,
+.profile-chip__leave:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A 390 la fila de una wallet se parte antes de desbordar. */
+@media (max-width: 430px) {
+  .modal-profile .modal-card {
+    padding: 16px;
+  }
+
+  .profile-wallet {
+    gap: 6px;
+  }
+
+  .profile-actions {
+    flex-direction: column;
+  }
 }

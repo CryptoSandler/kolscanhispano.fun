@@ -98,11 +98,10 @@ async function openWithPayload(
   return { ...opened, body: await (await response).text() };
 }
 
-/** The trades the payload carries, which is all the scans below need from it. */
-function tradesIn(body: string): { mint: string; signature: string | null }[] {
-  const parsed = JSON.parse(body) as { trades: { mint: string; signature: string | null }[] };
-  return parsed.trades;
-}
+/*
+  `tradesIn` se borró el 2026-09-06: leía la lista de operaciones del payload
+  para comprobar qué mints y qué firmas publicaba. No publica ninguno.
+*/
 
 /** Whether `<body>` is scroll-locked, which is what a modal owes the page behind it. */
 function bodyLocked(page: Page): Promise<boolean> {
@@ -371,99 +370,42 @@ test.describe("focus, which is the half a keyboard user actually feels", () => {
  * spec §3 keeps in cleartext.
  */
 test.describe("spec §7: no wallet address reaches the open modal", () => {
-  test("accounts for every base58 run in a public KOL's modal, and it is its signature", async ({
-    page,
-  }) => {
+  /*
+    **Los tres casos de acá se volvieron dos, y afirman más.**
+
+    Medían la lista de operaciones del modal: que un KOL con wallets visibles
+    publicara mints y firmas y nada más, que uno con wallets ocultas no
+    publicara ninguna firma, y que sus filas dijeran `PRIVADO`. Los tres
+    pasaban.
+
+    `list-defi-trades` se eliminó el 2026-09-06 (`DECISIONES.md`), así que no
+    hay lista, ni firmas, ni mints, ni `PRIVADO` que poner en ningún lado. La
+    promesa dejó de tener casos y excepciones: **el modal no lleva un solo
+    identificador on-chain**, sea de quien sea.
+  */
+  test("carries nothing base58 at all, for a KOL that publishes its wallets", async ({ page }) => {
     const { dialog, body } = await openWithPayload(page, PUBLIC_ROW);
     const html = await dialog.evaluate((node) => node.outerHTML);
 
-    // On the wire first: mints, which spec §3 keeps in cleartext, and
-    // signatures, which §8.2 publishes for a KOL that does not hide its wallets
-    // so its explorer links work. Nothing else — an address above all.
-    const trades = tradesIn(body);
-    expect(trades.length).toBeGreaterThan(0);
-    const published = new Set([
-      ...trades.map((trade) => trade.mint),
-      ...trades.map((trade) => trade.signature).filter((s): s is string => s !== null),
-    ]);
-    expect(findDisallowedBase58(body).sort()).toEqual([...published].sort());
-
-    const runs = findDisallowedBase58(html);
-    // Non-vacuous: this KOL publishes its wallets, so its one seeded trade
-    // carries a real signature and the scan has something to find. A modal that
-    // rendered nothing would otherwise pass this whole describe.
-    expect(runs.length).toBeGreaterThan(0);
-
-    // Every one of them is a signature in an explorer link. An address would be
-    // a run that is not, and so would a mint printed into the markup, and so
-    // would base58 nobody predicted.
-    const linked = [...html.matchAll(/https:\/\/solscan\.io\/tx\/([1-9A-HJ-NP-Za-km-z]+)/g)].map(
-      ([, signature]) => signature,
-    );
-    expect(runs.sort()).toEqual([...new Set(linked)].sort());
+    // Ni en el payload —que es la capa por la que el DOM no puede responder—
+    // ni en el HTML. Ni siquiera el mint: viajaba dentro de la operación.
+    expect(findDisallowedBase58(body)).toEqual([]);
+    expect(findDisallowedBase58(html)).toEqual([]);
+    // Y no hay ninguna fila de operación que pudiera llevarlo.
+    await expect(dialog.locator(".row-trade")).toHaveCount(0);
   });
 
-  test("carries nothing base58 at all in a hidden KOL's modal", async ({ page }) => {
-    // Spec §7: "For hidden KOLs, neither the signature nor the link is
-    // exposed." A signature names the signer in any explorer, so publishing one
-    // while withholding the address publishes the address one click later.
+  test("carries nothing base58 at all for a hidden KOL either", async ({ page }) => {
+    // El mismo caso para el otro KOL, y ahora dicen exactamente lo mismo: que
+    // no haya diferencia entre los dos **es** la propiedad.
     const { dialog, body } = await openWithPayload(page, HIDDEN_ROW);
     const html = await dialog.evaluate((node) => node.outerHTML);
 
-    // The payload, which is the layer the DOM cannot speak for: not one
-    // signature survives serialization for this KOL, and the only base58 left
-    // is the mint. Publishing a hidden KOL's signature publishes its address one
-    // click later, so this is the whole promise rather than a detail of it.
-    const trades = tradesIn(body);
-    expect(trades.length).toBeGreaterThan(0);
-    expect(trades.map((trade) => trade.signature)).toEqual(trades.map(() => null));
-    expect(findDisallowedBase58(body).sort()).toEqual(
-      [...new Set(trades.map((trade) => trade.mint))].sort(),
-    );
-
-    // And the DOM, which carries neither the mint nor anything else base58.
-    await expect(dialog.locator(".row-trade")).not.toHaveCount(0);
+    expect(findDisallowedBase58(body)).toEqual([]);
     expect(findDisallowedBase58(html)).toEqual([]);
-    expect(html).not.toContain("solscan.io");
-  });
-
-  test("reads PRIVADO with a padlock where the wallets are hidden", async ({ page }) => {
-    // DESIGN.md `list-defi-trades`: "where the wallet is hidden the row reads
-    // `PRIVADO` with a padlock instead of a signature link."
-    const { dialog } = await open(page, HIDDEN_ROW);
-
-    const rows = dialog.locator(".row-trade");
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-    // Every row, not the first: one labelled row beside three linked ones would
-    // be the same defect.
-    await expect(dialog.locator(".row-trade .privado")).toHaveCount(count);
-    await expect(dialog.locator(".privado").first()).toContainText("PRIVADO");
-
-    // The card above the list says the same thing as a count, and its padlock
-    // is drawn rather than typed -- DESIGN.md's objection to an emoji medal
-    // applies to an emoji padlock for the same reason: it carries its own
-    // colour, so it can be neither tinted with the text nor kept out of the
-    // green and red reserved for money.
-    // A line in the header since 2026-09-03, where the mould puts a truncated
-    // address chip and we may not. It carries **both** the phrase and the
-    // count: the phrase says the wallets are hidden, the number says how much
-    // operation is behind them.
-    const wallets = dialog.locator(".identity-third");
-    await expect(wallets).toContainText("privada");
-    await expect(wallets).not.toContainText("pública");
-    await expect(wallets).toContainText("Wallets ocultas");
-    await expect(wallets.locator("svg")).toHaveCount(1);
-    expect(await wallets.innerText()).not.toContain("🔒");
-    // Drawn, not typed: an emoji padlock carries its own colour and could be
-    // neither tinted with the text nor kept out of the green and red DESIGN.md
-    // reserves for money.
-    await expect(dialog.locator(".privado svg").first()).toBeAttached();
-
-    // The identity is still public — `b0f2a43`: "the handle is public identity,
-    // the wallet is the secret."
-    await expect(dialog.getByRole("link", { name: /Perfil de Beto Trader en X/ })).toBeVisible();
-    await expect(dialog.locator(".hidden-wallets")).toHaveText("Wallets ocultas");
+    await expect(dialog.locator(".row-trade")).toHaveCount(0);
+    // `PRIVADO` era la etiqueta de una fila que ya no existe.
+    await expect(dialog.getByText("PRIVADO")).toHaveCount(0);
   });
 
   test("prints no truncated address either, which is what both references do", async ({ page }) => {

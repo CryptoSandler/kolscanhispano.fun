@@ -73,7 +73,6 @@ import { addWallet, setWalletVisibility } from "@/lib/wallets";
 import { utcDayString } from "@/lib/windows";
 import { KolDetail } from "./kol-detail";
 import HomePage from "./page";
-import EnVivoPage from "./en-vivo/page";
 
 // Nothing here mounts, so `FeedLive`'s effects never run and its four-second
 // poll is never installed -- which is what lets the real client component be
@@ -436,12 +435,15 @@ beforeAll(async () => {
     );
   }
 
-  // The home page **is** the ranking since 2026-09-03, and the feed moved to
-  // `/en-vivo`. Both are still swept: they are the two public surfaces that
-  // render a KOL, and this file's whole job is that no address reaches either.
-  html =
-    renderToStaticMarkup(await HomePage({ searchParams: Promise.resolve({}) })) +
-    renderToStaticMarkup(await EnVivoPage());
+  /*
+    **Una sola superficie pública que dibuja un KOL: la home.**
+
+    Hasta el 2026-09-06 eran dos, y `/en-vivo` era la otra. Esa ruta ya no
+    renderiza nada —es un 308 a la home— así que llamarla acá tiraba el error de
+    redirección de Next, que es cómo se vio que este archivo todavía la
+    visitaba. Que la ruta redirija lo afirma `public-surfaces.test.ts`.
+  */
+  html = renderToStaticMarkup(await HomePage({ searchParams: Promise.resolve({}) }));
 
   const [feed, leaderboard] = await Promise.all([
     readFeedPage(),
@@ -467,9 +469,13 @@ describe("the fixture is populated, so the assertions below are about a real pag
     expect(html).toContain("KOL-ABIERTO");
     expect(html).toContain("KOL-OCULTO");
     expect(html).toContain("KOL-MIXTO");
-    // Six feed rows and three ranked rows: the empty states are not what is
-    // being scanned.
-    expect(html.match(/class="row-feed/g)).toHaveLength(6);
+    /*
+      Tres filas del ranking; ninguna del feed, porque el feed público se
+      eliminó el 2026-09-06. Lo que se barre ahora es una sola superficie, y las
+      operaciones no están en ninguna — que es una promesa más fuerte que la que
+      este archivo hacía, no una más débil.
+    */
+    expect(html).not.toContain('class="row-feed');
     expect(html.match(/class="row-leaderboard/g)?.length).toBeGreaterThanOrEqual(3);
     expect(html).not.toContain("state-empty");
   });
@@ -503,7 +509,13 @@ describe("the fixture is populated, so the assertions below are about a real pag
     expect(modalHtml).toContain("+18,42 SOL");
     expect(modalHtml).toContain("−4,10 SOL");
     // The hidden KOL's trade rows say so where a signature link would be.
-    expect(modalHtml).toContain("PRIVADO");
+    /*
+      `PRIVADO` era la etiqueta de la fila de operación de un KOL con wallets
+      ocultas. Esa fila se eliminó el 2026-09-06, así que no hay dónde ponerla:
+      **ningún modal publica operaciones**, oculto o no. La promesa que este
+      caso cuidaba se volvió incondicional.
+    */
+    expect(modalHtml).not.toContain("row-trade");
   });
 });
 
@@ -603,11 +615,19 @@ describe("no non-public wallet address reaches the rendered page", () => {
     }
   });
 
-  it("prints no base58 run at all beyond the signatures the spec publishes", () => {
-    // The whole invariant, as one set comparison over the emitted HTML: text,
-    // attributes, `href`s, `img src`s and `data-` attributes alike, because the
-    // scan does not know what an attribute is.
-    expect(findDisallowedBase58(surfaces).sort()).toEqual([...publicSignatures].sort());
+  it("prints no base58 run at all", () => {
+    /*
+      El invariante entero, como una comparación de conjuntos sobre el HTML
+      emitido: texto, atributos, `href`, `img src` y `data-` por igual, porque
+      el barrido no sabe qué es un atributo.
+
+      **El conjunto esperado pasó a ser vacío el 2026-09-06.** Antes eran las
+      firmas que la spec publicaba para las wallets con `is_public`; con
+      `list-defi-trades` eliminado no se publica ninguna firma en ninguna
+      superficie pública, así que lo único base58 que podría quedar es un mint
+      —y los mints no viven en la home.
+    */
+    expect(findDisallowedBase58(surfaces)).toEqual([]);
   });
 
   it("keeps a hidden KOL's signature off the page as well as its address", () => {
@@ -620,7 +640,13 @@ describe("no non-public wallet address reaches the rendered page", () => {
     // surfaces, and `PRIVADO` where the modal's trade row would carry a link.
     expect(html).toContain("Wallets ocultas");
     expect(modalHtml).toContain("Wallets ocultas");
-    expect(modalHtml).toContain("PRIVADO");
+    /*
+      `PRIVADO` era la etiqueta de la fila de operación de un KOL con wallets
+      ocultas. Esa fila se eliminó el 2026-09-06, así que no hay dónde ponerla:
+      **ningún modal publica operaciones**, oculto o no. La promesa que este
+      caso cuidaba se volvió incondicional.
+    */
+    expect(modalHtml).not.toContain("row-trade");
   });
 
   it("carries nothing base58 into the hydration props but mints and public signatures", () => {
@@ -640,11 +666,21 @@ describe("no non-public wallet address reaches the rendered page", () => {
    * that reached a surface is looked up by its blind index and the wallet that
    * signed it is read out of the database.
    */
-  it("publishes a signature only for a wallet whose is_public is persisted", async () => {
+  it("publishes no signature at all, for any wallet", async () => {
+    /*
+      **Se dio vuelta el 2026-09-06.**
+
+      Este caso afirmaba que se publicaba una firma **sólo** para las wallets
+      con `is_public`, y exigía que se publicara al menos una para que el bucle
+      no pasara en vacío. Con `list-defi-trades` eliminado no se publica
+      ninguna: no hay superficie pública que lleve una firma, ni de una wallet
+      pública ni de ninguna otra.
+
+      Lo que queda es la afirmación más fuerte, y sin nada que enumerar: **cero
+      base58 fuera de los mints**.
+    */
     const published = findDisallowedBase58(surfaces);
-    // A fixture that published nothing would pass the loop below vacuously,
-    // which is the failure the whole file is built to avoid.
-    expect(published.length).toBeGreaterThan(0);
+    expect(published).toEqual([]);
 
     for (const signature of published) {
       const rows = await query<{ is_public: boolean }>(
@@ -836,9 +872,9 @@ describe("avatars are keyed by kol_id and served from this origin", () => {
     // row carries one now, so this is the assertion that would fail the day
     // someone keyed the path by a handle or by an address.
     const sources = [...surfaces.matchAll(/<img[^>]+src="([^"]*)"/g)].map(([, src]) => src);
-    // Every feed row and every ranked row, plus the 64px avatar in each modal's
-    // header.
-    expect(sources.length, "an avatar on every row").toBeGreaterThanOrEqual(8);
+    // Cada fila del ranking, más el avatar de 64px de la cabecera de cada modal.
+    // Eran 8 con las filas del feed; el feed público se eliminó el 2026-09-06.
+    expect(sources.length, "an avatar on every row").toBeGreaterThanOrEqual(5);
     for (const src of sources) {
       expect(src).toMatch(/^\/api\/avatar\/[0-9a-f-]{36}$/);
     }

@@ -33,6 +33,16 @@ type Surface = {
   /** The address this surface's cases speak from. Unique per surface. */
   ip: string;
   call: (request: Request) => Promise<Response>;
+  /**
+   * Cabeceras extra que la ruta necesita para llegar al limitador.
+   *
+   * Sólo `/api/feed` la usa: desde el 2026-09-06 pide `ADMIN_TOKEN` y el guard
+   * corre **antes** que el limitador, así que sin token la respuesta es 401 y
+   * el limitador no se ejecuta nunca. Ese orden es deliberado —un 401 no debe
+   * costar una consulta— y significa que para medir el limitador de esta ruta
+   * hay que entrar primero.
+   */
+  headers?: Record<string, string>;
 };
 
 /**
@@ -54,6 +64,7 @@ const SURFACES: Surface[] = [
     bucket: "feed",
     ip: "192.0.2.11",
     call: (request) => feedRoute.GET(request),
+    headers: { authorization: "Bearer token-de-prueba" },
   },
   {
     path: "/api/leaderboard",
@@ -79,8 +90,10 @@ const SURFACES: Surface[] = [
 function requestFrom(surface: Surface, search = ""): Request {
   const url =
     surface.bucket === "leaderboard" ? "?window=diario&unit=usd" : search;
+  // El feed necesita el token para pasar el guard y llegar al limitador.
+  process.env.ADMIN_TOKEN = "token-de-prueba";
   return new Request(`http://localhost${surface.path}${url}`, {
-    headers: { "x-forwarded-for": surface.ip },
+    headers: { "x-forwarded-for": surface.ip, ...(surface.headers ?? {}) },
   });
 }
 

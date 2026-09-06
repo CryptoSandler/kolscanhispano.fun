@@ -1,6 +1,7 @@
 import bs58 from "bs58";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { kolFromSession } from "@/lib/session";
 import { query } from "@/lib/db";
 import { readFeedPage } from "@/lib/feed";
 import { readKolDetail } from "@/lib/kol";
@@ -331,5 +332,43 @@ describe("13. what a refusal carries", () => {
       expect(text).not.toContain(proof.signature);
       expect(text).not.toContain(proof.nonce);
     }
+  });
+
+  /*
+    **Firmar abre la sesión, y sólo firmar.**
+
+    Supersede de spec §6, 2026-09-06. Esta ruta es la única que emite la cookie
+    porque es la única donde se probó la propiedad de una wallet con una firma;
+    cualquier otra que la emitiera sería una forma de entrar sin firmar.
+  */
+  it("issues a session cookie on a successful registration", async () => {
+    const signer = wallet();
+    const response = await submit(
+      post("https://kolscanhispano.fun/api/registro", {
+        handle: "con_sesion",
+        wallets: [await proven(signer)],
+      }),
+    );
+    expect(response.status).toBe(201);
+
+    const cookie = response.headers.get("set-cookie");
+    expect(cookie).toContain("kh_session=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).toContain("Path=/");
+
+    // Y la sesión existe de verdad: la fila es la que manda, no la cookie.
+    const token = /kh_session=([^;]+)/.exec(cookie ?? "")?.[1] ?? null;
+    const body = (await response.json()) as { kolId: string };
+    expect(await kolFromSession(token)).toBe(body.kolId);
+  });
+
+  it("issues no cookie when the registration is refused", async () => {
+    // Un rechazo no puede dejar sesión: sería entrar sin haber probado nada.
+    const response = await submit(
+      post("https://kolscanhispano.fun/api/registro", { handle: "sin_wallets", wallets: [] }),
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 });

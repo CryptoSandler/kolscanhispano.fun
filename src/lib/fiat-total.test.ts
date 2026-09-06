@@ -67,15 +67,26 @@ describe("fiatTotal", () => {
   });
 
   /*
-    **Sin cotización no hay cifra, y no hay cero.**
+    **Sin cotización se cae al dólar, y nunca a un cero ni a un guión.**
 
-    `null` es ausencia y la página la dibuja como ausencia — `(—)`. Un `AR$0`
-    sería un número inventado con toda la apariencia de un dato, que es la
-    forma más cara que tiene un error de estos.
+    Decisión del dueño del 2026-09-06. Antes devolvía `null` y la página
+    dibujaba `(—)` en cada fila; una columna entera de guiones se lee como "no
+    hay datos" y no como "falta la cotización del peso". La cifra en dólares
+    está medida y es la que ordena el ranking, así que se muestra, y el aviso
+    va una sola vez arriba de la lista.
+
+    Lo que sigue prohibido es inventar el peso: no hay `AR$0` por ningún lado.
   */
-  it("returns null rather than a peso figure it cannot compute", () => {
-    expect(fiatTotal("3100.5", "ars", null)).toBeNull();
-    expect(fiatTotal("0", "ars", null)).toBeNull();
+  it("falls back to the dollar figure when there is no rate", () => {
+    expect(fiatTotal("3100.5", "ars", null)).toBe("US$3.100,50");
+    expect(fiatTotal("3100.5", "ars", null, "signed")).toBe("+US$3.100,50");
+    expect(fiatTotal("0", "ars", null)).toBe("US$0,00");
+  });
+
+  it("never invents a peso figure without a rate", () => {
+    for (const sign of ["signed", "unsigned"] as const) {
+      expect(fiatTotal("3100.5", "ars", null, sign)).not.toContain("AR$");
+    }
   });
 
   it("still says zero in dollars, because that zero is measured", () => {

@@ -346,3 +346,32 @@ texto normal y el primero por encima de AAA. El hover era una mezcla con
 `--brand-hispano` que quedó de cuando el botón era translúcido — convertía el
 relleno en un celeste transparente con texto oscuro encima, y era el único
 estado del botón que no pasaba contraste.
+
+## §11 Cómo el molde agrega una segunda wallet — 2026-09-06
+
+**Medido por el dueño, no por mí.** Intenté leerlo desde afuera y no se puede:
+a un cliente anónimo `kolscanbrasil.io` le contesta 404 en `/profile`,
+`/settings`, `/account` y `/wallets`, y el único control de wallet en la página
+pública es `Conectar Wallet`. El flujo vive detrás de su sesión. Las capturas
+son de Fede, logueado como `@eguito`.
+
+**Lo que muestran:**
+
+- Un modal de perfil con **`Minhas Wallets`**.
+- **`+ Adicionar` pega la dirección** — Solana o EVM — y **no pide firma**.
+- Las que sí se firmaron aparecen bajo **`Solana (validadas)`**: la etiqueta
+  pública existe sólo para las firmadas, y las pegadas no llevan contra-etiqueta.
+- Un **ojo por wallet** para mostrarla u ocultarla, y un **`Ocultar todas`**.
+- **`Atualizar PnL`** y **`Exportar PnL Card`**.
+
+**Consecuencia para nosotros, y es un supersede.** El invariante era *"cada
+wallet se prueba con su propia firma"*. El molde firma **una vez, para entrar**,
+y las demás se anotan a mano. Se copia el molde: `DECISIONES.md`, 2026-09-06,
+con el riesgo aceptado escrito ahí — un KOL puede anotar una wallet que no es
+suya, y el admin puede darla de baja.
+
+Las guardas que **no** cambian la UX y sí acotan el daño: una dirección sólo
+puede pertenecer a un KOL (única por índice ciego, y si ya está tomada el
+mensaje lo dice y va a la cola de admin), las agregadas sin firma llevan
+`verified = false` interno y el admin las ve marcadas, y la visibilidad sigue
+siendo por wallet.

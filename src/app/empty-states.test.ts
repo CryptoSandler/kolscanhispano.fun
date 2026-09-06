@@ -174,7 +174,6 @@ function quietDetail(): PublicKolDetail {
     from: "2026-08-25",
     to: "2026-08-26",
     series: [],
-    trades: [],
     // A month with nothing in it, which is the state this fixture is about.
     calendar: { month: "2026-08", days: [], sells: 0 },
   };
@@ -453,12 +452,15 @@ describe("modal-kol's calendar says its empty period in words, not as an empty g
    * sentence before the document carried it and said so; now that it is
    * normative, it is parsed rather than restated, like every other one here.
    */
-  it("says the trade list's empty period in the document's words", () => {
-    const lead = emptyCell("`list-defi-trades`");
+  /*
+    El estado vacío de `list-defi-trades` se fue con la lista, el 2026-09-06.
+    El modal de un período sin operaciones ahora muestra sus agregados en cero,
+    que es lo que queda de ese período: no hay lista que pueda estar vacía.
+  */
+  it("renders no trade list at all, empty or otherwise", () => {
     const html = renderToStaticMarkup(createElement(KolDetail, { detail: quietDetail() }));
-
-    expect(html).toContain(`<p class="state-empty-lead">${lead}</p>`);
     expect(html).not.toContain("row-trade");
+    expect(html).not.toContain("list-defi-trades");
   });
 
 });
@@ -575,5 +577,52 @@ describe("la tilde de verificado", () => {
     expect(html).toContain("verified-tick");
     // El texto es la mitad del punto: una tilde sin explicación es una insignia.
     expect(html).toContain("Handle verificado por tweet firmado");
+  });
+});
+
+/**
+ * **La home en pesos cuando no hay cotización.**
+ *
+ * Decisión del dueño, 2026-09-06: una columna entera de `(—)` se lee como *"este
+ * sitio no tiene datos"* y no como *"falta la cotización del peso"*. El total en
+ * dólares está medido y es el que ordena el ranking, así que se muestra igual, y
+ * la ausencia se nombra una vez arriba de la lista.
+ */
+describe("ARS sin cotización", () => {
+  const rows = [entry(1), entry(2)];
+
+  it("shows the dollar totals, not a column of dashes", () => {
+    const html = renderToStaticMarkup(
+      createElement(LeaderboardTable, {
+        entries: rows,
+        fiat: "ars",
+        rate: null,
+        window: "1d",
+        closed: true,
+      }),
+    );
+
+    expect(html).toContain("US$");
+    expect(html).not.toContain("AR$");
+    // Ni un guión donde hay una cifra medida.
+    expect(html).not.toContain("(—)");
+  });
+
+  it("still shows a dash where nothing quotes at all, which is a different absence", () => {
+    // Un KOL cuyo PnL no cotiza en ninguna cadena no tiene cifra de la que caer:
+    // ahí el guión es correcto y tiene que sobrevivir a este cambio.
+    const unquoted = entry(1, {
+      chains: [{ chain: "solana", realized: "0.42", realizedUsd: null, unpriced: 1 }],
+    });
+    const html = renderToStaticMarkup(
+      createElement(LeaderboardTable, {
+        entries: [unquoted],
+        fiat: "ars",
+        rate: null,
+        window: "1d",
+        closed: true,
+      }),
+    );
+    expect(html).toContain("(—)");
   });
 });

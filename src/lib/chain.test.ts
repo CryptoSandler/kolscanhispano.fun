@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CHAINS,
+  chainsForAddress,
   EVM_CHAIN_IDS,
   activeChains,
   canonicalAddress,
@@ -176,5 +177,39 @@ describe("chain vocabulary", () => {
     expect(isChain("solana")).toBe(true);
     expect(isChain("polygon")).toBe(false);
     expect(isChain("")).toBe(false);
+  });
+});
+
+describe("chainsForAddress", () => {
+  const all = {
+    CHAIN_ROBINHOOD_INGESTION: "on",
+    CHAIN_BNB_INGESTION: "on",
+    CHAIN_ETHEREUM_INGESTION: "on",
+  };
+
+  it("offers every active EVM chain for an 0x address, because the same one is three wallets", () => {
+    // `migrations/011`: UNIQUE (chain, address_hmac). La misma dirección en
+    // Robinhood y en BNB son dos wallets distintas, así que hay que preguntar.
+    const chains = chainsForAddress("0x" + "a".repeat(40), all);
+    expect(chains).toContain("robinhood");
+    expect(chains).toContain("bnb");
+    expect(chains).not.toContain("solana");
+  });
+
+  it("offers only Solana for a base58 address, with nothing to ask", () => {
+    expect(chainsForAddress("So11111111111111111111111111111111111111112", all)).toEqual([
+      "solana",
+    ]);
+  });
+
+  it("offers nothing for something that is neither", () => {
+    for (const junk of ["", "hola", "0x123", "0x" + "z".repeat(40), "l" + "1".repeat(60)]) {
+      expect(chainsForAddress(junk, all), junk).toEqual([]);
+    }
+  });
+
+  it("never offers a chain whose flag is off, which would be a control that does not work", () => {
+    const solanaOnly = chainsForAddress("0x" + "a".repeat(40), {});
+    expect(solanaOnly).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import { openSession, sessionCookie } from "@/lib/session";
 import { randomBytes } from "node:crypto";
 import { isChain, type Chain } from "@/lib/chain";
 import { query } from "@/lib/db";
@@ -136,6 +137,20 @@ export async function POST(request: Request): Promise<Response> {
   const code = verificationCode();
   await query("UPDATE kol SET verification_code = $2 WHERE id = $1", [created.kolId, code]);
 
+  /*
+    **Firmar abre la sesión.** Supersede de spec §6 ("sin sesión"), decisión del
+    dueño del 2026-09-06: el perfil del KOL necesita saber quién mira.
+
+    La sesión se emite acá y **sólo acá**, porque acá es donde se probó la
+    propiedad de una wallet con una firma. Ninguna otra ruta la emite: si
+    apareciera una, sería una forma de entrar sin firmar.
+
+    `Secure` sale en desarrollo o el navegador tira la cookie en `localhost` y
+    el gate visual no puede entrar. Se decide por `NODE_ENV` y no por el host de
+    la petición: el host lo elige quien llama.
+  */
+  const session = await openSession(created.kolId);
+
   // The code is returned once, here. It is not secret -- it goes in a public
   // tweet -- but it identifies this registration, so it is not put anywhere a
   // later GET could hand it to somebody else.
@@ -147,6 +162,11 @@ export async function POST(request: Request): Promise<Response> {
       verificationCode: code,
       wallets: created.wallets.map((w) => ({ id: w.id, chain: w.chain, isPublic: w.isPublic })),
     },
-    { status: 201 },
+    {
+      status: 201,
+      headers: {
+        "set-cookie": sessionCookie(session.token, process.env.NODE_ENV === "production"),
+      },
+    },
   );
 }

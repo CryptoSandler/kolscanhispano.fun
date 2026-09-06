@@ -31,27 +31,6 @@ export function useConnectWallet(): ConnectApi | null {
   return useContext(ConnectWalletContext);
 }
 
-/**
- * **La primera pantalla dice qué pasa con las wallets, antes de pedir nada.**
- *
- * Pedido del dueño, y las dos frases son verificables, que es la condición que
- * puso: *"nada prometido que un test no verifique"*.
- *
- * - `address-invariant.test.ts` recorre el HTML de las superficies públicas y
- *   falla si aparece una dirección de una wallet que no tenga `is_public` —
- *   truncada incluida, desde el 2026-09-05.
- * - `no-money-path.test.ts` falla si cualquier API que construya o mande una
- *   transacción se vuelve importable desde el código de la aplicación, así que
- *   lo único que este flujo puede pedir es una firma sobre un mensaje.
- *
- * Está en español neutro y no en el voseo del pedido (*"vos elijas"*,
- * *"firmás"*): `docs/copy.md` y `copy.test.ts` prohíben el voseo en toda
- * superficie que vea un lector, y el sitio es para España y Latam.
- */
-export const PRIVACY_LINE =
-  "Tus wallets nunca se publican — ni truncadas — salvo que elijas mostrarlas. " +
-  "Firmas un mensaje, no una transacción.";
-
 export function ConnectWalletProvider({
   chains,
   children,
@@ -164,11 +143,8 @@ function ConnectWalletDialog({
           Conecta tu wallet
         </h2>
 
-        {/* La privacidad como argumento, en la primera pantalla y antes de
-            cualquier control: es lo que el lector necesita saber para decidir,
-            no una nota al pie de lo que ya aceptó. */}
-        <p className="privacy-line">{PRIVACY_LINE}</p>
-
+        {/* La línea de privacidad la renderiza `RegistroForm`, una sola vez:
+            estaba acá **y** ahí, y se veía dos veces seguidas. */}
         <RegistroForm chains={chains} />
       </div>
     </dialog>

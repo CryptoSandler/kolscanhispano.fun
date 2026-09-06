@@ -26,7 +26,15 @@ const KOLS: ReadonlyArray<readonly [string, string, string | null]> = [
   ["dani_sol", "Dani Sol", "LAT"],
   ["elena_dex", "Elena DEX", "LAT"],
   ["fer_trench", "Fer Trench", "IBE"],
-  ["gaby_onchain", "Gaby On-Chain", "LAT"],
+  /*
+    **Un nombre de 30 caracteres, a propósito.**
+
+    `chain-columns.spec.ts` mide que el bloque de identidad no se meta en las
+    columnas de monto, y ese caso no prueba nada si el fixture sólo tiene
+    nombres cortos: la fila del gate que se rompió (`prueba miembro 2`) tenía
+    nombre largo, tag y chip de dos wallets a la vez.
+  */
+  ["gaby_onchain", "Gabriela On-Chain Domínguez", "LAT"],
   ["hector_pump", "Héctor Pump", null],
   ["ines_meme", "Inés Meme", "EJE"],
   ["javi_flip", "Javi Flip", "IBE"],

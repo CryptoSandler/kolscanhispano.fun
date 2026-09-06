@@ -140,6 +140,7 @@ import { promisify } from "node:util";
 import { Client } from "pg";
 import { assertDistinctFromProduction, assertVerifyFull, connectionIdentity, hostFragment } from "../src/lib/connection-identity";
 import { aadFor, blindIndex, encrypt } from "../src/lib/crypto";
+import { FX_SETTING_KEY } from "../src/lib/fx";
 import { ONE, formatDecimal, mulDiv, parseDecimal } from "../src/lib/decimal";
 // Type-only, and erased at compile time: importing `db.ts` for real would
 // construct its module-level pool against DATABASE_URL, which is the one
@@ -1167,8 +1168,58 @@ export async function seedPreview(): Promise<RosterResult> {
   }
 }
 
+/**
+ * Deja una cotización del peso **fresca** en `setting`.
+ *
+ * Sin esto, preview arrastraba la última que el cron le hubiera escrito, y para
+ * el gate visual eso significaba una cotización de hace días: pasado el umbral
+ * de 96 h `readArsRate` devuelve `null` y la home en pesos mostraba los totales
+ * en dólares con el aviso — correcto, y no lo que había que mirar.
+ *
+ * **Se intenta la fuente real y se cae a un valor fijo.** Un seed que necesita
+ * internet para terminar es un seed que falla en un avión; uno que siempre
+ * inventa el número no ejercita el parseo de lo que la fuente devuelve. Así que
+ * se pide `dolarapi` con un timeout corto y, si no contesta, se escribe un
+ * valor plausible. La marca de tiempo es **ahora** en los dos casos, que es lo
+ * único que este paso promete.
+ */
+async function seedArsRate(): Promise<string> {
+  let rate = "1450";
+  let source = "valor fijo";
+  try {
+    const response = await fetch("https://dolarapi.com/v1/dolares/blue", {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (response.ok) {
+      const body = (await response.json()) as { venta?: number };
+      if (typeof body.venta === "number" && body.venta > 0) {
+        rate = String(body.venta);
+        source = "dolarapi";
+      }
+    }
+  } catch {
+    // Sin red, sin drama: queda el valor fijo con la marca de ahora.
+  }
+  const now = new Date().toISOString();
+  // Con su propio `Client`, como el resto de este script: no usa el pool de la
+  // aplicación porque corre contra preview y no contra la base del proceso.
+  const { client } = await openPreview();
+  try {
+    await client.query(
+      `INSERT INTO setting (key, value) VALUES ($1, $2::jsonb)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [FX_SETTING_KEY, JSON.stringify({ fetchedAt: now, casas: { blue: { rate, asOf: now } } })],
+    );
+  } finally {
+    await client.end();
+  }
+  return source;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { seeded, replaced, counts } = await seedPreview();
+  const fxSource = await seedArsRate();
+  console.log(`Cotización del peso sembrada con marca de ahora (${fxSource}).`);
   if (!seeded) {
     console.log(
       `Preview roster already present and current (slug prefix "${SLUG_PREFIX}"); ` +

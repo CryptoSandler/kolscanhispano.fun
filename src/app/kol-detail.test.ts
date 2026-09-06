@@ -16,33 +16,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { PublicKolDetail, PublicTrade } from "@/lib/serialize";
+import type { PublicKolDetail } from "@/lib/serialize";
 import { KolDetail } from "./kol-detail";
 
-function trade(overrides: Partial<PublicTrade> = {}): PublicTrade {
-  return {
-    id: crypto.randomUUID(),
-    kol: {
-      slug: "kol-uno",
-      name: "KOL Uno",
-      cabalTag: null,
-      avatarUrl: "/api/avatar/00000000-0000-4000-8000-000000000000",
-      hideWallets: false,
-      // Sin verificar: es el estado de casi todo el padrón, sembrado por admin.
-      verified: false,
-    },
-    side: "buy",
-    mint: "mint-placeholder",
-    symbol: "NUBE",
-    tokenAmount: "1000",
-    solAmount: "8.15",
-    usdAmount: "1888.44",
-    priceUsd: "0.00042",
-    blockTime: "2026-08-25T14:32:00.000Z",
-    signature: "signature-placeholder",
-    ...overrides,
-  };
-}
 
 function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
   return {
@@ -72,7 +48,6 @@ function detail(overrides: Partial<PublicKolDetail> = {}): PublicKolDetail {
       { day: "2026-08-24", dailySol: "4.1", cumulativeSol: "4.1" },
       { day: "2026-08-25", dailySol: "8.25", cumulativeSol: "12.35" },
     ],
-    trades: [trade()],
     /*
       The calendar's month, which the modal reads independently of the window
       since 2026-09-03. Two days that closed, both inside August 2026, so the
@@ -268,88 +243,36 @@ describe("card-stats and card-chain-pnl", () => {
   });
 });
 
-describe("list-defi-trades", () => {
-  it("gives each trade a verb, a signed-by-direction SOL amount and its USD equivalent", () => {
+/*
+  **`list-defi-trades` se eliminó el 2026-09-06, y con él este bloque.**
+
+  Los casos que vivían acá medían la lista de operaciones del modal: el verbo,
+  el monto en SOL con su signo, el equivalente en dólares, el enlace al
+  explorador, y `PRIVADO` con candado donde la wallet estaba oculta. Todos
+  pasaban.
+
+  El problema no era ninguno de ellos: era la superficie. Una fila con token,
+  monto exacto y hora alcanza para encontrar la transacción en un explorador y,
+  con ella, la wallet — aunque la firma dijera `PRIVADO`, porque el monto y el
+  minuto la identifican igual. `DECISIONES.md`, 2026-09-06.
+
+  Lo que queda medido es lo contrario, y está abajo: que el modal **no** dibuje
+  ninguna fila de operación. `public-surfaces.test.ts` lo afirma para el payload
+  de todas las rutas públicas.
+*/
+describe("el modal no publica operaciones individuales", () => {
+  it("renders no trade rows, no explorer link and no timestamp", () => {
     const html = render();
-    expect(html).toContain('class="gain">compró');
-    expect(html).toContain('class="num gain">8,15 SOL');
-    expect(html).toContain("US$1.888");
-    expect(html).toContain("$NUBE");
-  });
-
-  it("colours a sell the other way, as the feed row does", () => {
-    const html = render({ trades: [trade({ side: "sell" })] });
-    expect(html).toContain('class="loss">vendió');
-    expect(html).toContain('class="num loss">8,15 SOL');
-  });
-
-  it("says sin precio for a trade no rate covered, never a dash and never a zero", () => {
-    // DESIGN.md `state-unpriced`, and migration 005's "looked, no rate existed".
-    const html = render({ trades: [trade({ usdAmount: null })] });
-    expect(html).toContain('class="state-unpriced">sin precio');
-    expect(html).not.toContain("US$0,00");
-  });
-
-  it("links a public KOL's trade to the explorer, anchored on its block time", () => {
-    const html = render({ trades: [trade({ signature: "SIGNATURE" })] });
-    expect(html).toContain('href="https://solscan.io/tx/SIGNATURE"');
-    expect(html).toContain("25/08 14:32 UTC");
-  });
-
-  it("reads PRIVADO with a padlock where the wallets are hidden", () => {
-    // DESIGN.md `list-defi-trades`: "where the wallet is hidden the row reads
-    // `PRIVADO` with a padlock instead of a signature link."
-    const html = render({
-      kol: { ...detail().kol, hideWallets: true },
-      trades: [trade({ signature: null })],
-    });
-    expect(html).toContain('class="privado"');
-    expect(html).toContain("PRIVADO");
+    expect(html).not.toContain("row-trade");
     expect(html).not.toContain("solscan.io");
-    // Drawn, not typed: an emoji padlock carries its own colour and could be
-    // neither tinted with the text nor kept out of the green and red this
-    // document reserves for money — the objection that ruled out an emoji medal.
-    expect(html).toContain("<svg");
-    expect(html).not.toContain("🔒");
-  });
-
-  it("labels PRIVADO from hideWallets, not from a signature that failed to decrypt", () => {
-    // `feed.ts` returns a null signature when a stored ciphertext will not open.
-    // A KOL that publishes its wallets must not be relabelled by a key rotation.
-    const html = render({ trades: [trade({ signature: null })] });
     expect(html).not.toContain("PRIVADO");
-    expect(html).toContain("25/08 14:32 UTC");
+    // Ni la hora de una operación: el calendario da días, no minutos.
+    expect(html).not.toMatch(/\d{2}\/\d{2} \d{2}:\d{2} UTC/);
   });
 
-  /*
-    **La tilde, y su ausencia.**
-
-    Casi todo el padrón está sembrado por admin desde un cruce de trackers:
-    nadie probó que la cuenta sea suya, así que la ausencia es el caso normal y
-    es el que más importa que no falle. La tilde dice una cosa concreta —
-    `kol.tweet_verified_at`, o sea tweet con el código más firma de la wallet
-    (`migrations/014`) — y no dice que el KOL esté aprobado, que es una decisión
-    de un admin y queda en la auditoría.
-
-    El modal la mostraba para nadie hasta el 2026-09-05, y no por el componente:
-    `DETAIL_SQL` no seleccionaba la columna, así que `serialize.ts` leía
-    `undefined` y escribía `verified: false` para todo el padrón. Un caso sobre
-    el componente con una prop puesta a mano habría pasado igual todo ese
-    tiempo, que es la razón por la que este archivo dice, arriba, que un test
-    que mira el texto de un `.tsx` pasa por más tiempo del que debería. Este
-    par cubre el render; `api/kol/[slug]/route.test.ts` cubre que el dato llegue.
-  */
-  it("shows no tick for a KOL nobody verified", () => {
-    const html = render({ kol: { ...detail().kol, verified: false } });
-    expect(html).not.toContain("verified-tick");
-    expect(html).not.toContain("Handle verificado");
-  });
-
-  it("shows the tick, with its sentence, for a KOL who proved the handle", () => {
-    const html = render({ kol: { ...detail().kol, verified: true } });
-    expect(html).toContain("verified-tick");
-    expect(html).toContain("Handle verificado por tweet firmado");
-    // Junto al handle, no junto al nombre: el nombre lo lleva en la fila.
-    expect(html.indexOf("@ejemplo_uno")).toBeLessThan(html.indexOf("verified-tick"));
+  it("still renders the period's aggregates, which are what replaced it", () => {
+    const html = render();
+    expect(html).toContain("Chain PnL");
+    expect(html).toContain("modal-pnl");
   });
 });

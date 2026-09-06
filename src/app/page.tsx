@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { permanentRedirect } from "next/navigation";
 import { LEADERBOARD_FIATS, parseFiat, readLeaderboard } from "@/lib/leaderboard";
 import { ARS_SOURCE_LABELS, arsTooltip, readArsRate } from "@/lib/fx";
@@ -6,7 +5,7 @@ import { formatArsRate, formatUtcMoment } from "@/lib/format";
 import { LEADERBOARD_WINDOWS, resolveWindow } from "@/lib/windows";
 import { LeaderboardControls } from "./leaderboard-controls";
 import { KolModalHost } from "./kol-modal-host";
-import { ARS_CAVEAT, LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
+import { LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
 
 /** The window is relative to now and the rows behind it change as trades land. */
 export const dynamic = "force-dynamic";
@@ -109,7 +108,11 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           prose. What changed is the name on the screen, and only that.
         */}
         <h1 className="page-title">KOL Leaderboard</h1>
-        <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS} />
+        <LeaderboardControls
+          windows={LEADERBOARD_WINDOWS}
+          fiats={LEADERBOARD_FIATS}
+          windowsTitle={`día UTC · ${USD_CAVEAT}`}
+        />
       </div>
 
       {/* **No `panel` around the ranking.** The mould's rows sit straight on the
@@ -152,25 +155,22 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         (`docs/round-ars.md` §3). With no rate to name it says that instead, and
         the figures above read `sin precio`.
       */}
-      <footer className="page-note">
-        {/*
-          **The feed's only door, since `Live` left the nav.**
+      {/*
+        **El pie de la home quedó vacío, y cada cosa se fue por su motivo.**
 
-          The nav is the mould's two items now (`● Trade  Cabals`), and this
-          product has a live feed they do not. `site-nav.tsx` kept it in the nav
-          precisely so the page would not be orphaned; this is what replaces
-          that, and it is why removing the nav item was safe to do.
-        */}
-        <p className="label">
-          <Link className="panel-link" href="/en-vivo">
-            Ver el feed en vivo →
-          </Link>
-        </p>
-        <p className="label">
-          día UTC · {USD_CAVEAT}
-          {fiat === "ars" && ` · ${ARS_CAVEAT}`}
-        </p>
-        {fiat === "ars" && (
+        - `Ver el feed en vivo →` no existe porque el feed público no existe
+          (`DECISIONES.md`, 2026-09-06).
+        - El disclaimer legal vive **sólo en `/trade`**, que es la página donde
+          alguien podría ir a operar. Repetirlo bajo un ranking lo convertía en
+          mobiliario que nadie lee, incluido quien lo necesita.
+        - `día UTC · <caveat>` pasó a ser el `title` del toggle de período: son
+          notas sobre lo que el toggle decide, y sueltas al pie estaban a media
+          pantalla de la cosa que explican.
+
+        El aviso de la cotización se queda, porque no explica un control: dice
+        de cuándo es la cifra que el lector está mirando.
+      */}
+      <footer className="page-note">        {fiat === "ars" && (
           /*
             **La cotización vieja se muestra igual, con el aviso.** `fx.ts`
             separa dos umbrales: a las 6 h la cifra queda marcada como
@@ -185,7 +185,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           */
           <p className="label" title={rate === null ? undefined : arsTooltip(rate)}>
             {rate === null
-              ? "Sin tipo de cambio vigente: los importes en ARS no se pueden calcular."
+              ? "ARS no disponible: cotización vencida. Los totales se muestran en dólares."
               : `1 US$ = ${formatArsRate(rate.rate)} ARS · ${ARS_SOURCE_LABELS[rate.source]} · ${formatUtcMoment(rate.asOf)}`}
             {rate?.stale === true && (
               <span className="state-unpriced"> · cotización desactualizada</span>

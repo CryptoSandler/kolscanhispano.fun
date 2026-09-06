@@ -34,8 +34,13 @@ test.describe("el modal de Connect Wallet", () => {
     const dialog = page.locator("dialog.modal-connect");
     // Las dos promesas, y las dos las verifica un test:
     // `address-invariant.test.ts` y `no-money-path.test.ts`.
+    // Una sola vez: vivía duplicada en el modal y en `RegistroForm`.
+    await expect(dialog.locator(".privacy-line")).toHaveCount(1);
     await expect(dialog.locator(".privacy-line")).toContainText("nunca se publican");
-    await expect(dialog.locator(".privacy-line")).toContainText("ni truncadas");
+    // La cláusula que se sumó con la eliminación del feed público.
+    await expect(dialog.locator(".privacy-line")).toContainText(
+      "tampoco publicamos tus operaciones una por una",
+    );
     await expect(dialog.locator(".privacy-line")).toContainText(
       "Firmas un mensaje, no una transacción",
     );

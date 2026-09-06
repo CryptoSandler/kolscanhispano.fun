@@ -163,6 +163,17 @@ export default async function TradePage() {
         Este sitio no custodia fondos, no firma transacciones y no ejecuta órdenes. Operar on-chain
         implica riesgo de pérdida total.
       </p>
+
+      {/*
+        **El disclaimer legal vive acá y en ningún otro lado**, desde el
+        2026-09-06. Estaba en el layout, o sea en todas las páginas, y debajo de
+        un ranking era mobiliario: el lector que lo necesita es el que está por
+        operar, y ése es el único que llega a esta página.
+      */}
+      <p className="footnote trade-note">
+        Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados pasados no
+        garantizan nada.
+      </p>
     </>
   );
 }

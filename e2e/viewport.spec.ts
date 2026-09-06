@@ -128,12 +128,20 @@ test.describe("the home page at 1280×900", () => {
   });
 
   /** And the feed is where it moved to, still alive and still hydrating. */
-  test("keeps the feed at /en-vivo", async ({ page }) => {
+  /*
+    **`/en-vivo` ya no es el feed: es un 308 a la home.**
+
+    El feed público se eliminó el 2026-09-06 (`DECISIONES.md`). Este caso medía
+    que la ruta sirviera el feed y ahora mide lo contrario, que es lo que hay
+    que sostener: la URL sigue contestando —estuvo enlazada y pudo quedar en un
+    marcador— y lo que entrega es la clasificación.
+  */
+  test("redirects /en-vivo to the ranking", async ({ page }) => {
     await page.goto("/en-vivo");
 
-    await expect(page.locator(".row-feed").first()).toBeVisible();
-    await expect(page.locator("[data-hydrated]")).toHaveCount(1);
-    await expect(page.locator(".row-leaderboard")).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe("/");
+    await expect(page.locator(".row-leaderboard").first()).toBeVisible();
+    await expect(page.locator(".row-feed")).toHaveCount(0);
   });
 
   /**
@@ -167,10 +175,17 @@ test.describe("the home page at 1280×900", () => {
    * case shrank rather than being deleted: the remaining caveat is about the
    * figure the card still prints, and it is the one that is easy to lose.
    */
-  test("qualifies its figures in words", async ({ page }) => {
+  /*
+    La nota pasó a ser el `title` del toggle de período el 2026-09-06: explica
+    lo que ese control decide, y suelta al pie estaba a media pantalla de la
+    cosa que explica. Se sigue afirmando que el sitio califica sus cifras en
+    palabras; lo que cambió es dónde.
+  */
+  test("qualifies its figures in words, on the control they belong to", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByText(/USD derivado del precio de SOL/)).toBeVisible();
+    const windows = page.locator(".segmented.is-windows");
+    await expect(windows).toHaveAttribute("title", /USD derivado del precio de SOL/);
   });
 
   /**
@@ -193,7 +208,7 @@ test.describe("the home page at 1280×900", () => {
 
     // And it goes somewhere that answers.
     await registro.click();
-    await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible({
+    await expect(page.getByRole("button", { name: "Connect Wallet" }).last()).toBeVisible({
       timeout: 30_000,
     });
   });
@@ -443,64 +458,13 @@ for (const { name, viewport } of SIZES) {
      * only that it is deterministic — and the box is then checked for having
      * actually shown it.
      */
-    test("renders the trade timestamp in full, and does not clip it", async ({ page }) => {
-      const dialog = await openFirstKol(page);
-      const moment = dialog.locator(".row-moment").first();
-      await expect(moment).toBeVisible();
-
-      const iso = await moment.locator("time[datetime]").getAttribute("datetime");
-      expect(iso, "the trade row must carry the instant it is printing").not.toBeNull();
-
-      // `formatUtcMoment`'s contract, restated from the data: `DD/MM HH:MM UTC`.
-      const [date, time] = iso!.split("T");
-      const [, month, day] = date.split("-");
-      expect(await moment.textContent()).toBe(`${day}/${month} ${time.slice(0, 5)} UTC`);
-
-      // And the column actually holds it. `scrollWidth > clientWidth` is the
-      // overflow the screenshots caught as `31/08 02:12 UT(`.
-      const cell = await moment.evaluate((el) => ({
-        scrollWidth: el.scrollWidth,
-        clientWidth: el.clientWidth,
-      }));
-      expect(
-        cell.scrollWidth,
-        "the timestamp column is narrower than the timestamp it prints",
-      ).toBeLessThanOrEqual(cell.clientWidth);
-
-      /*
-        And the cell is *reachable*, which the two assertions above do not
-        cover and a first pass at this guard missed.
-
-        They are both about the cell in isolation: the text is right and the
-        column is wide enough for it. Neither says anything about where that
-        column ended up. At 390 the row's five columns come to 337px inside a
-        326px card, so the timestamp sat entirely past the row's right edge and
-        `overflow: hidden` erased it — with a correct `textContent` and a
-        column that fit its own text, so this case was green over the very
-        defect it exists for. That is this repository's characteristic failure
-        and it happened here, in this file, on the first attempt.
-
-        The invariant is therefore about the *container*: a trade list may
-        scroll, but it may not hide. Scrolled as far right as it goes, the
-        whole cell has to be inside the visible box.
-      */
-      const reach = await dialog.locator(".trade-list").evaluate((list) => {
-        list.scrollLeft = list.scrollWidth;
-        const box = list.getBoundingClientRect();
-        const cellBox = list.querySelector(".row-moment")!.getBoundingClientRect();
-        return {
-          listLeft: box.left,
-          listRight: box.right,
-          cellLeft: cellBox.left,
-          cellRight: cellBox.right,
-        };
-      });
-      expect(
-        Math.round(reach.cellRight),
-        "the timestamp is cut off by its row and cannot be scrolled into view",
-      ).toBeLessThanOrEqual(Math.round(reach.listRight));
-      expect(Math.round(reach.cellLeft)).toBeGreaterThanOrEqual(Math.round(reach.listLeft));
-    });
+    /*
+      El caso de la hora de la operación se borró el 2026-09-06 con
+      `list-defi-trades` (`DECISIONES.md`). Medía que `DD/MM HH:MM UTC` se
+      imprimiera entero y sin recortar — y esa hora, junto con el monto, es
+      justamente lo que permitía encontrar la transacción en un explorador.
+      `modal-kol.spec.ts` afirma ahora que no hay ninguna fila de operación.
+    */
   });
 }
 

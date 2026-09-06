@@ -62,8 +62,18 @@ export function LeaderboardControls({
   windows,
   fiats,
   basePath = "/",
+  windowsTitle,
 }: {
   windows: readonly string[];
+  /**
+   * Nota sobre lo que el período decide — el día UTC, y de dónde sale el USD.
+   *
+   * Es un `title` y no un párrafo al pie desde el 2026-09-06: explica este
+   * control, y suelta abajo del ranking estaba a media pantalla de la cosa que
+   * explica. Al pie sobrevive sólo lo que habla de los datos y no de un
+   * control, que es el aviso de la cotización.
+   */
+  windowsTitle?: string;
   /**
    * Empty renders no currency group at all, which is what `/cabals` passes: no
    * figure on that page is in a fiat the reader chose, so a toggle over one
@@ -128,7 +138,12 @@ export function LeaderboardControls({
         </div>
       )}
 
-      <div className="segmented is-windows" role="group" aria-label="Ventana">
+      <div
+        className="segmented is-windows"
+        role="group"
+        aria-label="Ventana"
+        title={windowsTitle}
+      >
         {windows.map((option) => (
           <Link
             key={option}

@@ -253,3 +253,74 @@ test.describe("the public-wallet panel", () => {
     await expect(page.locator(".wallet-panel")).toBeHidden();
   });
 });
+
+/**
+ * **La identidad nunca entra en las columnas de monto.**
+ *
+ * Bug del gate, 2026-09-06: la fila de `prueba miembro 2` tenía el chip EVM
+ * dibujado **debajo** de `+0,42 ETH`. El bloque de identidad —nombre, tag,
+ * chip, badges— no tenía tope de ancho, así que empujaba hacia la derecha y se
+ * metía en la primera pista de montos, que es fija.
+ *
+ * El caso usa el peor insumo a propósito: un nombre de 30 caracteres, un tag y
+ * un chip de dos wallets. Lo que mide no es que se vea lindo sino la propiedad
+ * geométrica: **ningún elemento de identidad supera la x del primer slot.**
+ */
+test.describe("la identidad no invade los montos", () => {
+  test.use({ viewport: { width: 1245, height: 900 } });
+
+  test("keeps every identity element left of the first amount slot", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector(".board > li");
+
+    const measured = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".board > li")];
+      return rows.map((li) => {
+        const slot = li.querySelector(".chain-slot");
+        const slotX = slot ? slot.getBoundingClientRect().x : Infinity;
+        const parts = [...li.querySelectorAll(".identity-line > *, .identity-line .name")];
+        const worst = parts.reduce(
+          (max, el) => Math.max(max, el.getBoundingClientRect().right),
+          0,
+        );
+        return {
+          name: (li.querySelector(".name")?.textContent ?? "").slice(0, 40),
+          slotX: Math.round(slotX),
+          identityRight: Math.round(worst),
+        };
+      });
+    });
+
+    expect(measured.length).toBeGreaterThan(2);
+    for (const row of measured) {
+      expect(
+        row.identityRight,
+        `la identidad de "${row.name}" llega a ${row.identityRight} y el primer slot empieza en ${row.slotX}`,
+      ).toBeLessThanOrEqual(row.slotX);
+    }
+  });
+
+  test("truncates a 30-character name with an ellipsis rather than overflowing", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.waitForSelector(".board > li");
+
+    const overflowing = await page.evaluate(() => {
+      const names = [...document.querySelectorAll(".board > li .name")];
+      // Un nombre que no entra tiene `scrollWidth > clientWidth`; lo que importa
+      // es que en ese caso **no** se salga de su caja, que es lo que la elipsis
+      // garantiza.
+      return names.map((el) => ({
+        text: el.textContent ?? "",
+        clipped: el.scrollWidth > el.clientWidth,
+        overflowsBox: el.getBoundingClientRect().right > (el.parentElement?.getBoundingClientRect().right ?? 0) + 1,
+      }));
+    });
+
+    expect(overflowing.length).toBeGreaterThan(0);
+    for (const name of overflowing) {
+      expect(name.overflowsBox, `"${name.text}" se sale de su caja`).toBe(false);
+    }
+  });
+});

@@ -8,7 +8,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { AffiliateSlot } from "./affiliate-slot";
 import { SiteNav } from "./site-nav";
 import { activeChains } from "@/lib/chain";
-import { ConnectWalletButton } from "./connect-wallet-button";
+import { ProfileChip } from "./profile-chip";
 import { ConnectWalletProvider } from "./connect-wallet";
 import "./globals.css";
 
@@ -216,10 +216,20 @@ export default function RootLayout({
                   connects anything, so a pill with somebody's avatar in it
                   would be a session this site cannot have and a control that
                   does not work. Same shape, honest content. */}
-                  {/* Abre el modal encima de la home desde el 2026-09-05, y
-                    sigue siendo el enlace a `/registro` para quien lo copie o
-                    lo abra en otra pestaña. `connect-wallet-button.tsx`. */}
-                  <ConnectWalletButton />
+                  {/*
+                    **El slot del usuario, con sesión desde el 2026-09-06.**
+
+                    `ProfileChip` decide qué va acá: con sesión, avatar +
+                    `@handle` + `Salir`, como el molde; sin sesión, el botón
+                    `Connect Wallet` que abre el modal — y que sigue siendo un
+                    enlace a `/registro` para quien lo copie o lo abra en otra
+                    pestaña.
+
+                    El comentario de arriba decía que un chip con avatar y handle
+                    sería "una sesión que este sitio no puede tener". Era cierto
+                    hasta que spec §6 quedó superseded (`DECISIONES.md`).
+                  */}
+                  <ProfileChip />
                   {/*
                 Spec §1.9: the affiliate slot is configurable from the admin and
                 empty at launch, where it renders nothing. The admin that
@@ -268,10 +278,15 @@ export default function RootLayout({
               <span className="built-by__label">Built by </span>
               <span className="built-by__handle">@CryptoSandlerr</span>
             </a>
-            <p className="footnote">
-              Datos on-chain públicos. Esto no es asesoramiento financiero y los
-              resultados pasados no garantizan nada.
-            </p>
+            {/*
+              **El disclaimer se mudó a `/trade` el 2026-09-06.**
+
+              Estaba en el layout, o sea en todas las páginas, y debajo de un
+              ranking se convertía en mobiliario: el lector que lo necesita es el
+              que está por operar, y ése es el único que llega a `/trade`. Un
+              aviso que aparece en todos lados es uno que no se lee en ninguno,
+              incluido el lugar donde importa.
+            */}
           </div>
         </ConnectWalletProvider>
       </body>

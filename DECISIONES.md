@@ -832,3 +832,99 @@ pérdida se imprimía como ganancia**, sin color que la distinguiera porque el
 total en fiat no lleva clase de dirección. Lo encontró `fiat-total.test.ts` al
 preguntar por una pérdida. La lección no es la comparación: es que el caso
 negativo no estaba en ningún test cuando se escribió la función.
+
+## 2026-09-06 — El feed público se elimina; sólo agregados en superficie pública
+
+**Tomada por el dueño.** Ninguna superficie pública muestra operaciones
+individuales. Lo que se publica de un KOL son **agregados del período**: PnL
+realizado, columnas por cadena, chain PnL del modal, calendario por día.
+
+**El motivo es concreto y no es una precaución general.** Una fila del feed —y
+una fila de `list-defi-trades`— publicaba el token, el monto exacto y la hora.
+Esas tres cosas juntas alcanzan para encontrar esa transacción en un explorador
+de bloques y, con ella, la wallet. El sitio promete en el modal de conexión que
+*"tus wallets nunca se publican"*, y publicar cada operación una por una era
+publicarlas por un camino más largo. La firma en `null` no cambiaba nada: el
+monto y el minuto identifican la operación igual.
+
+**Qué se hizo:**
+
+- `/en-vivo` es un **308** a la home. No un 404: la ruta estuvo enlazada y pudo
+  quedar en un marcador o un mensaje.
+- `/api/feed` pide `ADMIN_TOKEN`, y el guard corre **antes** que el rate limit
+  porque un 401 no debe costar una consulta.
+- El feed vive en `/admin/en-vivo`: para operar hace falta ver lo que entra.
+- `list-defi-trades` salió del modal, de `serialize.ts` y de `readKolDetail`,
+  que ya ni las consulta — el `<script>` con los datos es tan público como el
+  HTML, así que sacarlo de la vista sin sacarlo del payload no era sacarlo.
+- `public-surfaces.test.ts` falla si alguna ruta o página pública vuelve a leer
+  operaciones.
+
+**El invariante quedó más fuerte, y hay una línea que lo prueba.**
+`address-invariant.test.ts` esperaba las firmas publicadas en su barrido base58;
+ahora espera **`[]`**. El payload del modal no lleva ningún identificador
+on-chain — **ni el mint**, porque el mint viajaba *dentro* de la operación.
+
+**Lo que esto NO protege:** el operador con acceso a la base sigue viendo todo.
+Esto cierra una fuga hacia el público, no hacia adentro.
+
+## 2026-09-06 — Sin cotización, la home muestra dólares y avisa
+
+Antes, sin cotización del peso, cada fila imprimía `(—)`. Una columna entera de
+guiones no se lee como *"falta la cotización"* sino como *"este sitio no tiene
+datos"* — y la cifra en dólares existe, está medida y es la que ordena el
+ranking.
+
+Así que sin cotización se muestra el dólar y el aviso va **una vez** arriba de
+la lista: `ARS no disponible: cotización vencida`. Nunca `AR$0`, que sería
+inventar el número.
+
+**Sigue habiendo un `(—)`, y es otra ausencia:** un KOL cuyo PnL no cotiza en
+ninguna cadena no tiene cifra de la que caer. Los dos casos están en
+`empty-states.test.ts`, uno al lado del otro, porque la diferencia es el punto.
+
+## 2026-09-06 — La identidad se trunca; los montos son intocables
+
+Bug del gate: la fila de `prueba miembro 2` dibujaba el chip EVM **debajo** de
+`+0,42 ETH`. El bloque de identidad no tenía tope y empujaba hacia la primera
+pista de montos, que es fija.
+
+Orden de sacrificio: **el nombre primero, el chip después**. El nombre cortado
+con elipsis sigue siendo legible; el chip ya es una dirección truncada y
+cortarlo otra vez lo vuelve ruido.
+
+La causa era una regla mía del 2026-09-05: `.identity-line .name { flex: none }`,
+puesta cuando el panel de wallets vivía dentro de la línea y al abrirse le robaba
+4 px al nombre. El panel salió del flujo ese mismo día y la razón se venció, pero
+la regla quedó — y lo que quedaba era un nombre que no podía encogerse.
+
+## 2026-09-06 — Hay sesión: supersede de spec §6
+
+**Tomada por el dueño.** Firmar el nonce emite una cookie de 30 días ligada al
+KOL, y el chip del header pasa de la acción de conectar a avatar + `@handle` +
+`salir`. El perfil —"Mis wallets", agregar, ocultar, exportar— necesita saber
+quién está mirando, y eso es una sesión.
+
+Spec §6 decía que este producto no tiene cuentas, y era cierto: `/registro`
+firmaba y se acababa ahí. **Queda superseded**, y con esto cae también el
+argumento del chip: `layout.tsx` explicaba que un chip con avatar y handle sería
+*"una sesión que este sitio no puede tener"*. Ahora puede.
+
+**Es una tabla (`kol_session`) y no una cookie firmada**, que era lo barato. Se
+puede revocar de a una, el admin puede ver quién tiene sesión abierta, y
+`docs/round-hardening-wallets.md` recomienda construir el mecanismo de
+credenciales con expiración **una vez** — `ADMIN_TOKEN` también lo necesita, y
+una cookie firmada acá habría sido la mitad de algo que después hay que
+construir entero igual.
+
+**El token se guarda hasheado**, como una contraseña: un dump de `kol_session`
+no abre ninguna sesión. SHA-256 crudo y no un KDF a propósito — son 32 bytes
+aleatorios, no una contraseña elegida por una persona, así que no hay
+diccionario contra el que defenderse.
+
+**La emite una sola ruta**, `/api/registro`, porque es la única donde se probó
+la propiedad de una wallet con una firma. Cualquier otra que la emitiera sería
+una forma de entrar sin firmar, y hay un test de que un rechazo no deja cookie.
+
+`SameSite=Strict` cuesta que un enlace externo llegue sin sesión y haya que
+entrar de nuevo; es el precio de no necesitar un token CSRF aparte.

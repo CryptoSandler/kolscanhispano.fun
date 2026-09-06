@@ -62,11 +62,12 @@ for (const { name, viewport } of SIZES) {
       await page.screenshot({ path: `${OUT}/home-${name}.png` });
     });
 
-    test("el feed, en su propia página", async ({ page }) => {
-      await page.goto("/en-vivo");
-      await expect(page.locator(".row-feed").first()).toBeVisible({ timeout: 30_000 });
-      await page.screenshot({ path: `${OUT}/en-vivo-${name}.png` });
-    });
+    /*
+      La captura del feed público se borró el 2026-09-06 con el feed
+      (`DECISIONES.md`): `/en-vivo` es un 308 a la home, así que la foto sería
+      de la home con otro nombre. El feed de admin no se fotografía acá porque
+      pide token y estas capturas son de superficies públicas.
+    */
 
     /**
      * The same ranking with the peso selected, which is the surface
@@ -143,8 +144,12 @@ for (const { name, viewport } of SIZES) {
       // No wallet extension exists in this browser, so this is the state a
       // first-time visitor sees. The steps behind it are photographed by the
       // onboarding captures above, which render the same component.
-      await expect(page.getByText("Entra al padrón")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByRole("button", { name: "Conectar wallet" })).toBeVisible();
+      // `/registro` abre el modal sobre la home desde el 2026-09-06, y el
+      // título `Entra al padrón` se eliminó: el único título es el del modal.
+      await expect(page.locator("dialog.modal-connect")).toBeVisible({ timeout: 30_000 });
+      // Por rol: el texto suelto también empata con el subtítulo del formulario.
+      await expect(page.getByRole("heading", { name: "Conecta tu wallet" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Connect Wallet" }).last()).toBeVisible();
       await page.screenshot({ path: `${OUT}/registro-${name}.png`, fullPage: true });
     });
 
@@ -162,7 +167,7 @@ for (const { name, viewport } of SIZES) {
     test("el selector de wallet, con una wallet de Solana registrada", async ({ page }) => {
       await installWallets(page, 2);
       await page.goto("/registro");
-      await page.getByRole("button", { name: "Conectar wallet" }).click();
+      await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
       const dialog = page.locator("dialog.modal-wallets");
       await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });

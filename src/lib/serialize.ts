@@ -468,8 +468,11 @@ export type PublicKolDetail = {
    * it with a meaning it can carry costs nothing and breaks nobody.
    */
   series: KolSeriesPoint[];
-  /** `list-defi-trades`, newest first, capped by the caller. */
-  trades: PublicTrade[];
+  /**
+   * **Ya no existe.** `list-defi-trades` se eliminó el 2026-09-06: una operación
+   * individual con token, monto y hora permite encontrar la transacción en un
+   * explorador y con ella la wallet. `public-surfaces.test.ts` falla si vuelve.
+   */
   /**
    * **The PnL calendar's own month**, which since 2026-09-03 is not the
    * window's span: the card shows a calendar month the reader pages through
@@ -509,7 +512,6 @@ export function serializeKolDetail(options: {
   from: string;
   to: string;
   series: KolSeriesPoint[];
-  trades: PublicTrade[];
   calendar: KolCalendar;
 }): Omit<PublicKolDetail, "chains"> {
   const { row } = options;
@@ -533,7 +535,6 @@ export function serializeKolDetail(options: {
     volumeSol: row.volume_sol,
     tradeCount: row.trade_count,
     series: options.series,
-    trades: options.trades,
     calendar: options.calendar,
   };
 }

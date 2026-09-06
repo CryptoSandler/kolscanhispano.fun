@@ -110,3 +110,34 @@ el resto de las notas — el comentario de `chain-amounts.tsx` sí nombra
 
 Vale para todas las superficies públicas: filas, modales, estados vacíos, mensajes
 de error, `title`, `aria-label` y metadatos.
+
+
+## `padrón` es término interno — 2026-09-06
+
+Decisión del dueño. `Entra al padrón` salió de toda superficie pública: el único
+título de la pantalla de conexión es **`Conecta tu wallet`**, el del modal.
+
+`padrón` sigue siendo la palabra que este equipo usa para el conjunto de KOLs
+aprobados —está en comentarios, en documentos y en `/admin`, que es una
+pantalla interna— y **no aparece donde la vea un lector**. Los mensajes de error
+que la nombraban dicen ahora `ya está registrada` / `ya está registrado`.
+
+No es que la palabra estuviera mal: es que le pedía al lector saber cómo
+llamamos nosotros a nuestra lista para entender un mensaje sobre su wallet.
+
+## La línea de privacidad, y la excepción de voseo — 2026-09-06
+
+Texto exacto en `registro-form.tsx` (`PRIVACY_LINE`), y **aparece una sola vez**:
+vivía duplicada en el modal y en el formulario, y se veía dos veces seguidas.
+
+> Tus wallets nunca se publican, salvo que elijas mostrarlas; tampoco publicamos
+> tus operaciones una por una. Firmas un mensaje, no una transacción.
+
+**El dueño la escribió con `Firmás`**, y va `Firmas`. La regla de arriba prohíbe
+el voseo en toda superficie que vea un lector y `copy.test.ts` la controla; el
+sitio es para España y Latam. Queda anotado acá porque es una corrección sobre
+un texto que el dueño dio como exacto, no una elección de estilo mía.
+
+La cláusula `tampoco publicamos tus operaciones una por una` se sumó con la
+eliminación del feed público: antes la frase prometía algo que la página de al
+lado contradecía.

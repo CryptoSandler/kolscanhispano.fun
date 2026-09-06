@@ -99,9 +99,32 @@ async function insertKol(options: {
   return { id, walletId, address };
 }
 
+/**
+ * **Con token, porque desde el 2026-09-06 esta ruta es de admin.**
+ *
+ * El feed público se eliminó: una fila con token, monto y hora permite
+ * encontrar la transacción en un explorador y con ella la wallet
+ * (`DECISIONES.md`). Lo que estos casos miden —el cursor, el ETag, las firmas
+ * ocultas, los KOL no aprobados— sigue siendo lo mismo; lo que cambió es quién
+ * puede pedirlo. El caso de abajo prueba que sin token no se puede.
+ */
+const TOKEN = "token-de-prueba";
+
 function request(search = "", ifNoneMatch: string | null = null): Request {
+  process.env.ADMIN_TOKEN = TOKEN;
   return new Request(`http://localhost/api/feed${search}`, {
-    headers: ifNoneMatch ? { "if-none-match": ifNoneMatch } : {},
+    headers: {
+      authorization: `Bearer ${TOKEN}`,
+      ...(ifNoneMatch ? { "if-none-match": ifNoneMatch } : {}),
+    },
+  });
+}
+
+/** Sin `Authorization`, o con uno que no es el token. */
+function anonymousRequest(header?: string): Request {
+  process.env.ADMIN_TOKEN = TOKEN;
+  return new Request("http://localhost/api/feed", {
+    headers: header ? { authorization: header } : {},
   });
 }
 
@@ -515,5 +538,20 @@ describe("GET /api/feed", () => {
     );
     expect(bySlug.veintiuno.kol.hideWallets).toBe(true);
     expect(bySlug.veintidos.kol.hideWallets).toBe(false);
+  });
+
+  /*
+    El guard, medido por los dos lados. Va **antes** del rate limit a propósito:
+    un 401 no debe costar una consulta, y hasta el 2026-09-06 esta ruta la podía
+    llamar cualquiera.
+  */
+  it("refuses a caller with no token", async () => {
+    const response = await GET(anonymousRequest());
+    expect(response.status).toBe(401);
+  });
+
+  it("refuses a caller with the wrong token", async () => {
+    const response = await GET(anonymousRequest("Bearer otro-token"));
+    expect(response.status).toBe(401);
   });
 });

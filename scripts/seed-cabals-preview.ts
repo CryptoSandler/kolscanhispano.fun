@@ -12,7 +12,6 @@
  * file outside the repository, because a browser wallet cannot sign for an
  * address nobody holds the key to, and walking `/mi-cabal` means signing.
  */
-import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import bs58 from "bs58";
@@ -22,7 +21,7 @@ loadEnvLocal();
 import { aadFor, blindIndex, encrypt } from "../src/lib/crypto";
 import { query } from "../src/lib/db";
 import type { Chain } from "../src/lib/chain";
-import { inventAddress, inventEvmAddress } from "../src/lib/ids";
+import { inventAddress, inventEvmAddress, inventSignature } from "../src/lib/ids";
 
 const OUT = process.argv[2] ?? "/tmp/kh-preview-wallet.txt";
 
@@ -102,15 +101,33 @@ async function sell(
     [kolId, chain],
   );
   if (!wallet) return;
+  /*
+    **La firma se cifra de verdad, y el id se arma acá.**
+
+    Hasta el 2026-09-06 esta consulta escribía `signature_enc` con
+    `decode($1,'hex')` — **los mismos bytes que el HMAC**, que no son un
+    ciphertext de nada. Ninguna de esas filas se podía descifrar, así que
+    `readFeed` tiraba `a trade signature could not be decrypted` por cada una y
+    el overlay de Next mostraba el aviso en el gate. El dato no se perdía: el
+    feed devolvía `null` y la fila decía `PRIVADO`, que es la ruta de "no se
+    pudo abrir" haciéndose pasar por "esta wallet es privada" — dos estados
+    distintos con la misma cara.
+
+    El atajo tenía una razón: el id salía de `gen_random_uuid()` en SQL, y la
+    AAD necesita el id **antes** del insert. Se arma en JS y el problema
+    desaparece.
+  */
+  const tradeId = crypto.randomUUID();
+  const signature = inventSignature();
   await query(
     `INSERT INTO trade (id, signature_hmac, signature_enc, instruction_index, kol_id, wallet_id,
                         mint, chain, side, token_amount, sol_amount, usd_amount, sol_usd, fee_sol,
                         basis, block_time, realized_sol, realized_usd)
-     VALUES (gen_random_uuid(), decode($1, 'hex'), decode($1, 'hex'), 0, $2::uuid, $3::uuid,
+     VALUES ($9::uuid, decode($1, 'hex'), decode($10, 'hex'), 0, $2::uuid, $3::uuid,
              $4, $8, 'sell', 1, $5::numeric, COALESCE($6::numeric, 0), 150, 0,
              'known', now() - ($7 || ' hours')::interval, $5::numeric, $6::numeric)`,
     [
-      randomBytes(32).toString("hex"),
+      blindIndex(signature, "signature").toString("hex"),
       kolId,
       wallet.id,
       inventAddress(),
@@ -118,6 +135,8 @@ async function sell(
       usd,
       String(hoursAgo),
       chain,
+      tradeId,
+      encrypt(signature, aadFor("trade", "signature", tradeId)).toString("hex"),
     ],
   );
 }

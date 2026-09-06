@@ -35,7 +35,6 @@
 import { orderChains, readChainPnl } from "./chain-pnl";
 import { query } from "./db";
 import { formatDecimal, parseDecimal } from "./decimal";
-import { readKolTrades } from "./feed";
 import {
   serializeKolDetail,
   type KolDetailRow,
@@ -252,20 +251,25 @@ export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolD
   // Three reads over three different tables, none of which needs another's
   // result. In sequence they would be three Neon round trips on the way to
   // opening one modal.
-  const [activity, trades, monthSeries, monthSells] = await Promise.all([
+  /*
+    **Ya no se leen las operaciones.** `list-defi-trades` se eliminó el
+    2026-09-06 (`DECISIONES.md`): una fila con token, monto y hora permite
+    encontrar la transacción en un explorador y con ella la wallet. Sacarla del
+    modal sin sacarla de acá habría dejado el payload sirviéndola igual, que es
+    la mitad que importa — el `<script>` con los datos es tan público como el
+    HTML. De paso, una consulta menos y unos cuantos AES-GCM menos por modal.
+  */
+  const [activity, monthSeries, monthSells] = await Promise.all([
     query<ActivityRow>(ACTIVITY_SQL, [
       row.kol_id,
       bounds.from.toISOString(),
       bounds.to.toISOString(),
     ]),
-    readKolTrades({
-      kolId: row.kol_id,
-      from: bounds.from,
-      to: bounds.to,
-      limit: KOL_TRADES_LIMIT,
-    }),
-    // The calendar's own month, which is not the window's span any more.
-    query<SeriesRow>(SERIES_SQL, [row.kol_id, monthSpan.from, monthSpan.to]),
+    query<SeriesRow>(SERIES_SQL, [
+      row.kol_id,
+      `${monthSpan.from}T00:00:00Z`,
+      `${monthSpan.to}T00:00:00Z`,
+    ]),
     query<SellsRow>(MONTH_SELLS_SQL, [
       row.kol_id,
       `${monthSpan.from}T00:00:00Z`,
@@ -307,7 +311,6 @@ export async function readKolDetail(options: KolDetailQuery): Promise<PublicKolD
       it can actually carry.
     */
     series: accumulate(monthSeries),
-    trades,
     calendar: {
       month,
       days: monthSeries.map((point) => ({ day: point.day, dailySol: point.realized_sol })),

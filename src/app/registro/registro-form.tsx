@@ -47,13 +47,38 @@ const MESSAGES: Record<string, string> = {
   rejected: "Cancelaste la firma. Puedes intentarlo otra vez.",
   chain_not_active: "Todavía no indexamos esa cadena.",
   bad_address: "Esa dirección no tiene la forma que esperábamos.",
-  address_taken: "Esa wallet ya está en el padrón.",
-  handle_taken: "Ese usuario de X ya está en el padrón.",
+  address_taken: "Esa wallet ya está registrada.",
+  handle_taken: "Ese usuario de X ya está registrado.",
   already_added: "Esa wallet ya está en la lista.",
   wallet_no_account: "Esa wallet se conectó pero no compartió ninguna cuenta.",
   wallet_account_gone: "La cuenta cambió durante la firma. Prueba otra vez.",
   wallet_no_signature: "Esa wallet no devolvió una firma.",
 };
+
+/**
+ * **La privacidad como argumento, y aparece una sola vez.**
+ *
+ * Texto exacto del dueño, con una corrección y un agregado:
+ *
+ * - `Firmás` → `Firmas`. `docs/copy.md` prohíbe el voseo en toda superficie que
+ *   vea un lector y `copy.test.ts` lo controla; el sitio es para España y
+ *   Latam. La excepción quedó anotada en ese documento.
+ * - `tampoco publicamos tus operaciones una por una` se suma el 2026-09-06, con
+ *   la eliminación del feed público: publicar cada operación con token, monto y
+ *   hora era publicar la wallet por un camino más largo, y la frase ahora dice
+ *   lo que el producto hace.
+ *
+ * Vivía duplicada —una copia acá y otra en el modal que envuelve este
+ * formulario— y se veía dos veces seguidas en la misma pantalla. Vive acá, que
+ * es el componente que las dos entradas comparten.
+ *
+ * Las tres promesas las verifica un test: `address-invariant.test.ts` para las
+ * direcciones, `no-money-path.test.ts` para la firma sin transacción, y
+ * `public-surfaces.test.ts` para las operaciones individuales.
+ */
+export const PRIVACY_LINE =
+  "Tus wallets nunca se publican, salvo que elijas mostrarlas; tampoco publicamos tus " +
+  "operaciones una por una. Firmas un mensaje, no una transacción.";
 
 export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
   const [wallets, setWallets] = useState<Proven[]>([]);
@@ -191,10 +216,7 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
         Nada de esto es una promesa de intención: son tres tests que se rompen si
         deja de ser cierto.
       */}
-      <p className="privacy-lead">
-        Tus wallets nunca se publican —ni truncadas— salvo que elijas mostrarlas.
-        Firmas un mensaje, no una transacción.
-      </p>
+      <p className="privacy-line">{PRIVACY_LINE}</p>
       {choices && (
         <WalletPicker
           wallets={choices}
@@ -214,7 +236,13 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
       {wallets.length === 0 ? (
         <section className="onboarding">
           <header className="onboarding-head">
-            <h1 className="display-lg">Entra al padrón</h1>
+            {/*
+              **Sin título propio desde el 2026-09-06.** Decía `Entra al padrón`,
+              y ahora el único título de esta pantalla es el del modal que la
+              contiene, `Conecta tu wallet`. Dos títulos, uno encima del otro,
+              eran dos nombres para la misma acción — y `padrón` pasó a ser
+              término interno (`docs/copy.md`).
+            */}
             <p className="page-subtitle">
               Conecta tu wallet y firma un mensaje. No mueve fondos ni aprueba ninguna
               transacción.
@@ -225,8 +253,10 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
               {error}
             </p>
           )}
+          {/* Mismo texto y mismo violeta que el botón del header que lo abre:
+              eran dos botones de conectar de dos colores en la misma pantalla. */}
           <button type="button" className="cta" onClick={openPicker} disabled={busy}>
-            Conectar wallet
+            Connect Wallet
           </button>
         </section>
       ) : (

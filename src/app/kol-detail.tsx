@@ -10,10 +10,8 @@ import {
   amountDirection,
   formatSignedSol,
   formatSol,
-  formatUsdPrice,
-  formatUtcMoment,
 } from "@/lib/format";
-import type { PublicKolDetail, PublicTrade } from "@/lib/serialize";
+import type { PublicKolDetail } from "@/lib/serialize";
 import { Avatar } from "./avatar";
 
 /**
@@ -297,7 +295,19 @@ export function KolDetail({
             <div className="card-head">
               <h3 className="label">DeFi trades</h3>
             </div>
-            <TradeList trades={detail.trades} hideWallets={detail.kol.hideWallets} />
+            {/*
+              **`list-defi-trades` se eliminó el 2026-09-06.**
+
+              Cada fila publicaba el token, el monto exacto y la hora, y con esas
+              tres cosas se encuentra la transacción en un explorador y, con
+              ella, la wallet — aunque la wallet no estuviera publicada y aunque
+              la firma dijera `PRIVADO`. Era la misma fuga que el feed público,
+              en una superficie más chica.
+
+              Lo que queda son **agregados del período**: el total realizado, las
+              columnas por cadena, el calendario por día. Ninguno permite
+              reconstruir una operación. `DECISIONES.md`, 2026-09-06.
+            */}
           </section>
         </div>
       </div>
@@ -483,6 +493,13 @@ function PnlCalendar({
   );
 }
 
+/*
+  `TradeList` y `TradeRow` se borraron el 2026-09-06 con `list-defi-trades`.
+  Dibujaban una fila por operación —verbo, monto, equivalente en dólares, hora y
+  enlace al explorador o `PRIVADO`— y esa fila es justo lo que permite
+  reconstruir una transacción. `DECISIONES.md`.
+*/
+
 /** `es-ES` weekday initials, Monday first. `X` for miércoles, as Spain writes it. */
 const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"] as const;
 
@@ -492,105 +509,6 @@ function formatUtcDay(day: string): string {
   return `${date}/${month}`;
 }
 
-function TradeList({ trades, hideWallets }: { trades: PublicTrade[]; hideWallets: boolean }) {
-  if (trades.length === 0) {
-    // **DESIGN.md specifies no empty state for this list.** Its two-states table
-    // covers the leaderboard, the feed, the calendar, the win rate and an unpriced
-    // figure, and stops there. This line is derived from the one the same table
-    // gives the calendar — `Sin operaciones cerradas en este período.` — with
-    // `cerradas` dropped, because this list is every trade rather than only the
-    // closes. Recorded in the batch report as a gap in the document rather than
-    // presented as a rule it states.
-    return (
-      <div className="state-empty">
-        <p className="state-empty-lead">Sin operaciones en este período.</p>
-      </div>
-    );
-  }
-
-  return (
-    <ul className="trade-list">
-      {trades.map((trade) => (
-        <TradeRow key={trade.id} trade={trade} hideWallets={hideWallets} />
-      ))}
-    </ul>
-  );
-}
-
-function TradeRow({ trade, hideWallets }: { trade: PublicTrade; hideWallets: boolean }) {
-  const direction = trade.side === "buy" ? "gain" : "loss";
-  const verb = trade.side === "buy" ? "compró" : "vendió";
-  const moment = formatUtcMoment(trade.blockTime);
-
-  return (
-    <li className="row-trade">
-      <span className={direction}>{verb}</span>
-      <span className={`num ${direction}`}>{formatSol(trade.solAmount)} SOL</span>
-      <span className="symbol">{trade.symbol ? `$${trade.symbol}` : "un token sin símbolo"}</span>
-
-      {/* "its USD equivalent" — the trade's own `usd_amount`, fixed at its block
-          (spec §4.1). `formatUsdPrice` is `US$` at four significant digits,
-          which is the rule a trade's value wants as much as a price does; it is
-          reused rather than copied under a second name.
-
-          A block no `sol_price` row covered has none, and DESIGN.md's
-          `state-unpriced` says so in words: "never a dash, never a red −100 %". */}
-      <span className="trade-usd">
-        {trade.usdAmount === null ? (
-          <span className="state-unpriced">sin precio</span>
-        ) : (
-          <span className="num quantity">{formatUsdPrice(trade.usdAmount)}</span>
-        )}
-      </span>
-
-      {/*
-        The slot the reference fills with a signature link. Spec §7: "For hidden
-        KOLs, neither the signature nor the link is exposed" — and `serialize.ts`
-        has already dropped the signature by the time it reaches here, so this
-        branch cannot leak one even if it were written wrongly. `hideWallets` is
-        what decides the label, not `signature === null`: a stored ciphertext
-        that will not open also yields a null signature, and a KOL that publishes
-        its wallets must not be labelled `PRIVADO` because of a key rotation.
-      */}
-      {hideWallets ? (
-        <span className="privado">
-          <Padlock />
-          PRIVADO
-        </span>
-      ) : trade.signature === null ? (
-        <time className="num row-moment" dateTime={trade.blockTime}>
-          {moment}
-        </time>
-      ) : (
-        <a
-          className="num row-moment"
-          // encodeURIComponent, like the handle links beside it. A signature is
-          // base58 and every base58 character survives encoding unchanged, so
-          // this is belt and braces on today's data -- the reason it is here is
-          // that it is the only interpolation on this page that did not encode,
-          // and "harmless because of what the value happens to be" is a
-          // property of the pipeline, not of this line.
-          href={`https://solscan.io/tx/${encodeURIComponent(trade.signature)}`}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          <time dateTime={trade.blockTime}>{moment}</time>
-        </a>
-      )}
-    </li>
-  );
-}
-
-/**
- * The padlock, drawn rather than typed.
- *
- * `🔒` is an emoji: it carries its own colour, so it can be neither tinted with
- * the text beside it nor kept out of the green and red DESIGN.md reserves for
- * money — the same objection that ruled out an emoji medal on the podium. The
- * text-presentation selector is unreliable across platforms, and there is no
- * padlock in the `latin` subset `next/font` loads. Nine lines of SVG take
- * `currentColor` and need no font at all.
- */
 function Padlock() {
   return (
     <svg viewBox="0 0 12 14" width="10" height="12" aria-hidden="true" focusable="false">

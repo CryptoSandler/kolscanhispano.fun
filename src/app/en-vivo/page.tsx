@@ -1,45 +1,22 @@
-import Link from "next/link";
-import { readFeedPage } from "@/lib/feed";
-import { FeedLive } from "../feed-live";
-
-/** The feed is the newest trades; there is nothing here to prerender. */
-export const dynamic = "force-dynamic";
-
-export const metadata = {
-  title: "Live · kolscanhispano.fun",
-  description: "Cada compra y cada venta de los KOL del padrón, en cuanto la cadena las confirma.",
-};
+import { permanentRedirect } from "next/navigation";
 
 /**
- * The live feed, on its own page since 2026-09-03.
+ * `/en-vivo` — **308 a la home desde el 2026-09-06.**
  *
- * It sat above the ranking on the home page, which was ours rather than the
- * mould's: `docs/references.md` §5 argued that *"a live feed on the home page
- * is not a genre requirement. Putting one there is our choice, and it is the
- * choice that makes the site read as alive on the first three seconds."*
- * kolscanbrasil.io has no feed at all and its home **is** the ranking
- * (`docs/clone-map.md` §2). The owner settled it: the ranking takes the home
- * page and the feed keeps its own route rather than being deleted — kolscan.io
- * keeps its feed on its own page too, which is where this shape comes from.
+ * El feed público se elimina por decisión del dueño. El motivo es concreto y no
+ * es una precaución general: una fila del feed publicaba el token, el monto
+ * exacto y la hora, y esas tres cosas juntas alcanzan para encontrar la
+ * transacción en un explorador de bloques y, con ella, la wallet. El sitio
+ * promete en el modal de conexión que *"tus wallets nunca se publican"*, y
+ * publicar cada operación una por una era publicarlas por un camino más largo.
  *
- * Nothing about the feed itself changed. `FeedLive` is the same client
- * component with the same initial rows rendered on the server.
+ * **308 y no 404**, por lo mismo que `/leaderboard` es un 308: la ruta estuvo
+ * enlazada desde la home y pudo quedar en un mensaje o en un marcador. Un
+ * enlace que fue correcto no se contesta con un error.
+ *
+ * El feed no se borró — se mudó a `/admin/en-vivo`, detrás de `ADMIN_TOKEN`,
+ * porque para operar hace falta ver lo que entra. `DECISIONES.md`, 2026-09-06.
  */
-export default async function EnVivoPage() {
-  const feed = await readFeedPage();
-
-  return (
-    <>
-      <div className="page-head is-row">
-        <h1 className="display-lg">Live</h1>
-        <Link className="panel-link" href="/">
-          ← Volver a la clasificación
-        </Link>
-      </div>
-
-      <div className="panel" style={{ marginTop: "var(--stack)" }}>
-        <FeedLive initialTrades={feed.trades} />
-      </div>
-    </>
-  );
+export default function EnVivoPage(): never {
+  permanentRedirect("/");
 }

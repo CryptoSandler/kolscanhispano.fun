@@ -374,7 +374,6 @@ describe("card-stats", () => {
     await insertKol({ slug: "quieto" });
     const body = await detail("quieto");
     expect([body.tradeCount, body.volumeSol, body.realizedSol]).toEqual([0, "0", "0"]);
-    expect(body.trades).toEqual([]);
   });
 });
 
@@ -388,30 +387,25 @@ describe("list-defi-trades", () => {
       { kol, mint, side: "buy", sol: "9", tokens: "5", usd: "1350", at: "2026-08-24T05:00:00Z" },
     ]);
 
+    /*
+      La ventana se sigue midiendo, sobre los agregados en vez de sobre la lista
+      de operaciones que se eliminó el 2026-09-06: de las tres operaciones
+      sembradas, dos caen en el día y una queda afuera. Es la misma propiedad
+      —la ventana recorta— sin publicar cada fila para comprobarlo.
+    */
     const body = await detail("uno", "?window=1d");
-    expect(body.trades.map((t) => t.blockTime)).toEqual([
-      "2026-08-25T05:00:00.000Z",
-      "2026-08-25T02:00:00.000Z",
-    ]);
-    // DESIGN.md `list-defi-trades`: "verb, SOL amount by sign and its USD
-    // equivalent." The equivalent is the trade's own `usd_amount`, fixed at its
-    // block by spec §4.1 -- not a re-pricing, and not the per-token price.
-    expect(body.trades.map((t) => t.usdAmount)).toEqual(["300", "150"]);
-    expect(body.trades.map((t) => t.side)).toEqual(["sell", "buy"]);
+    expect(body.tradeCount).toBe(2);
+    expect(body.volumeSol).toBe("3");
   });
 
-  it("says nothing about USD for a trade no rate covered, rather than zero", async () => {
-    // Migration 005's "looked, no rate existed". `0` would be a claim that the
-    // trade was worth nothing; DESIGN.md's `state-unpriced` says it in words.
-    const kol = await insertKol({ slug: "uno" });
-    await insertTrades([
-      { kol, mint: inventAddress(), side: "buy", sol: "1", tokens: "10", usd: null,
-        at: "2026-08-25T02:00:00Z" },
-    ]);
-    expect((await detail("uno")).trades[0].usdAmount).toBeNull();
-  });
+  /*
+    El caso de "sin cotización" se mudó al agregado por cadena: `chain-pnl.ts`
+    se niega a sumar la mitad que sí tiene precio y devuelve `realizedUsd: null`,
+    que es lo que el modal imprime en palabras. La operación individual que este
+    caso miraba ya no está en ninguna superficie pública.
+  */
 
-  it("only ever carries this KOL's trades", async () => {
+  it("only ever counts this KOL's trades", async () => {
     const uno = await insertKol({ slug: "uno" });
     const otro = await insertKol({ slug: "otro" });
     const mint = inventAddress();
@@ -419,9 +413,11 @@ describe("list-defi-trades", () => {
       { kol: uno, mint, side: "buy", sol: "1", tokens: "10", usd: "150", at: "2026-08-25T02:00:00Z" },
       { kol: otro, mint, side: "buy", sol: "7", tokens: "70", usd: "1050", at: "2026-08-25T03:00:00Z" },
     ]);
+    // Sobre los agregados, que es lo único que queda: el volumen del otro KOL
+    // no puede aparecer acá.
     const body = await detail("uno");
-    expect(body.trades).toHaveLength(1);
-    expect(body.trades[0].solAmount).toBe("1");
+    expect(body.tradeCount).toBe(1);
+    expect(body.volumeSol).toBe("1");
   });
 });
 
@@ -496,7 +492,22 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
     ]);
 
     const text = await (await call("uno")).text();
-    expect(findDisallowedBase58(text).sort()).toEqual([mint, ...signatures].sort());
+    /*
+      **El conjunto esperado es sólo el mint desde el 2026-09-06.** Antes
+      llevaba también las firmas que el payload publicaba para un KOL con
+      wallets visibles; con `list-defi-trades` eliminado no viaja ninguna.
+    */
+    /*
+      **Nada en base58, ni siquiera el mint.**
+
+      El conjunto esperado era `[mint, ...firmas]`. Con `list-defi-trades`
+      eliminado no viaja ninguna firma **y tampoco el mint**: el mint viajaba
+      *en* la operación, que es el detalle que hace de esta una promesa más
+      fuerte y no sólo más corta. El payload del modal quedó sin un solo
+      identificador on-chain.
+    */
+    expect(findDisallowedBase58(text)).toEqual([]);
+    for (const signature of signatures) expect(text).not.toContain(signature);
   });
 
   it("drops every signature for a KOL that hides its wallets", async () => {
@@ -514,23 +525,25 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
     const text = await response.clone().text();
     const body = (await response.json()) as PublicKolDetail;
 
-    expect(body.kol.hideWallets).toBe(true);
-    expect(body.trades.map((t) => t.signature)).toEqual([null, null]);
-    for (const signature of signatures) expect(text).not.toContain(signature);
-    // ...and nothing base58 is left but the mint.
-    expect(findDisallowedBase58(text)).toEqual([mint]);
-  });
+    /*
+      **La promesa se volvió más simple de lo que era.**
 
-  it("keeps the signature for a KOL that publishes its wallets", async () => {
-    // The other half: a route that dropped every signature would pass the case
-    // above while breaking spec §8.2's explorer links for public KOLs.
-    const kol = await insertKol({ slug: "abierto", hideWallets: false });
-    const signatures = await insertTrades([
-      { kol, mint: inventAddress(), side: "buy", sol: "1", tokens: "10", usd: "150",
-        at: "2026-08-25T02:00:00Z" },
-    ]);
-    const body = await detail("abierto");
-    expect(body.trades.map((t) => t.signature)).toEqual(signatures);
+      Antes esto medía que las firmas de un KOL con wallets ocultas viniesen en
+      `null` mientras las de un KOL abierto viniesen enteras — dos casos, una
+      distinción sutil, y un payload que llevaba una fila por operación con su
+      token, su monto y su hora.
+
+      Desde el 2026-09-06 no hay operaciones en el payload de ninguno de los
+      dos, así que no hay firma que ocultar ni que publicar: el explorador ya no
+      es alcanzable desde una superficie pública. Lo que queda por afirmar es
+      que **no viene nada** — ni firma, ni monto, ni hora.
+    */
+    expect(body.kol.hideWallets).toBe(true);
+    expect(text).not.toContain("signature");
+    expect(text).not.toContain("blockTime");
+    for (const signature of signatures) expect(text).not.toContain(signature);
+    // ...y no queda nada en base58: el mint viajaba en la operación.
+    expect(findDisallowedBase58(text)).toEqual([]);
   });
 
   /**
@@ -564,8 +577,10 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
       naming its fields one at a time.
     */
     expect(Object.keys(body).sort()).toEqual(
+      // `trades` salió el 2026-09-06: el payload lleva agregados del período y
+      // ninguna operación individual (`DECISIONES.md`).
       ["calendar", "chains", "from", "kol", "privateWallets", "publicWallets", "realizedSol",
-       "realizedUsd", "series", "to", "tradeCount", "trades", "volumeSol", "window"].sort(),
+       "realizedUsd", "series", "to", "tradeCount", "volumeSol", "window"].sort(),
     );
     expect(Object.keys(body.calendar).sort()).toEqual(["days", "month", "sells"].sort());
     // A month the server resolved, never the parameter echoed back.
