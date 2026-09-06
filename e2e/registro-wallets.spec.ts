@@ -2,122 +2,153 @@ import { expect, test } from "@playwright/test";
 import { installWallets } from "./fake-wallet";
 
 /**
- * `/registro`'s wallet chooser, driven in a real browser by wallets that
- * register themselves exactly as an extension does.
+ * El selector de wallets, manejado en un navegador de verdad por wallets que se
+ * registran exactamente como lo hace una extensión.
  *
- * **This is the case no unit test can reach and no installed extension can
- * provide here.** Playwright's browser has no wallet extension, and the two
- * wallets that matter for the rule — one that does Solana and one that does not
- * — cannot both be installed on demand. Registering them from the page is the
- * same handshake an extension performs, so the whole path is exercised: the
- * `app-ready` dispatch, the filter, the chooser, the connect and the signature.
+ * **Es el caso que ningún test unitario alcanza y que ninguna extensión
+ * instalada puede dar acá.** El navegador de Playwright no tiene extensiones, y
+ * las dos wallets que importan para la regla —una que hace Solana y una que no—
+ * no se pueden instalar a pedido. Registrarlas desde la página es el mismo
+ * handshake que hace una extensión, así que se ejercita el camino entero: el
+ * `app-ready`, el filtro, la lista, la conexión y la firma.
  *
- * `addInitScript` runs before any page script, which is what makes these
- * wallets "already present" when discovery asks — the ordering that the real
- * failure mode depends on.
+ * ## Contra el modal nuevo, desde el 2026-09-06
+ *
+ * Este archivo estaba escrito contra dos cosas que ya no existen: un botón
+ * `Connect Wallet` **adentro** del modal que se abrió con `Connect Wallet`, y un
+ * `dialog.modal-wallets` encima del primero. El dueño marcó las dos en el gate.
+ *
+ * Ahora el modal **abre directo en la lista** y todo pasa en el mismo panel, que
+ * es la estructura de RainbowKit y Reown AppKit. Los casos son los mismos; lo
+ * que cambió es dónde miran.
  */
 
-test.describe("the wallet chooser on /registro", () => {
-  /**
-   * The one-wallet branch. A chooser with a single row asks a question that has
-   * one answer, so there is no chooser: the click connects.
-   */
-  test("connects straight through when exactly one wallet is registered", async ({ page }) => {
-    await installWallets(page, 1);
-    await page.goto("/registro");
+/** El panel del modal, que es donde vive todo ahora. */
+const PANEL = "dialog.modal-connect";
 
-    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
-
-    await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
-    await expect(page.getByText("¡Casi listo!")).toBeVisible({ timeout: 30_000 });
-  });
-
-  /**
-   * The other branch, and the reason the chooser exists at all: with two Solana
-   * wallets installed the reader picks, which is precisely what `window.solana`
-   * could not represent.
-   */
-  test("opens the chooser when two or more are registered", async ({ page }) => {
+test.describe("el selector de wallets en /registro", () => {
+  test("lists the installed wallets as soon as the modal opens", async ({ page }) => {
+    // Sin paso previo: `/registro` abre el modal y el modal abre en la lista.
     await installWallets(page, 2);
     await page.goto("/registro");
 
-    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText("Prueba Solana 1")).toBeVisible();
+    await expect(panel.getByText("Prueba Solana 2")).toBeVisible();
+    // Abrirlo no conecta nada.
+    await expect(page.getByText("Casi listo")).toHaveCount(0);
+  });
 
-    const dialog = page.locator("dialog.modal-wallets");
-    await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
-    await expect(dialog.getByText("Prueba Solana 1")).toBeVisible();
-    await expect(dialog.getByText("Prueba Solana 2")).toBeVisible();
-    // Nothing was connected by merely opening it.
-    await expect(page.getByText("¡Casi listo!")).toHaveCount(0);
+  test("groups the installed wallets under `Instaladas`", async ({ page }) => {
+    await installWallets(page, 2);
+    await page.goto("/registro");
+
+    const panel = page.locator(PANEL);
+    await expect(panel.getByText("Instaladas")).toBeVisible({ timeout: 30_000 });
   });
 
   /**
-   * The Rabby case. The EVM-only wallet registers itself properly and is absent
-   * because it declares no Solana chain -- not because anything here knows its
-   * name. Asserted on the two-wallet branch, where the list is visible.
+   * El caso Rabby. La wallet EVM-only se registra bien y no aparece porque no
+   * declara ninguna cadena de Solana — no porque acá se sepa su nombre.
    */
-  test("leaves an EVM-only wallet out of the chooser", async ({ page }) => {
+  test("leaves an EVM-only wallet out of the installed list", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
-    const dialog = page.locator("dialog.modal-wallets");
-    await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
-    await expect(dialog.getByText("Prueba Solo EVM")).toHaveCount(0);
-    await expect(dialog.locator(".wallet-choice")).toHaveCount(2);
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText("Prueba Solo EVM")).toHaveCount(0);
+    // Dos filas detectadas; las de `Otras` son enlaces, no botones.
+    await expect(panel.locator("button.wallet-choice")).toHaveCount(2);
   });
 
-  test("says so, and opens nothing, when no wallet is installed", async ({ page }) => {
+  /**
+   * **`Otras` cuando no hay nada instalado.**
+   *
+   * Antes esto era un mensaje de error. Ahora es la sección que el estándar
+   * pone en su lugar: las wallets que se pueden instalar, con su enlace. Un
+   * lector sin extensiones no se encuentra con un fallo — se encuentra con lo
+   * que puede hacer.
+   */
+  test("offers wallets to install when none is present", async ({ page }) => {
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
 
-    await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
-    // `.state-error` and not `getByRole("alert")`: Next injects its own
-    // `__next-route-announcer__` with `role="alert"`, so the role alone matches
-    // two elements and fails on strict mode rather than on the copy.
-    /*
-      **The message names no chain since 2026-09-04**, and that is the change
-      rather than a rewording. `/registro` offers Solana over Wallet Standard
-      and, with `CHAIN_ROBINHOOD_INGESTION=on`, Robinhood over EIP-6963 — so a
-      sentence saying "ninguna wallet de Solana" was false the moment the second
-      namespace appeared: a reader with MetaMask installed and no Solana wallet
-      would have been told, accurately and uselessly, about the one they do not
-      have.
-
-      What a reader needs here is what to do, not which handshake came back
-      empty, so the copy states the action and the chain stays out of it.
-    */
-    await expect(page.locator("p.state-error")).toContainText(
-      "No encontramos ninguna wallet en este navegador",
-    );
+    const panel = page.locator(PANEL);
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText("Otras")).toBeVisible();
+    await expect(panel.getByText("MetaMask")).toBeVisible();
+    await expect(panel.locator("a.wallet-choice").first()).toHaveAttribute("href", /metamask/);
+    // Y nada detectado, porque no hay nada.
+    await expect(panel.getByText("Instaladas")).toHaveCount(0);
   });
 
-  test("Esc closes the chooser without connecting anything", async ({ page }) => {
+  test("Esc closes the panel without connecting anything", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
-    await expect(page.locator("dialog.modal-wallets")).toHaveAttribute("open", "");
+    await expect(page.locator(PANEL)).toBeVisible({ timeout: 30_000 });
 
     await page.keyboard.press("Escape");
 
-    await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
-    // Still on the first step: nothing was connected, so no wallet list rendered.
-    await expect(page.getByRole("button", { name: "Connect Wallet" }).last()).toBeVisible();
+    await expect(page.locator(PANEL)).toHaveCount(0);
+    await expect(page.getByText("Casi listo")).toHaveCount(0);
   });
 
   /**
-   * Picking a wallet runs the real flow as far as the browser can take it: the
-   * page asks the server for a nonce, builds the proof text, and hands it to the
-   * wallet's `signMessage`. The wallet returns a fixed signature, so the server
-   * will refuse the proof later -- which is correct and is not what this asserts.
+   * Elegir una wallet corre el flujo real hasta donde el navegador puede: la
+   * página pide el nonce, arma el texto de la prueba y se lo da a `signMessage`.
+   * La wallet devuelve una firma fija, así que el servidor la va a rechazar
+   * después — que es correcto y no es lo que este caso mide.
    */
-  test("picking from the chooser carries the flow past the connect step", async ({ page }) => {
+  test("picking a wallet carries the flow to the last step", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
-    await page.getByRole("button", { name: "Connect Wallet" }).last().click();
-    await page.getByRole("button", { name: "Prueba Solana 2" }).click();
+    await page.locator(PANEL).getByRole("button", { name: /Prueba Solana 2/ }).click();
 
-    await expect(page.locator("dialog.modal-wallets")).toHaveCount(0);
-    await expect(page.getByText("¡Casi listo!")).toBeVisible({ timeout: 30_000 });
+    // Sigue siendo el mismo panel: no se abrió nada encima ni se navegó.
+    await expect(page.locator(PANEL)).toBeVisible();
+    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+  });
+
+  /**
+   * `Casi listo` son tres controles y un botón, y nada más.
+   *
+   * Era un muro de texto: cada control arrastraba dos o tres frases y el CTA
+   * quedaba fuera de pantalla a 390. `docs/copy.md` fija ahora una línea de
+   * ayuda por control.
+   */
+  test("the last step is three controls and one primary button", async ({ page }) => {
+    await installWallets(page, 2);
+    await page.goto("/registro");
+    await page.locator(PANEL).getByRole("button", { name: /Prueba Solana 2/ }).click();
+    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+
+    const panel = page.locator(PANEL);
+    // La fila de la wallet, con su toggle.
+    await expect(panel.locator(".almost-wallet")).toHaveCount(1);
+    await expect(panel.getByRole("button", { name: "Privada" })).toBeVisible();
+    // El campo del handle.
+    await expect(panel.getByPlaceholder("@usuario")).toBeVisible();
+    // Un solo CTA primario.
+    await expect(panel.locator(".connect-cta")).toHaveCount(1);
+    await expect(panel.getByRole("button", { name: "Entrar al ranking" })).toBeVisible();
+    // Sin signos de admiración, que es lo que pedía `docs/copy.md`.
+    await expect(panel.getByText("¡Casi listo!")).toHaveCount(0);
+  });
+
+  test("the visibility toggle starts private and says so", async ({ page }) => {
+    // Privada por defecto: publicar es una decisión, no un default.
+    await installWallets(page, 2);
+    await page.goto("/registro");
+    await page.locator(PANEL).getByRole("button", { name: /Prueba Solana 2/ }).click();
+    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+
+    const toggle = page.locator(PANEL).getByRole("button", { name: "Privada" });
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await toggle.click();
+    await expect(page.locator(PANEL).getByRole("button", { name: "Pública" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });

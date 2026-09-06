@@ -3671,8 +3671,12 @@ a.cta {
   que es exactamente la clase de cosa para la que sirve un gate visual.
 */
 .modal-connect {
-  width: min(440px, calc(100vw - 32px));
-  max-height: min(88vh, 760px);
+  /*
+    ~400 px y **alto al contenido**, como RainbowKit y Reown AppKit. Antes era
+    una caja alta con aire abajo cuando la lista era corta.
+  */
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(88vh, 720px);
   margin: auto;
   padding: 0;
   border: 1px solid var(--hairline);
@@ -3692,6 +3696,290 @@ a.cta {
 .modal-connect .modal-card {
   position: relative;
   padding: 24px;
+}
+
+.connect-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Un solo texto de ayuda, dos líneas. */
+.connect-lead {
+  margin: 0 0 20px;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.connect-section {
+  margin: 16px 0 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.connect-section:first-child {
+  margin-top: 0;
+}
+
+/* Las filas del selector: 56 px, con hover. */
+.modal-connect .wallet-choice,
+.connect-step .wallet-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.connect-step .wallet-choice:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.06);
+  border-color: rgb(255 255 255 / 0.08);
+}
+
+.connect-step .wallet-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.connect-step .wallet-choice-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex: none;
+  object-fit: contain;
+}
+
+/* La inicial en un círculo, cuando no hay logo. Nunca uno inventado. */
+/*
+  La inicial en un círculo, cuando el logo todavía no está en `public/wallets/`.
+
+  Con `0.08` de fondo y el texto en `--text-dim` se leía como un hueco vacío
+  antes del nombre —se vio en la captura del gate—, que es peor que no poner
+  nada: parece que algo falló. Con más contraste se lee como lo que es, un
+  marcador de posición.
+*/
+.connect-step .wallet-choice-icon.is-monogram {
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.14);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.connect-step .wallet-choice-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.wallet-choice-chains {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+
+.wallet-badge,
+.wallet-install {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* El estado, en el mismo panel. */
+.connect-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgb(255 255 255 / 0.2);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+
+.connect-error {
+  margin: 0 0 12px;
+}
+
+.connect-back {
+  margin-bottom: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.connect-step-title {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Paso 2: chips grandes de cadena. */
+.chain-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chain-choice {
+  padding: 12px 20px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chain-choice:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.06);
+}
+
+/* `Casi listo`: tres controles y un botón. */
+.almost-wallets {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.almost-wallet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+
+.almost-address {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.visibility-toggle {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.visibility-toggle.is-public {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--gain) 20%, transparent);
+  color: var(--gain);
+}
+
+/* Una línea de ayuda por control: `docs/copy.md`. */
+.control-help {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.control-help.is-expanded {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.04);
+}
+
+.help-toggle {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.almost-field {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.almost-field input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: 16px;
+}
+
+.connect-cta {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.connect-secondary {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+@media (max-width: 430px) {
+  .modal-connect {
+    width: calc(100vw - 32px);
+  }
 }
 
 .modal-connect .headline {

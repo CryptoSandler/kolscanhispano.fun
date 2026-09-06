@@ -1,7 +1,7 @@
 import { aadFor, decrypt } from "./crypto";
 import { query } from "./db";
 import type { Chain } from "./chain";
-import { truncateAddressLong } from "./public-wallets";
+import { truncateAddressLong } from "./truncate";
 
 /**
  * El perfil que el KOL ve de sí mismo.

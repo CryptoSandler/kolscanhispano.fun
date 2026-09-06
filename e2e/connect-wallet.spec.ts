@@ -27,23 +27,28 @@ test.describe("el modal de Connect Wallet", () => {
     expect(new URL(page.url()).pathname).toBe("/");
   });
 
-  test("dice qué pasa con las wallets en la primera pantalla", async ({ page }) => {
+  test("dice qué pasa con las wallets, una sola vez y arriba de todo", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("link", { name: "Connect Wallet" }).click();
 
     const dialog = page.locator("dialog.modal-connect");
-    // Las dos promesas, y las dos las verifica un test:
-    // `address-invariant.test.ts` y `no-money-path.test.ts`.
-    // Una sola vez: vivía duplicada en el modal y en `RegistroForm`.
-    await expect(dialog.locator(".privacy-line")).toHaveCount(1);
-    await expect(dialog.locator(".privacy-line")).toContainText("nunca se publican");
-    // La cláusula que se sumó con la eliminación del feed público.
-    await expect(dialog.locator(".privacy-line")).toContainText(
-      "tampoco publicamos tus operaciones una por una",
-    );
-    await expect(dialog.locator(".privacy-line")).toContainText(
+    /*
+      **Un solo texto, de dos líneas.** Había dos párrafos que decían lo mismo
+      con distintas palabras —el del modal y el del formulario— uno debajo del
+      otro. El texto exacto lo fijó el dueño el 2026-09-06; `Firmás` va `Firmas`
+      porque `docs/copy.md` prohíbe el voseo en superficie pública.
+
+      Las dos promesas las verifica un test: `no-money-path.test.ts` la firma sin
+      transacción, `address-invariant.test.ts` que ninguna dirección no pública
+      salga a una superficie pública.
+    */
+    await expect(dialog.locator(".connect-lead")).toHaveCount(1);
+    await expect(dialog.locator(".connect-lead")).toContainText(
       "Firmas un mensaje, no una transacción",
     );
+    await expect(dialog.locator(".connect-lead")).toContainText("nunca se publican");
+    // Y no quedó la copia vieja en el formulario.
+    await expect(dialog.locator(".privacy-line")).toHaveCount(0);
   });
 
   test("/registro abre el mismo modal y conserva la URL", async ({ page }) => {

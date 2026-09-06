@@ -206,11 +206,14 @@ test.describe("the home page at 1280×900", () => {
     await expect(registro).toHaveAttribute("href", "/registro");
     expect(await registro.evaluate((node) => node.tagName)).toBe("A");
 
-    // And it goes somewhere that answers.
+    /*
+      Y abre algo que responde: el modal, **directo en la lista de wallets**.
+      Este caso esperaba un botón `Connect Wallet` adentro del modal — el paso
+      previo que salió el 2026-09-06 porque no decidía nada.
+    */
     await registro.click();
-    await expect(page.getByRole("button", { name: "Connect Wallet" }).last()).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(page.locator("dialog.modal-connect")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Conecta tu wallet" })).toBeVisible();
   });
 });
 

@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { WalletPicker } from "../wallet-picker";
-import { connectChoice, discoverChoices, signChoice, type Choice } from "../wallet-choice";
+import {
+  connectChoice,
+  discoverChoices,
+  groupChoices,
+  signChoice,
+  type Choice,
+} from "../wallet-choice";
 import { CABAL_ACTIONS, type CabalAction } from "@/lib/cabal-subject";
 import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof";
 import type { Chain } from "@/lib/chain";
@@ -398,11 +404,15 @@ export function CabalPanel({ chains }: { chains: readonly Chain[] }) {
     <main className="page">
       {choices && (
         <WalletPicker
-          wallets={choices}
+          wallets={groupChoices(choices)}
           onPick={(picked) => {
-            const chosen = choices.find(
-              (c) => c.name === picked.name && c.chain === picked.chain,
-            );
+            /*
+              La fila es una wallet, no una cadena: `groupChoices` fusiona los
+              dos handshakes en una sola. Se toma la primera opción de esa
+              wallet — hoy hay una por cadena y la única multichain es Phantom,
+              que en este flujo firma en Solana.
+            */
+            const chosen = choices.find((c) => c.name === picked.name);
             if (chosen) void connect(chosen);
           }}
           onCancel={() => setChoices(null)}

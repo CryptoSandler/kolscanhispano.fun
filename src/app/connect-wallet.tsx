@@ -21,6 +21,16 @@ import { RegistroForm } from "./registro/registro-form";
 
 type ConnectApi = { open: () => void; close: () => void; isOpen: boolean };
 
+/**
+ * Las dos promesas, en dos líneas y una sola vez.
+ *
+ * En español neutro y no en el voseo del pedido (`Firmás`): `docs/copy.md`
+ * prohíbe el voseo en toda superficie que vea un lector, y la excepción quedó
+ * anotada ahí.
+ */
+export const CONNECT_LEAD =
+  "Firmas un mensaje, no una transacción. Tus wallets nunca se publican salvo que elijas mostrarlas.";
+
 const ConnectWalletContext = createContext<ConnectApi | null>(null);
 
 /**
@@ -75,9 +85,25 @@ export function ConnectWalletProvider({
 }
 
 /**
- * El diálogo. Las tres formas de cerrarlo son las que `DESIGN.md` le exige a
- * `modal-kol` — Esc, clic en el fondo, botón — porque un lector no aprende una
- * convención distinta por modal.
+ * El diálogo, con la estructura que usa la industria.
+ *
+ * Medido contra RainbowKit (`rainbowkit.com`) y Reown AppKit
+ * (`docs.reown.com`), que son los que usan Uniswap, Jupiter y pump.fun. Lo que
+ * se copia es la **forma**, que es donde estaba el problema:
+ *
+ *   - **Abre directo en la lista.** No hay un botón `Connect Wallet` adentro de
+ *     un modal que se abrió con `Connect Wallet`: el paso previo no decidía
+ *     nada. Fue lo primero que el dueño marcó.
+ *   - **Una caja de ~400 px que crece con el contenido**, no una pantalla alta
+ *     con aire abajo.
+ *   - **Dos secciones**: `Instaladas`, detectadas por Wallet Standard y
+ *     EIP-6963 con su ícono real; y `Otras`, las que no están, con su enlace de
+ *     instalación.
+ *   - **Un solo texto**, de dos líneas. Antes había dos párrafos que decían lo
+ *     mismo con distintas palabras.
+ *
+ * Los estados —conectando, error, wallet equivocada— pasan **en este mismo
+ * panel**. Un segundo diálogo encima del primero fue el otro problema del gate.
  */
 function ConnectWalletDialog({
   chains,
@@ -139,12 +165,19 @@ function ConnectWalletDialog({
           {/* U+00D7, no una equis minúscula. */}×
         </button>
 
-        <h2 id="connect-title" className="headline">
+        <h2 id="connect-title" className="connect-title">
           Conecta tu wallet
         </h2>
 
-        {/* La línea de privacidad la renderiza `RegistroForm`, una sola vez:
-            estaba acá **y** ahí, y se veía dos veces seguidas. */}
+        {/*
+          **Un solo texto, dos líneas.** Había dos párrafos que decían lo mismo
+          con distintas palabras —éste y uno de `RegistroForm`— uno debajo del
+          otro. Las dos promesas las verifica un test: `no-money-path.test.ts`
+          la firma sin transacción, `address-invariant.test.ts` que ninguna
+          dirección no pública salga a una superficie pública.
+        */}
+        <p className="connect-lead">{CONNECT_LEAD}</p>
+
         <RegistroForm chains={chains} />
       </div>
     </dialog>

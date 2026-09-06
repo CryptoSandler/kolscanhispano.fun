@@ -141,3 +141,26 @@ un texto que el dueño dio como exacto, no una elección de estilo mía.
 La cláusula `tampoco publicamos tus operaciones una por una` se sumó con la
 eliminación del feed público: antes la frase prometía algo que la página de al
 lado contradecía.
+
+
+## En un modal, una línea de ayuda por control — 2026-09-06
+
+Regla del dueño, y viene de mirar `Casi listo` en el gate: era un muro de texto.
+Cada control arrastraba dos o tres frases —que el PnL suma todas las wallets, qué
+cadenas se indexan, qué pasa al publicar una dirección— y el resultado era que el
+botón primario quedaba abajo de todo, fuera de pantalla a 390.
+
+**Una línea de 13 px por control, y nada más.** Lo que no entra va detrás de un
+`?` o al perfil, que es donde alguien lo va a buscar cuando lo necesite.
+
+Lo que quedó, para que se vea el tamaño:
+
+- Visibilidad: *"Privada por defecto. Pública muestra la dirección; una vez
+  pública no se puede ocultar."*
+- Handle: *"Después publicas un tweet con tu código para verificar."*
+
+**Sin signos de admiración** (`Casi listo`, no `¡Casi listo!`) y **sin repetir el
+rótulo**: decía `TU CUENTA DE X` arriba y `Usuario de X` abajo, dos nombres para
+un campo.
+
+La línea de privacidad **no se repite** en este paso: ya se leyó en el anterior.

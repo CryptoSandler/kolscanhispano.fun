@@ -2,9 +2,16 @@
 
 import { useState } from "react";
 import { OnboardingModal, type OnboardingWallet } from "../onboarding-modal";
-import { WalletPicker } from "../wallet-picker";
+import { AlmostDone } from "../almost-done";
+import { WalletStep } from "../wallet-step";
 import { PROOF_DOMAIN, proofMessage, type ProofFields } from "@/lib/wallet-proof";
-import { connectChoice, discoverChoices, signChoice, type Choice } from "../wallet-choice";
+import {
+  connectChoice,
+  discoverChoices,
+  groupChoices,
+  signChoice,
+  type Choice,
+} from "../wallet-choice";
 import type { Chain } from "@/lib/chain";
 
 /**
@@ -196,89 +203,37 @@ export function RegistroForm({ chains }: { chains: readonly Chain[] }) {
   if (done) return <TweetStep kolId={done.kolId} code={done.code} />;
 
   return (
-    <main className="page">
+    <div className="connect-panel">
       {/*
-        **La privacidad, dicha antes de pedir nada.**
+        **El panel abre directo en la lista.** No hay un botón `Connect Wallet`
+        adentro de un modal que se abrió con `Connect Wallet`: ese paso previo no
+        decidía nada, y fue lo primero que el dueño marcó en el gate. La
+        estructura es la de RainbowKit y Reown AppKit — secciones `Instaladas` y
+        `Otras`, una fila por wallet, tamaño al contenido.
 
-        Cada frase de acá la sostiene un test, que es la única razón por la que
-        se puede escribir:
-
-        - *"ni truncadas"* — `address-invariant.test.ts` recorre el HTML emitido
-          y falla si aparece una dirección que su KOL no publicó, a seis
-          caracteres o a la longitud que sea.
-        - *"salvo que vos elijas mostrarlas"* — `public-wallets.ts` es el único
-          módulo que descifra una dirección para una superficie pública, y su
-          `WHERE` exige `is_public`.
-        - *"Firmás un mensaje, no una transacción"* — `no-money-path.test.ts`
-          falla si cualquier API que construya o mande una transacción se vuelve
-          importable desde el código de la aplicación.
-
-        Nada de esto es una promesa de intención: son tres tests que se rompen si
-        deja de ser cierto.
+        La línea de privacidad la dice el modal una sola vez, arriba de esto.
       */}
-      <p className="privacy-line">{PRIVACY_LINE}</p>
-      {choices && (
-        <WalletPicker
-          wallets={choices}
-          onPick={(picked) => {
-            // The chooser hands back the row it was given, so the connect path
-            // gets the wallet object rather than re-discovering it: a second
-            // handshake between the click and the signature could return a
-            // different object for the same name.
-            const chosen = choices.find(
-              (c) => c.name === picked.name && c.chain === picked.chain,
-            );
-            if (chosen) void connect(chosen);
-          }}
-          onCancel={() => setChoices(null)}
+      {wallets.length === 0 ? (
+        <WalletStep
+          chains={chains}
+          busy={busy}
+          error={error}
+          onPick={(choice) => void connect(choice)}
+        />
+      ) : (
+        <AlmostDone
+          wallets={wallets}
+          error={error}
+          busy={busy}
+          onSubmit={submit}
+          onAddAnother={openPicker}
+          picking={choices}
+          onPickAnother={(choice) => void connect(choice)}
+          onCancelPick={() => setChoices(null)}
+          chains={chains}
         />
       )}
-      {wallets.length === 0 ? (
-        <section className="onboarding">
-          <header className="onboarding-head">
-            {/*
-              **Sin título propio desde el 2026-09-06.** Decía `Entra al padrón`,
-              y ahora el único título de esta pantalla es el del modal que la
-              contiene, `Conecta tu wallet`. Dos títulos, uno encima del otro,
-              eran dos nombres para la misma acción — y `padrón` pasó a ser
-              término interno (`docs/copy.md`).
-            */}
-            <p className="page-subtitle">
-              Conecta tu wallet y firma un mensaje. No mueve fondos ni aprueba ninguna
-              transacción.
-            </p>
-          </header>
-          {error && (
-            <p className="label state-error" role="alert">
-              {error}
-            </p>
-          )}
-          {/* Mismo texto y mismo violeta que el botón del header que lo abre:
-              eran dos botones de conectar de dos colores en la misma pantalla. */}
-          <button type="button" className="cta" onClick={openPicker} disabled={busy}>
-            Connect Wallet
-          </button>
-        </section>
-      ) : (
-        <>
-          {error && (
-            <p className="label state-error" role="alert">
-              {error}
-            </p>
-          )}
-          {/* `available` is handed down rather than defaulted, for the reason the
-              wrapper in `page.tsx` exists: `activeChains()` reads a server env
-              var, and this component runs in the browser. Left to its default
-              the sentence below read "Por ahora indexamos Solana" while the
-              chooser was offering Robinhood — two answers from one flag, which
-              is exactly what `chain.ts` centralises to prevent. */}
-          <OnboardingModal wallets={wallets} onSubmit={submit} available={chains} />
-          <button type="button" className="segment" onClick={openPicker} disabled={busy}>
-            + conectar otra wallet
-          </button>
-        </>
-      )}
-    </main>
+    </div>
   );
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useConnectWallet } from "./connect-wallet";
 import { ProfileModal } from "./profile-modal";
 import type { Profile } from "@/lib/profile";
@@ -22,8 +23,25 @@ import { VerifiedTick } from "./verified-tick";
  */
 export function ProfileChip() {
   const connect = useConnectWallet();
+  const pathname = usePathname();
+  const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+
+  /*
+    **Abierto se deriva, no se sincroniza.**
+
+    `/perfil` abre el modal al entrar, igual que `/registro` abre el de
+    conectar. La primera versión lo hacía con un efecto que llamaba `setOpen`,
+    y eso es un `setState` síncrono dentro de un efecto — el render en cascada
+    que el linter marca, y una segunda fuente de verdad sobre algo que la ruta
+    ya dice.
+
+    Derivarlo resuelve las dos cosas: cerrar desde `/perfil` navega a `/`, el
+    pathname cambia y el modal se cierra solo, sin que nadie tenga que acordarse
+    de bajar la bandera.
+  */
+  const open = opened || (pathname === "/perfil" && profile !== null);
 
   const load = useCallback(async () => {
     try {
@@ -55,7 +73,7 @@ export function ProfileChip() {
   const leave = useCallback(async () => {
     await fetch("/api/salir", { method: "POST" });
     setProfile(null);
-    setOpen(false);
+    setOpened(false);
     // La página vuelve a pedir lo suyo: el ranking no cambia, pero cualquier
     // cosa que dependa de la sesión sí.
     window.location.reload();
@@ -85,7 +103,7 @@ export function ProfileChip() {
         <button
           type="button"
           className="profile-chip__open"
-          onClick={() => setOpen(true)}
+          onClick={() => setOpened(true)}
           aria-haspopup="dialog"
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- el avatar lo
@@ -100,7 +118,16 @@ export function ProfileChip() {
       </span>
 
       {open && (
-        <ProfileModal profile={profile} onClose={() => setOpen(false)} onChanged={load} />
+        <ProfileModal
+          profile={profile}
+          onClose={() => {
+            setOpened(false);
+            // Cerrar desde `/perfil` devuelve la URL a la home, que es lo que
+            // queda a la vista. La ruta directa sigue sirviendo para llegar.
+            if (pathname === "/perfil") router.replace("/");
+          }}
+          onChanged={load}
+        />
       )}
     </>
   );

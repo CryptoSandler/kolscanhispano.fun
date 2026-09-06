@@ -35,12 +35,24 @@ const CHAIN_LABEL: Record<string, string> = {
   ethereum: "Ethereum",
 };
 
-export type PickableWallet = { name: string; chain: string; icon?: string };
+/**
+ * Una fila del selector: una **wallet**, con las cadenas que soporta.
+ *
+ * Era `{ name, chain }` —una fila por cadena— y en el gate se vio el problema:
+ * Phantom habla los dos handshakes, así que salían dos filas que decían
+ * `Phantom` y no se distinguían. Ahora la fila es la wallet y las cadenas son
+ * chips; si al elegirla hay más de una, la cadena se pregunta después.
+ */
+export type PickableWallet = { name: string; chains: readonly string[]; icon?: string };
+
+/** Dónde manda a alguien que no tiene ninguna wallet EVM instalada. */
+const METAMASK_URL = "https://metamask.io/download/";
 
 export function WalletPicker({
   wallets,
   onPick,
   onCancel,
+  needsEvm = false,
 }: {
   /**
    * **A row is a name and a chain, and nothing else.** It was
@@ -52,6 +64,14 @@ export function WalletPicker({
   wallets: readonly PickableWallet[];
   onPick: (wallet: PickableWallet) => void;
   onCancel: () => void;
+  /**
+   * Si hay que ofrecer instalar una wallet EVM.
+   *
+   * Lo decide el que llama, no esta lista: depende de qué cadenas están
+   * activas, y eso lo sabe el servidor. Una fila `Instalar MetaMask` en un sitio
+   * donde ninguna cadena EVM está prendida sería un control que no funciona.
+   */
+  needsEvm?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -85,15 +105,19 @@ export function WalletPicker({
 
         <ul className="wallet-choices">
           {wallets.map((wallet) => (
-            <li key={`${wallet.chain}:${wallet.name}`}>
-              <button
-                type="button"
-                className="wallet-choice"
-                onClick={() => onPick(wallet)}
-              >
+            <li key={wallet.name}>
+              <button type="button" className="wallet-choice" onClick={() => onPick(wallet)}>
                 {wallet.icon ? (
-                  // The name is already the button's text, so the icon is
-                  // decorative and announcing it twice would be noise.
+                  /*
+                    **El ícono lo trae la wallet**, como data URI, por Wallet
+                    Standard o por EIP-6963. Nunca un asset nuestro: dibujar el
+                    logo de una marca ajena es peor que no dibujarlo, y una
+                    lista con íconos propios mentiría sobre qué hay instalado.
+
+                    El nombre ya es el texto del botón, así que el ícono es
+                    decorativo y anunciarlo de nuevo sería ruido.
+                  */
+                  // eslint-disable-next-line @next/next/no-img-element -- data URI de la extensión
                   <img alt="" aria-hidden="true" className="wallet-choice-icon" src={wallet.icon} />
                 ) : (
                   <span aria-hidden="true" className="wallet-choice-icon is-monogram">
@@ -101,20 +125,49 @@ export function WalletPicker({
                   </span>
                 )}
                 <span className="wallet-choice-name">{wallet.name}</span>
-                {/* The chain, because two namespaces now reach this list and a
-                    reader with MetaMask and Phantom installed is choosing
-                    between two different things, not two brands. Copied from
-                    the mould's chain chip — `docs/copy.md` keeps the term in
-                    English — and it carries no address, ever. */}
-                <span className="wallet-choice-chain">{CHAIN_LABEL[wallet.chain] ?? wallet.chain}</span>
+                {/* Un chip por cadena que esta wallet puede firmar acá. Nunca
+                    lleva una dirección. */}
+                <span className="wallet-choice-chains">
+                  {wallet.chains.map((chain) => (
+                    <span key={chain} className="wallet-choice-chain">
+                      {CHAIN_LABEL[chain] ?? chain}
+                    </span>
+                  ))}
+                </span>
               </button>
             </li>
           ))}
+
+          {/*
+            **`Instalar MetaMask` sólo cuando no hay ninguna wallet EVM.**
+
+            Sin ícono, a propósito: no tenemos su logo y no vamos a dibujarlo.
+            Es la única fila de esta lista que no es una wallet instalada, así
+            que se ve distinta y lleva el enlace oficial.
+          */}
+          {needsEvm && (
+            <li>
+              <a
+                className="wallet-choice is-install"
+                href={METAMASK_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                <span aria-hidden="true" className="wallet-choice-icon is-monogram">
+                  +
+                </span>
+                <span className="wallet-choice-name">Instalar MetaMask</span>
+                <span className="wallet-choice-chains">
+                  <span className="wallet-choice-chain">EVM</span>
+                </span>
+              </a>
+            </li>
+          )}
         </ul>
 
         <p className="label onboarding-note">
-          Solo aparecen las wallets instaladas en este navegador que firman mensajes en
-          Solana. Si falta la tuya, ábrela una vez y vuelve a intentarlo.
+          Aparecen las wallets instaladas en este navegador. Firmas con una para entrar; después
+          puedes agregar todas las que quieras desde tu perfil.
         </p>
 
         <button type="button" className="segment" onClick={onCancel}>

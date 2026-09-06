@@ -144,12 +144,15 @@ for (const { name, viewport } of SIZES) {
       // No wallet extension exists in this browser, so this is the state a
       // first-time visitor sees. The steps behind it are photographed by the
       // onboarding captures above, which render the same component.
-      // `/registro` abre el modal sobre la home desde el 2026-09-06, y el
-      // título `Entra al padrón` se eliminó: el único título es el del modal.
+      /*
+        El modal abre **directo en la lista de wallets** desde el 2026-09-06: el
+        paso previo con un botón `Connect Wallet` adentro de un modal que se
+        abrió con `Connect Wallet` no decidía nada, y salió. Sin extensiones
+        instaladas en este navegador, lo que se ve es la sección `Otras`.
+      */
       await expect(page.locator("dialog.modal-connect")).toBeVisible({ timeout: 30_000 });
-      // Por rol: el texto suelto también empata con el subtítulo del formulario.
       await expect(page.getByRole("heading", { name: "Conecta tu wallet" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Connect Wallet" }).last()).toBeVisible();
+      await expect(page.locator(".connect-step")).toBeVisible();
       await page.screenshot({ path: `${OUT}/registro-${name}.png`, fullPage: true });
     });
 
@@ -167,10 +170,12 @@ for (const { name, viewport } of SIZES) {
     test("el selector de wallet, con una wallet de Solana registrada", async ({ page }) => {
       await installWallets(page, 2);
       await page.goto("/registro");
-      await page.getByRole("button", { name: "Connect Wallet" }).last().click();
-
-      const dialog = page.locator("dialog.modal-wallets");
-      await expect(dialog).toHaveAttribute("open", "", { timeout: 30_000 });
+      /*
+        La lista vive **en el mismo panel**, no en un diálogo encima: un modal
+        adentro de otro fue lo que el dueño marcó en el gate.
+      */
+      const dialog = page.locator("dialog.modal-connect");
+      await expect(dialog).toBeVisible({ timeout: 30_000 });
       // Waits for the row, so the shot is never of an empty dialog.
       await expect(dialog.getByText("Prueba Solana 1")).toBeVisible();
 
