@@ -88,6 +88,12 @@ export function hostFragment(raw: string): string {
 const KNOWN_SSLMODES = new Set(["disable", "no-verify", "prefer", "require", "verify-ca", "verify-full"]);
 
 /**
+ * Los nombres que resuelven a esta máquina y no salen a la red. `[::1]` se
+ * escribe así porque `URL.hostname` conserva los corchetes de un IPv6 literal.
+ */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
  * Refuses a connection string that does not ask for `sslmode=verify-full`.
  *
  * TLS here is entirely a property of the *text of the secret*: nothing in this
@@ -120,6 +126,27 @@ export function assertVerifyFull(raw: string, variableName: string): string {
   }
   const sslmode = url.searchParams.get("sslmode");
   if (sslmode === "verify-full") return raw;
+
+  /*
+    **La única excepción: `sslmode=disable` contra loopback.**
+
+    Lo que esta función protege es una conexión sin cifrar **a través de una
+    red** — el caso real es Neon, en `us-east-1`. Una conexión a `localhost` no
+    sale de la máquina: no hay tramo que interceptar, y no hay certificado que
+    verificar porque no hay tercero que autenticar.
+
+    Existe desde el 2026-09-06, cuando la suite se mudó a un contenedor local
+    (`kolscan-pg`, ver `GATES.md`): contra Neon un solo archivo de tests tardaba
+    dos horas y el enlace se cortaba a la mitad, así que el gate medía la red y
+    no el código.
+
+    **Deliberadamente angosta.** Sólo `disable`, y sólo loopback. Cualquier otra
+    combinación —`disable` contra un host remoto, `no-verify` contra loopback,
+    `require` en cualquier lado— sigue tirando el mismo error de siempre. Un
+    host remoto no puede caer acá aunque alguien escriba `disable` a propósito,
+    que es exactamente el caso que el bloque de abajo dice que no quiere ocultar.
+  */
+  if (sslmode === "disable" && LOOPBACK_HOSTS.has(url.hostname)) return raw;
 
   // **Absent is corrected, not refused.** An earlier version threw here, and
   // that made a missing `sslmode` a boot failure: `resolveConnectionString`

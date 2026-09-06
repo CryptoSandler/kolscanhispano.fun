@@ -386,7 +386,12 @@ measurement whose finest grain is a day.
 
 **Below it, two columns**: the figures on the left, the trade list on the right, one column
 below 640px. Left, in order: **`card-stats`** — PnL total, trades, volume; **`card-chain-pnl`** — one
-line, SOL, because that is every chain we index; **`card-wallets`** — how many of this
+line per chain the KOL closed on, each with its native amount and the fiat
+equivalent (corrected 2026-09-05: this read *"one line, SOL, because that is
+every chain we index"*, and the reason expired when Robinhood, Ethereum and BNB
+were indexed — the rule was the chain count, never a preference for a single
+line; a KOL who closed nothing still gets the one SOL line, because that zero is
+real); **`card-wallets`** — how many of this
 KOL's wallets are published and how many are not, **as counts with a padlock and never as
 a list of addresses** (`DECISIONES.md`, 2026-08-31, which moved the visibility decision
 from the KOL to the wallet and is what this card exists to state; a KOL with no wallets

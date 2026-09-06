@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { permanentRedirect } from "next/navigation";
 import { LEADERBOARD_FIATS, parseFiat, readLeaderboard } from "@/lib/leaderboard";
-import { ARS_SOURCE_LABELS, readArsRate } from "@/lib/fx";
+import { ARS_SOURCE_LABELS, arsTooltip, readArsRate } from "@/lib/fx";
 import { formatArsRate, formatUtcMoment } from "@/lib/format";
 import { LEADERBOARD_WINDOWS, resolveWindow } from "@/lib/windows";
 import { LeaderboardControls } from "./leaderboard-controls";
@@ -125,7 +125,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
             row clickable and focusable — DESIGN.md `row-leaderboard`, "it opens
             the modal". It is handed this page's window so a modal opens on the
             period its row was ranked in. */}
-        <KolModalHost window={window}>
+        <KolModalHost window={window} fiat={fiat} rate={rate}>
           <LeaderboardTable
             entries={leaderboard.entries}
             fiat={fiat}
@@ -171,10 +171,25 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           {fiat === "ars" && ` · ${ARS_CAVEAT}`}
         </p>
         {fiat === "ars" && (
-          <p className="label">
+          /*
+            **La cotización vieja se muestra igual, con el aviso.** `fx.ts`
+            separa dos umbrales: a las 6 h la cifra queda marcada como
+            desactualizada y se sigue mostrando; a las 96 h `readArsRate`
+            devuelve `null` y no hay cifra que mostrar. Ninguno de los dos
+            imprime un cero — un total en pesos sin cotización detrás es una
+            invención, y el cero es la más convincente que hay a mano.
+
+            El `title` es el tooltip que pidió el dueño (`blue $X · actualizado
+            hace N min`), y lo arma `arsTooltip` para que la frase viva en un
+            solo lugar.
+          */
+          <p className="label" title={rate === null ? undefined : arsTooltip(rate)}>
             {rate === null
               ? "Sin tipo de cambio vigente: los importes en ARS no se pueden calcular."
               : `1 US$ = ${formatArsRate(rate.rate)} ARS · ${ARS_SOURCE_LABELS[rate.source]} · ${formatUtcMoment(rate.asOf)}`}
+            {rate?.stale === true && (
+              <span className="state-unpriced"> · cotización desactualizada</span>
+            )}
           </p>
         )}
       </footer>

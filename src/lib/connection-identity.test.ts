@@ -167,4 +167,39 @@ describe("hostFragment", () => {
   it("says so rather than guessing when there is no ep- host", () => {
     expect(hostFragment("postgres://app:secret@localhost:5432/neondb")).toBe("(unknown host)");
   });
+
+  /*
+    **La excepción de loopback, y sus bordes.**
+
+    `sslmode=disable` contra `localhost` pasa porque la conexión no sale de la
+    máquina. Todo lo demás sigue tirando: es una excepción de una línea y estos
+    casos son los que la mantienen de una línea.
+  */
+  it("allows sslmode=disable against loopback, where there is no network to protect", () => {
+    for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+      const local = `postgresql://u:p@${host}:55435/kolscan_tests?sslmode=disable`;
+      expect(assertVerifyFull(local, "TEST_DATABASE_URL")).toBe(local);
+    }
+  });
+
+  it("still refuses sslmode=disable against anything that is not loopback", () => {
+    // El caso que importa: nadie apaga TLS contra Neon escribiendo `disable`.
+    expect(() =>
+      assertVerifyFull(
+        "postgresql://u:p@ep-round-fire-autay2an.us-east-1.aws.neon.tech/neondb?sslmode=disable",
+        "DATABASE_URL",
+      ),
+    ).toThrow(/verify-full/);
+    // Y un host que apenas se parece a loopback tampoco entra.
+    expect(() =>
+      assertVerifyFull("postgresql://u:p@localhost.evil.tld/db?sslmode=disable", "DATABASE_URL"),
+    ).toThrow(/verify-full/);
+  });
+
+  it("still refuses a weakened TLS mode against loopback", () => {
+    // La excepción es sobre no cifrar en la propia máquina, no sobre cifrar mal.
+    expect(() =>
+      assertVerifyFull("postgresql://u:p@localhost:55435/db?sslmode=no-verify", "TEST_DATABASE_URL"),
+    ).toThrow(/verify-full/);
+  });
 });

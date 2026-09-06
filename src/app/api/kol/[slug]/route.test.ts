@@ -54,6 +54,8 @@ async function insertKol(options: {
   hideWallets?: boolean;
   status?: string;
   cabalTag?: string;
+  /** `kol.tweet_verified_at`: the handle was proved by a signed tweet. */
+  verified?: boolean;
 }): Promise<Kol> {
   let cabalId: string | null = null;
   if (options.cabalTag) {
@@ -66,8 +68,9 @@ async function insertKol(options: {
   }
   const id = crypto.randomUUID();
   await query(
-    `INSERT INTO kol (id, slug, display_name, x_handle, cabal_id, hide_wallets, status, approved_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+    `INSERT INTO kol (id, slug, display_name, x_handle, cabal_id, hide_wallets, status,
+                      approved_at, tweet_verified_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now(), CASE WHEN $8 THEN now() ELSE NULL END)`,
     [
       id,
       options.slug,
@@ -76,6 +79,7 @@ async function insertKol(options: {
       cabalId,
       options.hideWallets ?? false,
       options.status ?? "approved",
+      options.verified ?? false,
     ],
   );
   // Publication is per wallet since migration 012, and these fixtures were
@@ -590,5 +594,31 @@ describe("spec §7: the new payload carries no address, and no hidden signature"
       "signature_enc", "signature_hmac", "usd_amount", "sol_amount"]) {
       expect(text).not.toContain(column);
     }
+  });
+
+  /*
+    **El dato, no el componente.**
+
+    `DETAIL_SQL` no seleccionaba `tweet_verified_at`, así que `serialize.ts`
+    leía `undefined` y escribía `verified: false` para el padrón entero. El
+    modal no tenía forma de mostrar una tilde y nada fallaba: los casos del
+    componente le pasan la prop a mano, y pasan igual con la consulta rota.
+
+    Por eso este par mira la respuesta de la ruta con una fila que de verdad
+    tiene la columna puesta. Es el caso que faltaba, no uno más.
+  */
+  it("carries the verified handle through from the column", async () => {
+    const kol = await insertKol({ slug: "probado", verified: true });
+    await insertDaily([{ kolId: kol.id, day: "2026-08-25", sol: "3.5", usd: "800" }]);
+
+    expect((await detail("probado")).kol.verified).toBe(true);
+  });
+
+  it("says false for a KOL an admin approved without a tweet", async () => {
+    // Aprobado no es verificado: `DECISIONES.md`, 2026-08-31.
+    const kol = await insertKol({ slug: "sembrado" });
+    await insertDaily([{ kolId: kol.id, day: "2026-08-25", sol: "3.5", usd: "800" }]);
+
+    expect((await detail("sembrado")).kol.verified).toBe(false);
   });
 });

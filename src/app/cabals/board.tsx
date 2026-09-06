@@ -1,5 +1,8 @@
 import { type PublicCabal } from "@/lib/cabals";
-import { amountDirection, formatSignedSol, formatSignedUsd } from "@/lib/format";
+import { fiatTotal } from "@/lib/fiat-total";
+import type { ArsRate } from "@/lib/fx";
+import { amountDirection, formatSignedSol } from "@/lib/format";
+import type { LeaderboardFiat } from "@/lib/leaderboard";
 import { Avatar } from "../avatar";
 
 /**
@@ -25,7 +28,19 @@ import { Avatar } from "../avatar";
  *   ours does not, and a dot that is always the same colour is decoration
  *   pretending to be information.
  */
-export function CabalsBoard({ entries }: { entries: PublicCabal[] }) {
+export function CabalsBoard({
+  entries,
+  fiat = "usd",
+  rate = null,
+}: {
+  entries: PublicCabal[];
+  /**
+   * La moneda del toggle y la cotización detrás. Por defecto dólares, para que
+   * los tests que existen desde antes del toggle sigan diciendo lo que decían.
+   */
+  fiat?: LeaderboardFiat;
+  rate?: ArsRate | null;
+}) {
   /*
     DESIGN.md, "Every surface has two states", and the same discriminator the
     leaderboard uses: a board where **nothing closed anywhere** is a board that
@@ -73,7 +88,15 @@ export function CabalsBoard({ entries }: { entries: PublicCabal[] }) {
                 <span className={`num-lg pnl ${amountDirection(entry.realizedSol)}`}>
                   {formatSignedSol(entry.realizedSol)}
                 </span>
-                <span className="num secondary">({formatSignedUsd(entry.realizedUsd)})</span>
+                {/* Conversión de presentación del total en dólares a una
+                    cotización (`docs/round-ars.md`), no una segunda medición:
+                    sin cotización se muestra la ausencia, nunca `AR$0`. */}
+                <span className="num secondary">
+                  {(() => {
+                    const total = fiatTotal(entry.realizedUsd, fiat, rate, "signed");
+                    return total === null ? "(—)" : `(${total})`;
+                  })()}
+                </span>
               </li>
             ))}
           </ul>

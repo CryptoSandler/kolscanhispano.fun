@@ -7,6 +7,9 @@ import { BrandHomeLink } from "./brand-home-link";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { AffiliateSlot } from "./affiliate-slot";
 import { SiteNav } from "./site-nav";
+import { activeChains } from "@/lib/chain";
+import { ConnectWalletButton } from "./connect-wallet-button";
+import { ConnectWalletProvider } from "./connect-wallet";
 import "./globals.css";
 
 /**
@@ -17,7 +20,11 @@ import "./globals.css";
  * `font-src 'self' data:` policy in `next.config.ts` — a Google Fonts
  * stylesheet link would be blocked by it.
  */
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains-mono",
@@ -50,7 +57,14 @@ function BrandInner() {
           it says the name, and an alt text announcing "flag of Spain" would
           add a claim the text does not make. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img className="brand-mark" src="/marca/espana.png" alt="" width={40} height={40} aria-hidden="true" />
+      <img
+        className="brand-mark"
+        src="/marca/espana.png"
+        alt=""
+        width={40}
+        height={40}
+        aria-hidden="true"
+      />
       {/*
         **El brillo corre sobre el wordmark entero**, `KOLScan Hispano`, no sólo
         sobre la segunda palabra — corrección del dueño del 2026-09-05. En reposo
@@ -124,7 +138,11 @@ export const metadata: Metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     /*
       The font classes go on <html>, not on <body>. `next/font` declares
@@ -137,14 +155,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     */
     <html lang="es" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
-        <div className="topbar-rule">
-          <div className="shell shell-topbar">
-            {/*
+        {/*
+          El provider envuelve todo el body porque el botón que lo abre vive en
+          el header y el diálogo se dibuja sobre `main`. Las cadenas se resuelven
+          acá, en el servidor: `activeChains()` lee `process.env`, y un
+          componente cliente que la llame recibe `["solana"]` diga lo que diga
+          el flag — el error que `registro/page.tsx` documenta y que costó
+          manejar la página con una wallet falsa para verlo.
+        */}
+        <ConnectWalletProvider chains={activeChains()}>
+          <div className="topbar-rule">
+            <div className="shell shell-topbar">
+              {/*
             DESIGN.md, Layout: "Header: wordmark and subtitle left, nav centre,
             unit and window controls plus the wallet action right."
           */}
-            <header className="topbar">
-              {/*
+              <header className="topbar">
+                {/*
                 **The `Suspense` is required, not defensive.** Next 16:
                 *"During production builds, a static page that calls
                 `useSearchParams` from a Client Component must be wrapped in a
@@ -156,16 +183,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 renders identically and the link is simply the default window,
                 which is what it did before this component existed.
               */}
-              <Suspense fallback={<BrandBlock href="/" />}>
-                <BrandHomeLink windows={LEADERBOARD_WINDOWS} fiats={LEADERBOARD_FIATS}>
-                  <BrandInner />
-                </BrandHomeLink>
-              </Suspense>
+                <Suspense fallback={<BrandBlock href="/" />}>
+                  <BrandHomeLink
+                    windows={LEADERBOARD_WINDOWS}
+                    fiats={LEADERBOARD_FIATS}
+                  >
+                    <BrandInner />
+                  </BrandHomeLink>
+                </Suspense>
 
-              <SiteNav />
+                <SiteNav />
 
-              <div className="topbar-right">
-                {/*
+                <div className="topbar-right">
+                  {/*
                 The wallet action's slot. Spec §6 makes `/registro` the only
                 page that ever connects a wallet, and it now exists — so this is
                 a real link, which is what the note that stood here promised
@@ -176,7 +206,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 not work." A label saying `próximamente` over a page that works
                 is the same Don't read backwards.
               */}
-                {/* The user pill, at the mould's measure: `brand-hispano` at 20 %,
+                  {/* The user pill, at the mould's measure: `brand-hispano` at 20 %,
                   `radius-md`, 16px.
 
                   **It shows the connect action, not a session.** The brief
@@ -186,23 +216,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   connects anything, so a pill with somebody's avatar in it
                   would be a session this site cannot have and a control that
                   does not work. Same shape, honest content. */}
-                <a className="registro" href="/registro">
-                  Connect Wallet
-                </a>
-                {/*
+                  {/* Abre el modal encima de la home desde el 2026-09-05, y
+                    sigue siendo el enlace a `/registro` para quien lo copie o
+                    lo abra en otra pestaña. `connect-wallet-button.tsx`. */}
+                  <ConnectWalletButton />
+                  {/*
                 Spec §1.9: the affiliate slot is configurable from the admin and
                 empty at launch, where it renders nothing. The admin that
                 configures it is a later task; an empty slot is the correct
                 rendering of its launch state, not a placeholder.
               */}
-                <AffiliateSlot />
-              </div>
-            </header>
+                  <AffiliateSlot />
+                </div>
+              </header>
+            </div>
           </div>
-        </div>
-        <div className="shell">
-          <main>{children}</main>
-          {/*
+          <div className="shell">
+            <main>{children}</main>
+            {/*
             **El crédito de siempre**, copiado de `milliondollarpage`
             (`BoardView.tsx`) para que sea el mismo en los dos: mismo glifo
             dibujado a mano, mismo `Built by`, mismo handle, mismo `rel`.
@@ -218,26 +249,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             apila y desaparece; este pie es el mismo en 1440 y en 390, que es lo
             que se pidió.
           */}
-          <a
-            href="https://x.com/CryptoSandlerr"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="built-by"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" className="built-by__mark">
-              <path
-                fill="currentColor"
-                d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
-              />
-            </svg>
-            <span className="built-by__label">Built by </span>
-            <span className="built-by__handle">@CryptoSandlerr</span>
-          </a>
-          <p className="footnote">
-            Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados pasados no
-            garantizan nada.
-          </p>
-        </div>
+            <a
+              href="https://x.com/CryptoSandlerr"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="built-by"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                className="built-by__mark"
+              >
+                <path
+                  fill="currentColor"
+                  d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+                />
+              </svg>
+              <span className="built-by__label">Built by </span>
+              <span className="built-by__handle">@CryptoSandlerr</span>
+            </a>
+            <p className="footnote">
+              Datos on-chain públicos. Esto no es asesoramiento financiero y los
+              resultados pasados no garantizan nada.
+            </p>
+          </div>
+        </ConnectWalletProvider>
       </body>
     </html>
   );

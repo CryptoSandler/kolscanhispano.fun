@@ -6,7 +6,7 @@ import { Avatar } from "./avatar";
 import { ChainAmounts } from "./chain-amounts";
 import { WalletChip } from "./wallet-chip";
 import { KolRow } from "./kol-row";
-import { formatSignedArs, formatUnsignedUsd } from "@/lib/format";
+import { VerifiedTick } from "./verified-tick";
 import type { PublicLeaderboardEntry } from "@/lib/serialize";
 import type { ChainPnl } from "@/lib/chain-pnl";
 import type { PublicWallet } from "@/lib/public-wallets";
@@ -21,7 +21,8 @@ type RankedEntry = PublicLeaderboardEntry & {
   /** Only `is_public` wallets ever reach here. See `public-wallets.ts`. */
   publicWalletList: PublicWallet[];
 };
-import { usdToArs, type ArsRate } from "@/lib/fx";
+import { fiatTotal } from "@/lib/fiat-total";
+import { arsTooltip, type ArsRate } from "@/lib/fx";
 
 /**
  * DESIGN.md `row-leaderboard`, as a `<ul>` of cards.
@@ -307,12 +308,7 @@ function Row({
     (`docs/round-ars.md`), never a second measurement: the same figure, in
     another currency, with the rate and its date printed above the list.
   */
-  const secondary =
-    fiat === "usd"
-      ? formatUnsignedUsd(entry.realizedUsd)
-      : rate === null
-        ? null
-        : formatSignedArs(usdToArs(entry.realizedUsd, rate.rate));
+  const secondary = fiatTotal(entry.realizedUsd, fiat, rate);
 
   /*
     Whether anything in this row could be priced at all.
@@ -410,31 +406,9 @@ function Row({
           >
             𝕏
           </a>
-          {/*
-            **La tilde de verificado**, sólo si el handle se probó por el flujo
-            de `/registro`: tweet con el código más firma de la wallet
-            (`migrations/014`). Los KOL que el admin sembró a mano **no la
-            llevan** — se agregaron desde un cruce de trackers, nadie probó que
-            la cuenta sea suya, y una tilde ahí diría algo que no pasó.
-
-            No es lo mismo que estar aprobado: un admin puede aprobar un handle
-            sin verificar, y la auditoría registra que lo hizo.
-          */}
-          {entry.kol.verified && (
-            <span className="verified-tick" title="Handle verificado por tweet firmado">
-              <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
-                <path
-                  d="M2.5 6.2l2.3 2.3 4.7-5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span className="sr-only">Handle verificado por tweet firmado</span>
-            </span>
-          )}
+          {/* `verified-tick.tsx` carries the reasoning: a tick means a signed
+              tweet proved the handle, and a hand-seeded KOL never gets one. */}
+          <VerifiedTick verified={entry.kol.verified} />
           {/*
             The address slot. Published wallets when the KOL opted them in
             (`is_public`, the owner\'s decision of 2026-09-05), `Wallets ocultas`
@@ -476,7 +450,14 @@ function Row({
         `nunca en cero` still holds. `(—)` is not `US$0,00`: the dash says we
         made no measurement, the zero would say we measured nothing.
       */}
-      <span className={`pnl-fiat${quoted === null ? " is-unquoted" : ""}`}>
+      {/* El tooltip de la cotización acompaña a la cifra que el lector mira,
+          no solo al pie de la lista: `blue $X · actualizado hace N min`, y el
+          aviso de desactualizada cuando corresponde. En dólares no hay nada
+          que aclarar, así que no lleva `title`. */}
+      <span
+        className={`pnl-fiat${quoted === null ? " is-unquoted" : ""}`}
+        title={fiat === "ars" && rate !== null ? arsTooltip(rate) : undefined}
+      >
         {quoted === null ? "(—)" : `(${secondary})`}
       </span>
       </span>

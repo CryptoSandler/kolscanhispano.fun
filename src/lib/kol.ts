@@ -109,6 +109,10 @@ const WALLET_COUNTS = `
  */
 const DETAIL_SQL = `
   SELECT k.id AS kol_id, k.slug, k.display_name, k.x_handle, k.hide_wallets,
+         -- El modal serializaba verified:false para todo el mundo porque esta
+         -- consulta nunca preguntó. El GROUP BY k.id de abajo alcanza: es la
+         -- clave primaria, así que Postgres deja leer cualquier columna de k.
+         (k.tweet_verified_at IS NOT NULL) AS verified,
          c.tag AS cabal_tag,
          ${WALLET_COUNTS},
          COALESCE(SUM(t.realized_sol), 0) AS realized_sol,

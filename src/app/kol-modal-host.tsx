@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { ArsRate } from "@/lib/fx";
+import type { LeaderboardFiat } from "@/lib/leaderboard";
 import type { PublicKolDetail } from "@/lib/serialize";
 import {
   LEADERBOARD_WINDOWS,
@@ -173,10 +175,22 @@ export function LoadFailureState({
  */
 export function KolModalHost({
   window: pageWindow,
+  fiat,
+  rate,
   children,
 }: {
   /** The window the rows beneath were ranked in. */
   window: LeaderboardWindow;
+  /**
+   * The currency the toggle is on, and the rate to convert at.
+   *
+   * The modal opens over the list and shows the **same total** the row does, so
+   * a row reading `(AR$4.340.700)` above a modal reading `(US$3.100,50)` would
+   * be two currencies for one figure. The rate is read once, on the server,
+   * beside the ranking — the modal never fetches one.
+   */
+  fiat: LeaderboardFiat;
+  rate: ArsRate | null;
   children: ReactNode;
 }) {
   const [slug, setSlug] = useState<string | null>(null);
@@ -386,6 +400,8 @@ export function KolModalHost({
           {detail && (
             <KolDetail
               detail={detail}
+              fiat={fiat}
+              rate={rate}
               segments={<Segments value={period} onChange={changePeriod} />}
               calendarNav={<MonthNav month={detail.calendar.month} onChange={changeMonth} />}
             />

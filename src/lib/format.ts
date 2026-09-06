@@ -111,6 +111,27 @@ function signOf(value: bigint): string {
   return value < 0n ? MINUS : "";
 }
 
+/**
+ * El signo de una cifra que no lleva `+`: menos para las pérdidas, nada para
+ * el resto.
+ *
+ * **Existe porque la comparación obvia estaba mal.** `formatUnsignedUsd` hacía
+ * `signOf(value) === "-"`, y `signOf` no devuelve el guion ASCII sino `MINUS`
+ * (U+2212, el menos tipográfico que usa todo este archivo). La comparación no
+ * daba nunca, así que **toda pérdida se imprimía como ganancia**: un KOL abajo
+ * US$2.460 mostraba `(US$2.460,00)` en la fila, sin color que lo distinguiera
+ * porque el total en fiat no lleva clase de dirección. Vivió unas horas, el
+ * 2026-09-05, entre que se agregó `formatUnsignedUsd` para copiar el molde y
+ * que `fiat-total.test.ts` preguntó por una pérdida.
+ *
+ * La lección no es la comparación: es que el caso negativo no estaba en ningún
+ * test cuando se agregó la función. `formatSignedUsd` sí lo tenía, y por eso
+ * nunca lo tuvo roto.
+ */
+function negativeSign(value: bigint): string {
+  return value < 0n ? MINUS : "";
+}
+
 function absolute(value: bigint): bigint {
   return value < 0n ? -value : value;
 }
@@ -175,8 +196,7 @@ export function formatSignedAmount(text: string, unit: string): string {
 
 export function formatUnsignedUsd(text: string): string {
   const value = parseDecimal(text);
-  const sign = signOf(value) === "-" ? "-" : "";
-  return `${sign}US$${renderEs(roundTo(absolute(value), 2), 2)}`;
+  return `${negativeSign(value)}US$${renderEs(roundTo(absolute(value), 2), 2)}`;
 }
 
 /**
@@ -192,6 +212,20 @@ export function formatUnsignedUsd(text: string): string {
 export function formatSignedArs(text: string): string {
   const value = parseDecimal(text);
   return `${signOf(value)}AR$${renderEs(roundTo(absolute(value), 0), 0)}`;
+}
+
+/**
+ * The same, without the `+`: `AR$2.784.708`, `-AR$91.400`.
+ *
+ * **The row's fiat total carries no sign**, in either currency — the mould's
+ * does not, and `formatUnsignedUsd` was added for exactly that. Until
+ * 2026-09-05 the peso half kept its `+` anyway, so flipping the toggle grew the
+ * figure by one glyph on a row whose slots are measured in pixels. A loss keeps
+ * its `-`, which is not a decoration.
+ */
+export function formatUnsignedArs(text: string): string {
+  const value = parseDecimal(text);
+  return `${negativeSign(value)}AR$${renderEs(roundTo(absolute(value), 0), 0)}`;
 }
 
 /**

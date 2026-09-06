@@ -1,5 +1,8 @@
-import { CHAIN_ORDER, type ChainPnl } from "@/lib/chain-pnl";
-import { amountDirection, formatSignedAmount, formatSignedUsd } from "@/lib/format";
+import type { ChainPnl } from "@/lib/chain-pnl";
+import { fiatTotal } from "@/lib/fiat-total";
+import type { ArsRate } from "@/lib/fx";
+import { amountDirection, formatSignedAmount } from "@/lib/format";
+import type { LeaderboardFiat } from "@/lib/leaderboard";
 
 /**
  * A KOL's realized figures, one per chain, in the row and in the modal.
@@ -88,12 +91,19 @@ function byUnit(chains: ChainPnl[]): Map<string, UnitTotal> {
   return totals;
 }
 
-/** Kept for the modal, which lists chains rather than units. */
-export function chainColumns(rows: { chains: ChainPnl[] }[]): string[] {
-  const present = new Set(rows.flatMap((row) => row.chains.map((c) => c.chain)));
-  return CHAIN_ORDER.filter((chain) => present.has(chain));
-}
+/*
+  **`chainColumns` se borró el 2026-09-05, y no sólo por estar muerta.**
 
+  Devolvía las cadenas presentes en orden, "para el modal, que lista cadenas y
+  no unidades" — y el modal terminó listando `detail.chains` directamente, así
+  que nunca la llamó nadie. Lo que la hacía cara es que era el único uso de
+  `CHAIN_ORDER` acá, un import de valor desde `chain-pnl.ts`, que importa la
+  base: con el modal renderizando esta sección desde un componente cliente, el
+  build se llevaba `pg` al navegador y fallaba con `dns`, `fs`, `net` y `tls`.
+
+  El tipo `ChainPnl` se sigue importando, pero como `import type`, que se borra
+  en compilación y no arrastra el módulo.
+*/
 const UNIT_TINT: Record<string, string> = {
   ETH: "is-chain-eth",
   BNB: "is-chain-bnb",
@@ -144,7 +154,15 @@ export function ChainAmounts({ chains }: { chains: ChainPnl[] }) {
  * all of them were: `chain-pnl.ts` refuses to sum the priced half, because a
  * total computed over a hole is a number with an invisible gap.
  */
-export function ChainPnlSection({ chains }: { chains: ChainPnl[] }) {
+export function ChainPnlSection({
+  chains,
+  fiat = "usd",
+  rate = null,
+}: {
+  chains: ChainPnl[];
+  fiat?: LeaderboardFiat;
+  rate?: ArsRate | null;
+}) {
   if (chains.length === 0) return null;
   return (
     <section className="card">
@@ -181,7 +199,13 @@ export function ChainPnlSection({ chains }: { chains: ChainPnl[] }) {
                   este token no tiene precio en dólares todavía
                 </span>
               ) : (
-                `(${formatSignedUsd(entry.realizedUsd)})`
+                // La misma conversión de presentación que el total de arriba,
+                // por la misma razón: dos monedas para una cifra en la misma
+                // tarjeta sería peor que no convertir ninguna.
+                (() => {
+                  const total = fiatTotal(entry.realizedUsd, fiat, rate, "signed");
+                  return total === null ? "(—)" : `(${total})`;
+                })()
               )}
             </span>
           </li>

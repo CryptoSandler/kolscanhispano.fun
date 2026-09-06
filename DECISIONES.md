@@ -757,3 +757,78 @@ que todavía no existe (no hay credencial de Alchemy en esta máquina, ver
 `docs/round-columnas-chain.md` §0). Hoy todo lo que hay es Solana y todo cotiza,
 así que la decisión no cambia ningún orden actual — se toma ahora porque después
 de que existan filas mueve gente de lugar en el tablero.
+
+## 2026-09-05 — `Connect Wallet` es un modal, y `/registro` conserva su URL
+
+**Tomada por el dueño.** El botón del header abre un diálogo encima de la
+clasificación en vez de llevarse al lector a otra pantalla, y `/registro` sigue
+existiendo como ruta directa **sin 308**: está escrita en los DMs a los KOL, y
+redirigirla a la home la convertiría en un enlace que ya no lleva a lo que
+prometía. La ruta renderiza la home y abre el mismo modal encima.
+
+El contenido del diálogo es `RegistroForm` sin tocar. Reimplementar el flujo
+adentro habría sido una segunda copia de la conexión, la firma y el código del
+tweet — tres cosas que no pueden discrepar y que ya tienen sus tests. La lista de
+wallets sigue saliendo de Wallet Standard y EIP-6963 según `activeChains()`, sin
+nombres escritos a mano en ningún lado.
+
+El botón **sigue siendo un `<a href="/registro">`**: se puede copiar, abrir en
+otra pestaña y funciona sin JavaScript. El clic normal lo intercepta el provider;
+uno con Cmd, Ctrl o Shift se deja pasar, porque ese lector pidió otra pestaña.
+
+## 2026-09-05 — La privacidad, en la primera pantalla y sólo lo que un test verifica
+
+`Tus wallets nunca se publican — ni truncadas — salvo que elijas mostrarlas.
+Firmas un mensaje, no una transacción.`
+
+Las dos frases son verificables, que es la condición que puso el dueño (*"nada
+prometido que un test no verifique"*): `address-invariant.test.ts` falla si
+aparece la dirección de una wallet sin `is_public` en cualquier superficie
+pública —truncada incluida—, y `no-money-path.test.ts` falla si una API que
+construya o mande una transacción se vuelve importable desde la aplicación.
+
+**Está en español neutro y no en el voseo del pedido** (*"vos elijas"*,
+*"firmás"*). `docs/copy.md` prohíbe el voseo en toda superficie que vea un
+lector y `copy.test.ts` lo controla; el sitio es para España y Latam. Queda como
+pregunta en el informe por si el dueño prefiere su redacción, que sería cambiar
+la norma y no hacerle una excepción.
+
+## 2026-09-05 — El toggle de moneda vuelve a `/cabals`
+
+**Tomada por el dueño**, y revierte una decisión anterior de este mismo
+repositorio. `/cabals` se construyó sin toggle con el argumento de que un total
+de cabal es una cifra en SOL con su equivalente en dólares al lado, así que no
+había nada que elegir. Lo que ese argumento pasaba por alto: el equivalente en
+dólares **es** lo que el toggle convierte, y la moneda viaja en la query string,
+así que un lector que puso la home en pesos y hace clic en `Cabals` veía las
+cifras volver a dólares solas.
+
+## 2026-09-05 — Una cotización vieja convierte igual; una viejísima no existe
+
+Dos umbrales, y hacen cosas distintas. A las **6 h** (`ARS_WARN_AFTER_MS`) la
+cifra se sigue mostrando con `cotización desactualizada` al lado — el dueño lo
+pidió así: *"nunca en cero"*. A los **4 días** (`ARS_STALE_AFTER_MS`)
+`readArsRate` devuelve `null` y no hay cifra: ahí el número dejó de ser un
+precio.
+
+La objeción original contra mostrar una cotización vieja era que *"es un número
+que parece actual y no lo es"*. La respuesta no es esconderlo: es que deje de
+parecer actual, y eso lo hace la etiqueta.
+
+**Ninguno de los dos imprime un cero.** Un total en pesos sin cotización detrás
+es una invención, y el cero es la más convincente que hay a mano.
+
+## 2026-09-05 — El total en fiat de la fila no lleva signo, en ninguna moneda
+
+El molde no lo lleva, y `formatUnsignedUsd` se agregó para copiarlo. La mitad en
+pesos se quedó con el `+` unas horas, así que cambiar de moneda le agregaba un
+glifo a una cifra cuyos slots están medidos en píxeles. `formatUnsignedArs`
+cierra el par.
+
+**La pérdida sí conserva su `−`**, que no es una decoración. Y ahí apareció un
+error que estuvo en producción unas horas: `formatUnsignedUsd` comparaba
+`signOf(value) === "-"` contra una función que devuelve U+2212, así que **toda
+pérdida se imprimía como ganancia**, sin color que la distinguiera porque el
+total en fiat no lleva clase de dirección. Lo encontró `fiat-total.test.ts` al
+preguntar por una pérdida. La lección no es la comparación: es que el caso
+negativo no estaba en ningún test cuando se escribió la función.

@@ -27,7 +27,9 @@
  * reproduced, the upgrade is a real table and a migration; nothing else here
  * changes, because every reader goes through {@link readArsRate}.
  */
-import { formatDecimal, mulDiv, ONE, parseDecimal } from "./decimal";
+// Sólo `parseDecimal`: la multiplicación se mudó a `ars-convert.ts` para que
+// un componente cliente pueda convertir sin arrastrar `pg` al navegador.
+import { parseDecimal } from "./decimal";
 import { query } from "./db";
 
 /** The `setting` row this module owns. */
@@ -238,12 +240,8 @@ export async function readArsRate(now: number = Date.now()): Promise<ArsRate | n
 }
 
 /**
- * A USD total in pesos, as a decimal string for the formatter.
- *
- * Through `decimal.ts`'s scaled `bigint`, never `Number`: the multiplication is
- * the one step where a double would look harmless and would lose the last
- * digits of a figure this product prints.
+ * La conversión vive en `ars-convert.ts` y se reexporta acá para no romper a
+ * quien ya la importaba: este módulo lee la base, y un componente cliente que
+ * quiera multiplicar no puede pagar `pg` por hacerlo.
  */
-export function usdToArs(usdText: string, rate: string): string {
-  return formatDecimal(mulDiv(parseDecimal(usdText), parseDecimal(rate), ONE));
-}
+export { usdToArs } from "./ars-convert";

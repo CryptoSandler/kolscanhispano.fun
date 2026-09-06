@@ -320,3 +320,29 @@ sin que nada en él hubiera cambiado.
 La operación vive ahora en el último KOL de la lista, al que no mira ningún caso.
 Para `chain-columns.spec.ts` sirve cualquier fila con dos montos — no necesitaba
 la primera, solo la más fácil de escribir.
+
+## §10 `Connect Wallet`, el modal — 2026-09-05
+
+El molde tiene un chip de usuario logueado arriba a la derecha. Nosotros no
+tenemos sesiones —spec §6 no da cuentas— así que el slot conserva **la
+geometría** y cambia el contenido: mismo alto, mismo radio, mismo lugar, y
+adentro la acción de conectar en vez de un avatar con un handle. Un chip con la
+foto de alguien sería una sesión que este producto no tiene, que es la última
+prohibición de `DESIGN.md`: *"no muestres un control que no funciona"*.
+
+Desde el 2026-09-05 ese botón **abre un diálogo encima de la clasificación** en
+vez de navegar. Lo que se copia del molde es la posición y la forma, no el
+comportamiento: ellos llevan a una pantalla de wallet, nosotros abrimos algo de
+lo que se sale con Esc y que deja la lista a la vista atrás.
+
+**Las tres formas de cerrar son las de `modal-kol`** —Esc, clic en el fondo, la
+× arriba— y eso no es pereza: un lector no aprende una convención de cierre
+distinta por cada diálogo del mismo sitio.
+
+**El relleno es el violeta de Phantom** (`#AB9FF2` con texto `#111315`), pedido
+del dueño y el anglicismo `Connect Wallet` aceptado en `docs/copy.md`. Contraste
+medido: **7,96:1** en reposo y **6,46:1** en hover, los dos por encima de AA para
+texto normal y el primero por encima de AAA. El hover era una mezcla con
+`--brand-hispano` que quedó de cuando el botón era translúcido — convertía el
+relleno en un celeste transparente con texto oscuro encima, y era el único
+estado del botón que no pasaba contraste.

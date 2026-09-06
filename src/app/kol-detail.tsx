@@ -1,10 +1,14 @@
 import { cabalChipClass } from "@/lib/cabal";
 import { monthGrid, monthSummary } from "@/lib/calendar";
 import { formatDecimal, parseDecimal } from "@/lib/decimal";
+import { ChainPnlSection } from "./chain-amounts";
+import { fiatTotal } from "@/lib/fiat-total";
+import type { ArsRate } from "@/lib/fx";
+import type { LeaderboardFiat } from "@/lib/leaderboard";
+import { VerifiedTick } from "./verified-tick";
 import {
   amountDirection,
   formatSignedSol,
-  formatSignedUsd,
   formatSol,
   formatUsdPrice,
   formatUtcMoment,
@@ -40,10 +44,19 @@ import { Avatar } from "./avatar";
  */
 export function KolDetail({
   detail,
+  fiat = "usd",
+  rate = null,
   segments,
   calendarNav,
 }: {
   detail: PublicKolDetail;
+  /**
+   * The currency the page's toggle is on, and the rate behind it. Defaults to
+   * dollars so the many component tests that predate the toggle keep meaning
+   * what they meant.
+   */
+  fiat?: LeaderboardFiat;
+  rate?: ArsRate | null;
   /** The window control, owned by the caller. */
   segments?: React.ReactNode;
   /**
@@ -53,6 +66,7 @@ export function KolDetail({
    */
   calendarNav?: React.ReactNode;
 }) {
+  const total = fiatTotal(detail.realizedUsd, fiat, rate, "signed");
   const direction = amountDirection(detail.realizedSol);
 
   /*
@@ -117,13 +131,26 @@ export function KolDetail({
 
           <div className="identity-second">
             <span className="handle">@{detail.kol.xHandle}</span>
+            {/* Junto al handle, que es donde el modal lo pone — en la fila el
+                handle ya no está y la tilde acompaña al nombre. Misma prueba
+                detrás de las dos: `kol.tweet_verified_at`. */}
+            <VerifiedTick verified={detail.kol.verified} />
             {/* "the period's total PnL by sign". The USD equivalent follows the
                 row's shape — parenthesised, one weight down — so the same pair
                 of figures reads the same way on both surfaces. */}
             <span className={`num modal-pnl ${direction}`}>
               {formatSignedSol(detail.realizedSol)}
             </span>
-            <span className="num secondary">({formatSignedUsd(detail.realizedUsd)})</span>
+            {/*
+              El mismo total que la fila, en la misma moneda que la fila. En
+              pesos es una **conversión de presentación** del total en dólares a
+              una cotización (`docs/round-ars.md`), no una segunda medición: sin
+              cotización no hay figura, y se muestra la ausencia en vez de un
+              cero que parecería un dato.
+            */}
+            <span className="num secondary">
+              {total === null ? "(—)" : `(${total})`}
+            </span>
           </div>
 
           {/*
@@ -219,22 +246,37 @@ export function KolDetail({
             </Stat>
           </section>
 
-          {/* DESIGN.md `card-chain-pnl`: "one line, SOL, because that is every chain
-          we index" — and the brief's gloss, "do not imply others". So: one row,
-          no column of chains with one entry, no "otras cadenas" placeholder. */}
-          <section className="card">
-            <div className="card-head">
-              <h3 className="label">Chain PnL</h3>
-            </div>
-            <div className="chain-line">
-              {/* The coloured dot the mould puts before a chain's name. It is
-                  not a figure, so the accent is free to mark it; green and red
-                  stay direction of money. */}
-              <span className="chain-dot" aria-hidden="true" />
-              <span className="symbol">SOL</span>
-              <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
-            </div>
-          </section>
+          {/*
+            **`card-chain-pnl`, ahora con una línea por cadena.**
+
+            DESIGN.md decía "one line, SOL, because that is every chain we
+            index", y la razón dejó de ser cierta cuando entraron Robinhood,
+            Ethereum y BNB: la premisa era el conteo de cadenas, no una
+            preferencia por una línea. El documento quedó corregido el
+            2026-09-05 con la fecha y el motivo.
+
+            `ChainPnlSection` se escribió en la tanda multichain y no estaba
+            enganchada a nada — existía, tenía tests y no la renderizaba ninguna
+            página. Con cero cadenas devuelve `null`, así que el KOL que no
+            cerró nada conserva su línea de SOL de abajo, que es un cero real.
+          */}
+          {detail.chains.length > 0 ? (
+            <ChainPnlSection chains={detail.chains} fiat={fiat} rate={rate} />
+          ) : (
+            <section className="card">
+              <div className="card-head">
+                <h3 className="label">Chain PnL</h3>
+              </div>
+              <div className="chain-line">
+                {/* The coloured dot the mould puts before a chain's name. It is
+                    not a figure, so the accent is free to mark it; green and red
+                    stay direction of money. */}
+                <span className="chain-dot" aria-hidden="true" />
+                <span className="symbol">SOL</span>
+                <span className={`num ${direction}`}>{formatSignedSol(detail.realizedSol)}</span>
+              </div>
+            </section>
+          )}
 
           {/* `DECISIONES.md`, 2026-08-31: the visibility decision is per wallet, so
           the detail says how much of this KOL's operation is on show — as a

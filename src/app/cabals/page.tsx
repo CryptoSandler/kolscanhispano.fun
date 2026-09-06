@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { readCabals } from "@/lib/cabals";
+import { readArsRate } from "@/lib/fx";
+import { LEADERBOARD_FIATS, parseFiat } from "@/lib/leaderboard";
 import { permanentRedirect } from "next/navigation";
 import { LEADERBOARD_WINDOWS, WINDOW_LABELS, resolveWindow } from "@/lib/windows";
 import { LeaderboardControls } from "../leaderboard-controls";
-import { USD_CAVEAT } from "../leaderboard-table";
+import { ARS_CAVEAT, USD_CAVEAT } from "../leaderboard-table";
 import { CabalsBoard } from "./board";
 
 /** The window is relative to now and the rows behind it change as trades land. */
@@ -27,10 +29,16 @@ function first(value: string | string[] | undefined): string | null {
  * every row since the ranking was built — the data was here, the page was not.
  *
  * The window toggle in the header applies here as it does to the ranking: the
- * control reads the query string and this page reads the same one. **The
- * currency toggle does not appear on this page's figures** — a cabal total is a
- * SOL figure with its USD equivalent beside it, exactly as a card is, and the
- * peso conversion belongs where the reader chose it.
+ * control reads the query string and this page reads the same one.
+ *
+ * **El toggle de moneda vive acá también desde el 2026-09-05**, por decisión
+ * del dueño. Antes no: el argumento era que un total de cabal es una cifra en
+ * SOL con su equivalente en dólares al lado, igual que una tarjeta, y que la
+ * conversión a pesos pertenecía a la página donde el lector la eligió. Lo que
+ * ese argumento pasaba por alto es que el equivalente en dólares **es** lo que
+ * el toggle convierte, y que la elección de moneda viaja en la query string:
+ * un lector que puso la home en pesos y hace clic en `Cabals` no espera que
+ * las cifras vuelvan a dólares por su cuenta.
  *
  * The surface itself, and both of its states, are `CabalsBoard`.
  */
@@ -56,7 +64,15 @@ export default async function CabalsPage({
     permanentRedirect(`/cabals?window=${resolved.redirectTo}`);
   }
   const window = resolved ?? "1d";
-  const ranking = await readCabals({ window });
+  const fiat = parseFiat(first(params.unit)) ?? "usd";
+
+  // La cotización solo se lee cuando se va a imprimir una cifra en pesos, y en
+  // paralelo con el ranking: tocan tablas distintas y ninguna necesita el
+  // resultado de la otra. Es el mismo razonamiento que la home.
+  const [ranking, rate] = await Promise.all([
+    readCabals({ window }),
+    fiat === "ars" ? readArsRate() : Promise.resolve(null),
+  ]);
 
   return (
     <>
@@ -76,18 +92,30 @@ export default async function CabalsPage({
             Mi cabal →
           </Link>
         </div>
-        {/* No currency group: every figure on this page is a SOL total with its
-            USD equivalent beside it, so there is nothing for a toggle to
-            choose. */}
-        <LeaderboardControls windows={LEADERBOARD_WINDOWS} fiats={[]} basePath="/cabals" />
+        {/*
+          **El grupo de moneda vuelve, por decisión del dueño del 2026-09-05.**
+
+          Esta página se construyó sin toggle con el argumento de que cada cifra
+          es un total en SOL con su equivalente en dólares al lado, así que no
+          había nada que elegir. El equivalente en dólares es exactamente lo que
+          el toggle convierte, en la home y acá: un lector que puso la home en
+          pesos y entra a `/cabals` no espera que las cifras vuelvan a dólares
+          solas.
+        */}
+        <LeaderboardControls
+          windows={LEADERBOARD_WINDOWS}
+          fiats={LEADERBOARD_FIATS}
+          basePath="/cabals"
+        />
       </div>
 
       <section className="panel" style={{ marginTop: "var(--stack)" }}>
         <p className="label control-note">
           {WINDOW_LABELS[window]} · día UTC · {USD_CAVEAT}
+          {fiat === "ars" && ` · ${ARS_CAVEAT}`}
         </p>
 
-        <CabalsBoard entries={ranking.entries} />
+        <CabalsBoard entries={ranking.entries} fiat={fiat} rate={rate} />
       </section>
     </>
   );

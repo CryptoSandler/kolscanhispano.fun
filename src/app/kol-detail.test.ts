@@ -320,4 +320,36 @@ describe("list-defi-trades", () => {
     expect(html).not.toContain("PRIVADO");
     expect(html).toContain("25/08 14:32 UTC");
   });
+
+  /*
+    **La tilde, y su ausencia.**
+
+    Casi todo el padrón está sembrado por admin desde un cruce de trackers:
+    nadie probó que la cuenta sea suya, así que la ausencia es el caso normal y
+    es el que más importa que no falle. La tilde dice una cosa concreta —
+    `kol.tweet_verified_at`, o sea tweet con el código más firma de la wallet
+    (`migrations/014`) — y no dice que el KOL esté aprobado, que es una decisión
+    de un admin y queda en la auditoría.
+
+    El modal la mostraba para nadie hasta el 2026-09-05, y no por el componente:
+    `DETAIL_SQL` no seleccionaba la columna, así que `serialize.ts` leía
+    `undefined` y escribía `verified: false` para todo el padrón. Un caso sobre
+    el componente con una prop puesta a mano habría pasado igual todo ese
+    tiempo, que es la razón por la que este archivo dice, arriba, que un test
+    que mira el texto de un `.tsx` pasa por más tiempo del que debería. Este
+    par cubre el render; `api/kol/[slug]/route.test.ts` cubre que el dato llegue.
+  */
+  it("shows no tick for a KOL nobody verified", () => {
+    const html = render({ kol: { ...detail().kol, verified: false } });
+    expect(html).not.toContain("verified-tick");
+    expect(html).not.toContain("Handle verificado");
+  });
+
+  it("shows the tick, with its sentence, for a KOL who proved the handle", () => {
+    const html = render({ kol: { ...detail().kol, verified: true } });
+    expect(html).toContain("verified-tick");
+    expect(html).toContain("Handle verificado por tweet firmado");
+    // Junto al handle, no junto al nombre: el nombre lo lleva en la fila.
+    expect(html.indexOf("@ejemplo_uno")).toBeLessThan(html.indexOf("verified-tick"));
+  });
 });

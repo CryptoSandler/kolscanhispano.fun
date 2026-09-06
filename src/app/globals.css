@@ -456,7 +456,11 @@ a {
 }
 
 .registro:hover {
-  background: color-mix(in srgb, var(--brand-hispano) 32%, transparent);
+  /* Un violeta más oscuro, no la mezcla con `--brand-hispano` que quedó de
+     cuando el botón era translúcido: aquel hover convertía el relleno Phantom
+     en un celeste transparente con texto oscuro encima, que es el único estado
+     del botón que no pasaba contraste. */
+  background: #9a8ce8;
 }
 
 .registro:focus-visible {
@@ -3149,7 +3153,26 @@ a.cta {
 .row-figures {
   grid-area: figures;
   display: grid;
-  grid-template-columns: 120px 130px 130px 140px;
+  /*
+    **520 px en total, repartidos distinto que en el molde.**
+
+    Medido en kolscanbrasil: 120 + 130 + 130 + 140. El total se respeta —
+    `chain-columns.spec.ts` lo afirma— pero el reparto no puede ser el de ellos,
+    y la razón es una cifra que nosotros imprimimos y ellos no muestran así: el
+    total en fiat de una pérdida lleva `−`.
+
+    El texto del fiat está alineado a la derecha, así que un glifo más lo hace
+    crecer **hacia la izquierda**, fuera de su pista, hasta tocar la columna de
+    SOL. Medido el 2026-09-06 al arreglar el signo que se perdía: el borde
+    derecho de `−14,60 SOL` y el izquierdo de `−US$2.460,00` quedaron los dos en
+    x=959, exactamente pegados.
+
+    Así que el fiat se lleva 16 px de las tres columnas de cadena, que los tienen
+    de sobra: el monto más ancho que imprimen es del orden de 80 px sobre 126.
+    Las dos direcciones ayudan — el bloque de cadenas termina 16 px antes y el
+    fiat tiene 16 px más.
+  */
+  grid-template-columns: 112px 126px 126px 156px;
   align-items: baseline;
 }
 
@@ -3535,4 +3558,52 @@ a.cta {
 */
 .board > li.row-leaderboard:has(.wallet-panel:not([hidden])) {
   padding-bottom: 58px;
+}
+
+
+/*
+  **`Connect Wallet` como modal.**
+
+  Hereda del `modal-kol` todo lo que un lector ya aprendió —fondo, Esc, clic
+  afuera, la × arriba a la derecha— porque dos convenciones de cierre en un
+  mismo sitio es una que se olvida. Lo que cambia es el ancho: acá hay un
+  formulario de una columna, no una tarjeta de dos.
+*/
+.modal-connect {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(88vh, 760px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  overflow: auto;
+}
+
+.modal-connect::backdrop {
+  background: rgb(0 0 0 / 0.62);
+}
+
+.modal-connect .modal-card {
+  position: relative;
+  padding: 24px;
+}
+
+.modal-connect .headline {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+/*
+  La línea de privacidad: primera pantalla, antes de cualquier control.
+
+  Va en el color del texto y no en el secundario. Es el argumento por el que
+  alguien conecta, no una aclaración legal al pie — y el gris de las notas la
+  habría hecho leer como letra chica de las que nadie lee.
+*/
+.privacy-line {
+  margin: 0 0 20px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
 }

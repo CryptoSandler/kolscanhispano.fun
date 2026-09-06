@@ -8,8 +8,34 @@ describe("db", () => {
     expect(rows[0].one).toBe(1);
   });
 
-  it("uses a verified TLS connection", () => {
-    expect(process.env.TEST_DATABASE_URL).toContain("sslmode=verify-full");
+  /*
+    **El cifrado se exige donde hay red que proteger.**
+
+    Este caso decía `toContain("sslmode=verify-full")` a secas, y era correcto
+    mientras la suite corría contra Neon. Desde el 2026-09-06 corre contra
+    `kolscan-pg` en `localhost` (`GATES.md`), donde no hay tramo que interceptar
+    ni certificado de un tercero que verificar — y donde exigir TLS habría
+    significado montar un certificado para hablar con un socket de esta misma
+    máquina.
+
+    Lo que se afirma ahora es la regla real y no el string: **loopback puede ir
+    sin cifrar; cualquier otro host tiene que pedir `verify-full`.** Escrito así
+    el caso sigue mordiendo donde importa — si alguien apunta
+    `TEST_DATABASE_URL` a un host remoto sin `verify-full`, falla — y deja de
+    depender de dónde vive la base.
+
+    `connection-identity.test.ts` cubre la función que decide esto, con sus
+    bordes: `disable` contra un host remoto, `no-verify` contra loopback y un
+    host que apenas se le parece.
+  */
+  it("uses a verified TLS connection unless it is talking to this machine", () => {
+    const url = new URL(process.env.TEST_DATABASE_URL ?? "");
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (loopback) {
+      expect(url.searchParams.get("sslmode")).toBe("disable");
+    } else {
+      expect(url.searchParams.get("sslmode")).toBe("verify-full");
+    }
   });
 
   it("has applied the bootstrap migration", async () => {
