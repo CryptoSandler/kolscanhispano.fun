@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Bandera de España">
+  <!--
+    La bandera, simplificada para una pestaña.
+
+    Tres franjas y nada más: rojo un cuarto, amarillo la mitad, rojo un cuarto —
+    la proporción real. **Sin escudo**: a 16 px el escudo es una mancha marrón de
+    tres píxeles que ensucia la franja amarilla y no se lee como nada. Lo que
+    tiene que leerse a ese tamaño son tres franjas limpias.
+
+    El radio es 3 px sobre 32, que es la medida canónica de un favicon, y se
+    escala con el resto para que las esquinas se vean iguales en todos los
+    tamaños.
+  -->
+  <rect width="32" height="32" rx="3" fill="#AA151B"/>
+  <rect y="8" width="32" height="16" fill="#F1BF00"/>
+</svg>

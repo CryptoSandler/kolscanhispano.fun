@@ -118,12 +118,20 @@ export const metadata: Metadata = {
     **El ícono es la bandera, la misma imagen que el wordmark.**
 
     Así la pestaña y el encabezado son lo mismo y no dos representaciones de la
-    misma idea — y es literalmente la misma: las cuatro medidas se generaron de
-    `public/marca/espana.png`, que ya usaba el encabezado. Comprobado por
-    checksum contra `survives.fun` (`app/public/flags/spain.png`): los tres
-    archivos son byte por byte el mismo, así que no hay una segunda copia que
-    pueda divergir. Escaladas y centradas sobre el fondo del sitio para que el
-    mosaico sea cuadrado — una bandera 3:2 en una pestaña se ve como una franja.
+    misma idea, pero **no la misma imagen**, y la diferencia es el tamaño al que
+    se mira cada una.
+
+    El encabezado lleva la foto (`public/marca/espana.png`), que a 40 px se ve
+    como lo que es. La pestaña lleva un dibujo: `public/brand/flag.svg`, tres
+    franjas —rojo un cuarto, amarillo la mitad, rojo un cuarto— **sin escudo**.
+    A 16 px el escudo es una mancha marrón de tres píxeles sobre la franja
+    amarilla, y una foto redimensionada a 16 es una papilla de la que no se lee
+    ninguna franja. Lo que tiene que leerse a ese tamaño son tres franjas
+    limpias, y para eso hay que dibujarlas.
+
+    Los PNG se rasterizan del SVG con Chromium —el mismo motor que va a pintar
+    el favicon— porque `sips` no lee SVG. El radio se escala desde 3 px sobre
+    32, que es la medida canónica de un favicon.
 
     **Origen y licencia: sin documentar.** `survives.fun` no dice de dónde salió
     ese archivo ni bajo qué licencia; lo verifiqué buscando en sus documentos y
@@ -134,8 +142,10 @@ export const metadata: Metadata = {
   */
   icons: {
     icon: [
+      { url: "/brand/flag-48.png", sizes: "48x48", type: "image/png" },
       { url: "/brand/flag-32.png", sizes: "32x32", type: "image/png" },
       { url: "/brand/flag-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/brand/flag.svg", type: "image/svg+xml" },
     ],
     apple: [{ url: "/brand/flag-180.png", sizes: "180x180", type: "image/png" }],
   },
@@ -330,10 +340,15 @@ export default function RootLayout({
               en una línea, sin competir con nada. La página misma se mudó de
               `/trade` cuando esa ruta se eliminó (`DECISIONES.md`).
             */}
-            <p className="footnote">
-              <Link className="panel-link" href="/privacidad">
-                Privacidad
-              </Link>
+            {/*
+              **Un enlace del pie, no un rótulo.**
+
+              Heredaba `.panel-link`, que va en versalitas, y en `/privacidad`
+              quedaba un `PRIVACIDAD` suelto abajo a la izquierda que parecía un
+              encabezado roto — se vio en el gate. Es un enlace y se ve como uno.
+            */}
+            <p className="footnote footnote-links">
+              <Link href="/privacidad">Privacidad</Link>
             </p>
 
             {/*
