@@ -96,6 +96,7 @@ sirve, y la última sección dice contra quién no sirve ninguna.
 | Índice ciego (HMAC) en vez de la dirección en claro | Buscar por dirección sin descifrar; y que un `WHERE address = …` deje la dirección en un log de consultas | Un atacante que ya tiene la clave del HMAC y una lista de direcciones candidatas: puede confirmar cuáles están |
 | `public-wallets.ts` como único módulo que descifra para superficie pública | Que una ruta nueva publique una dirección por descuido | Un cambio deliberado en ese módulo |
 | `is_public` por wallet | Que se publique una dirección que su dueño no eligió publicar | Nada, si el dueño la publica |
+| `address-invariant.test.ts`: lee el HTML servido | Que de una wallet privada se escape algo — ni la dirección ni sus primeros caracteres. Una dirección truncada sigue siendo buscable en un explorador, así que no se trunca: no aparece | Una superficie nueva que el test todavía no lea |
 | Sin operaciones individuales en superficie pública (2026-09-06) | Reconstruir una transacción desde el sitio y llegar a la wallet por el explorador | Que alguien mire la cadena directamente: las direcciones públicas son públicas |
 | `no-money-path.test.ts` | Que una API que construye o manda transacciones se vuelva importable | Un atacante que ya ejecuta código en el proceso |
 | Rate limit por IP y bucket | Barrido anónimo de las rutas públicas | Un atacante distribuido, o uno con el token de admin |

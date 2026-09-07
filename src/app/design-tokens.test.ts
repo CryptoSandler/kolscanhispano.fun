@@ -198,3 +198,44 @@ describe("the contrast table in DESIGN.md is true", () => {
     }
   });
 });
+
+/**
+ * **Un token que se usa y no se define no falla: hereda.**
+ *
+ * `var(--que-no-existe)` es una declaración inválida, y el navegador la
+ * descarta en silencio; la propiedad entonces toma lo que herede del padre. No
+ * hay error en consola, no hay estilo roto, no hay nada que mirar — sólo un
+ * color que resulta ser el de al lado.
+ *
+ * Medido el 2026-09-06: `--text-dim` se pedía en **20 declaraciones** de
+ * `globals.css` y no estaba definido en ninguna parte. Diecinueve heredaban un
+ * gris parecido al que querían y pasaron desapercibidas durante semanas; la
+ * vigésima estaba adentro de una fila teñida con el color de la cadena, y
+ * «pronto» salió azul. Ésa es la única razón por la que se encontró.
+ *
+ * Un fallback explícito —`var(--x, #fff)`— no cuenta: ahí el autor decidió qué
+ * pasa si falta, y eso es un valor, no un olvido.
+ */
+describe("every custom property used is defined", () => {
+  it("finds no var(--token) without its declaration", () => {
+    const defined = new Set([
+      ...[...CSS.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gim)].map((m) => m[1]),
+      // `@property --x { ... }` también define, y con más precisión que una
+      // declaración: es donde viven los tres colores animados del wordmark.
+      ...[...CSS.matchAll(/@property\s+(--[a-z0-9-]+)/gi)].map((m) => m[1]),
+      // Los inyecta `next/font` sobre el `<html>` (`layout.tsx`), así que no
+      // están en esta hoja y sí existen en la página.
+      "--font-inter",
+      "--font-jetbrains-mono",
+    ]);
+
+    const missing = new Set<string>();
+    for (const use of CSS.matchAll(/var\(\s*(--[a-z0-9-]+)\s*([,)])/g)) {
+      // `,` es un fallback escrito a mano: el autor ya contestó qué pasa si falta.
+      if (use[2] === "," ) continue;
+      if (!defined.has(use[1])) missing.add(use[1]);
+    }
+
+    expect([...missing].sort()).toEqual([]);
+  });
+});

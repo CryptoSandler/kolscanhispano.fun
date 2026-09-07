@@ -160,7 +160,7 @@ function ConnectWalletDialog({
         if (event.target === ref.current) onClose();
       }}
     >
-      <div className="modal-card">
+      <div className="modal-card connect-card">
         <button type="button" className="modal-close" onClick={onClose} aria-label="Cerrar">
           {/* U+00D7, no una equis minúscula. */}×
         </button>

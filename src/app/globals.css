@@ -36,6 +36,42 @@
   --ink-muted: #a5adb5;
   --ink-subtle: #7e878f;
 
+  /*
+    **`--text-dim` es un alias de `--ink-muted`, y existe porque ya se usaba.**
+
+    Encontrado el 2026-09-06: 20 declaraciones lo pedían y ninguna lo definía,
+    así que cada una heredaba el color de su padre en vez del gris. Se veía como
+    un diseño intencional en todos los casos menos uno —«pronto» salía del color
+    de la cadena—, que es por qué duró.
+
+    Se define en vez de renombrar los 20 usos: es un cambio, y un cambio de 20
+    lugares a la vez se revisa peor que uno. `design-tokens.test.ts` falla ahora
+    si aparece otro token usado y no definido, que es lo que faltaba.
+  */
+  --text-dim: var(--ink-muted);
+
+  /*
+    Y los otros cinco que el mismo test encontró, por el mismo motivo. Todos son
+    nombres que alguien escribió esperando que existieran, y todos heredaban:
+
+      --text        12 usos   --surface   1 uso
+      --font-mono    5 usos   --line      1 uso
+      --muted        1 uso
+
+    `--font-mono` es el peor de los cinco: cinco reglas piden `font-family:
+    var(--font-mono)` y ninguna la conseguía, así que cinco lugares que tenían
+    que verse monoespaciados se veían con la tipografía del padre.
+
+    Se definen como alias del token real en vez de reescribir los 20 usos: el
+    alias es un cambio de una línea que se revisa entero, y renombrar es un
+    cambio de veinte que se revisa a pedazos.
+  */
+  --text: var(--ink);
+  --muted: var(--ink-subtle);
+  --surface: var(--surface-1);
+  --line: var(--hairline);
+  --font-mono: var(--font-numeric);
+
   /* DESIGN.md: "**The accent stays cyan `#22d3ee`** ... It marks the wordmark,
      focus rings, the selected tab, and the live indicator. **It never touches
      a figure.**" `--on-accent` is the ink for a filled accent surface; the
@@ -3024,6 +3060,20 @@ a.cta {
   --chain-ethereum: rgb(96 165 250);
   --chain-bnb: rgb(250 204 21);
   --chain-robinhood: rgb(45 212 191);
+
+  /*
+    Tabla `marca`: el color que cada cadena usa para sí misma, verificado contra
+    su brand kit el 2026-09-06. Las fuentes, una por hex, en `docs/colores.md`.
+    No se mezclan con las de arriba: hacen otro trabajo.
+  */
+  --brand-solana-1: #9945ff;
+  --brand-solana-2: #14f195;
+  --brand-ethereum: #627eea;
+  --brand-bnb: #f0b90b;
+  --brand-robinhood: #ccff00;
+  --brand-base: #0000ff;
+  /* `#0000FF` sobre `#0B0D0F` no llega a AA; éste sí, y sigue siendo azul Base. */
+  --brand-base-ink: #6b8cff;
 }
 
 .chain-amount.is-chain-eth { color: var(--chain-ethereum); }
@@ -3592,17 +3642,6 @@ a.cta {
   line-height: 1.5;
 }
 
-.privacy-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--ink-subtle);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.privacy-list > li + li {
-  margin-top: 8px;
-}
 
 
 /*
@@ -3718,10 +3757,27 @@ a.cta {
   padding: 24px;
 }
 
+/*
+  El título va en **su propia fila, debajo de los dos botones de esquina**.
+  Antes empezaba en el borde de arriba y el chevron de volver le caía encima —
+  visto en el gate del 2026-09-06. Los 28px del botón más los 12 de su offset
+  son el suelo; el `padding-top` lo despeja sin sacar a los botones de las
+  esquinas, que es donde el lector los busca.
+*/
 .connect-title {
   margin: 0 0 8px;
+  padding-top: 28px;
   font-size: 20px;
   font-weight: 600;
+}
+
+/*
+  La caja del conector crece con lo que tiene adentro. El `min-height` de
+  `.modal-card` existe para el modal de perfil, que sí tiene un alto de
+  referencia; acá dejaba un hueco debajo de tres filas de chain.
+*/
+.connect-card {
+  min-height: 0;
 }
 
 /* Un solo texto de ayuda, dos líneas. */
@@ -3880,94 +3936,162 @@ a.cta {
 .connect-step {
   display: flex;
   flex-direction: column;
-  min-height: 232px;
 }
 
-/* `← Volver` va en la fila del título, no suelto encima. */
-.connect-step-head {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.connect-back {
-  flex: none;
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 13px;
+/*
+  Volver: el gemelo de `.modal-close`, al otro lado. Misma caja de 28px, mismo
+  borde y mismo fondo, para que se lean como un par y no como dos controles que
+  se parecen. La fila de encabezado que había acá se fue con el título-pregunta.
+*/
+.connect-back-icon {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-pill);
   cursor: pointer;
+  transition:
+    color var(--hover),
+    background var(--hover);
 }
 
-.connect-back:focus-visible {
+.connect-back-icon:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+
+.connect-back-icon:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.connect-step-title {
+/*
+  Paso 2: filas, una debajo de otra, en orden fijo del producto.
+
+  Reemplaza la grilla de tarjetas del 2026-09-06. Una grilla obligaba a decidir
+  entre columnas y estiraba las tarjetas para rellenar un alto fijo; una lista
+  vertical se recorre de arriba abajo y termina donde termina el contenido.
+*/
+.chain-rows {
+  list-style: none;
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-/*
-  Paso 2: tarjetas iguales en grilla de dos o tres columnas.
-
-  `auto-fit` con un mínimo de 120px da dos columnas a 390 y tres en el panel de
-  400 cuando hay tres opciones. `flex: 1` sobre la grilla es lo que la hace
-  estirar hasta llenar el alto que la lista dejaba.
-*/
-.chain-choices {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
-  flex: 1 1 auto;
-  align-content: stretch;
-}
-
-/*
-  Cada tarjeta lleva el color de su cadena: fondo tenue siempre, borde del mismo
-  color en hover y foco. Los colores salen de la tabla única de `:root`, así que
-  una cadena se ve igual acá que en su columna del ranking.
-*/
-.chain-choice {
-  --chain-tint: var(--text-dim);
+  padding: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
   gap: 8px;
-  padding: 16px;
-  border: 1px solid color-mix(in srgb, var(--chain-tint) 24%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--chain-tint) 10%, transparent);
-  color: var(--text);
+}
+
+/*
+  El color de la cadena va en el texto y en un borde izquierdo de 3px — sin
+  puntos ni chips, que era ornamento repetido: el nombre ya está teñido. Los
+  valores salen de la tabla única de `:root`, así que una cadena se ve igual acá
+  que en su columna del ranking.
+*/
+.chain-row {
+  --chain-tint: var(--ink-muted);
+  width: 100%;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  border: 0;
+  border-left: 3px solid var(--chain-tint);
+  /*
+    Recto del lado del borde y redondeado del otro: con las cuatro esquinas
+    redondeadas, un borde de 3px que existe sólo a la izquierda se curva en las
+    puntas y se lee como un paréntesis en vez de como una barra.
+  */
+  border-radius: 0 8px 8px 0;
+  background: transparent;
+  color: var(--chain-tint);
   font-size: 16px;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: background 120ms ease;
 }
 
-.chain-choice:hover:not(:disabled),
-.chain-choice:focus-visible {
-  border-color: var(--chain-tint);
-  background: color-mix(in srgb, var(--chain-tint) 18%, transparent);
+.chain-row:hover:not(:disabled),
+.chain-row:focus-visible {
+  background: color-mix(in srgb, var(--chain-tint) 12%, transparent);
   outline: none;
 }
 
-.chain-choice-dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--chain-tint);
+.chain-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.chain-choice.is-chain-solana { --chain-tint: var(--chain-solana); }
-.chain-choice.is-chain-robinhood { --chain-tint: var(--chain-robinhood); }
-.chain-choice.is-chain-bnb { --chain-tint: var(--chain-bnb); }
-.chain-choice.is-chain-ethereum { --chain-tint: var(--chain-ethereum); }
+/*
+  «Pronto»: la fila se ve, no se puede elegir. Baja el contraste del nombre en
+  vez de neutralizarlo del todo, para que siga siendo la fila de esa cadena.
+*/
+.chain-row:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.chain-row-soon {
+  /*
+    `--ink-muted` y no `--text-dim`: ese token se referencia 20 veces en este
+    archivo y no está definido en ninguna, así que quien lo usa hereda el color
+    del padre. Acá el padre es el color de la cadena, y «pronto» salía azul.
+  */
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: lowercase;
+}
+
+/*
+  **Tabla `marca`, no la del ranking.** Acá el nombre de la cadena aparece como
+  nombre, y el lector espera el color de esa marca; en las columnas del ranking
+  el trabajo es distinguir números y la tabla es otra. Las dos, con la fuente
+  oficial de cada hex, en `docs/colores.md`; el motivo, en `DESIGN.md` §Colors.
+*/
+.chain-row.is-chain-solana { --chain-tint: var(--brand-solana-2); }
+.chain-row.is-chain-robinhood { --chain-tint: var(--brand-robinhood); }
+.chain-row.is-chain-bnb { --chain-tint: var(--brand-bnb); }
+.chain-row.is-chain-ethereum { --chain-tint: var(--brand-ethereum); }
+.chain-row.is-chain-base { --chain-tint: var(--brand-base); }
+
+/*
+  Solana es un degradado, no un color: su marca son los dos extremos y la
+  transición entre ellos. Va sobre el texto con `background-clip`, y el borde
+  izquierdo lo toma en la misma dirección.
+
+  El `--chain-tint` de la fila queda en el verde —el extremo legible sobre fondo
+  oscuro— para el fondo del hover y para cualquier navegador donde el recorte no
+  aplique: sin él el nombre quedaría transparente, que es la única forma en que
+  este efecto falla mal.
+*/
+.chain-row.is-chain-solana {
+  border-left-color: transparent;
+  border-image: linear-gradient(180deg, var(--brand-solana-1), var(--brand-solana-2)) 1;
+  border-image-width: 0 0 0 3px;
+}
+
+.chain-row.is-chain-solana .chain-row-name {
+  background: linear-gradient(90deg, var(--brand-solana-1), var(--brand-solana-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/*
+  Base sobre fondo oscuro es el caso que obliga a separar «color de marca» de
+  «color usable»: `#0000FF` puro no se lee. Se aclara sólo lo necesario para
+  pasar contraste, y sigue siendo azul Base. Igual va deshabilitada.
+*/
+.chain-row.is-chain-base { --chain-tint: var(--brand-base-ink); }
 
 /* `Casi listo`: tres controles y un botón. */
 .almost-wallets {
@@ -4469,4 +4593,87 @@ a.cta {
 
 .modal-connect .connect-cta:hover:not(:disabled) {
   background: #3ecf72;
+}
+
+/*
+  **`/privacidad`: ancho de lectura, no ancho de pantalla.**
+
+  720 px. Es la única página del sitio que es prosa y no una tabla, y una línea
+  de 1200 px obliga al ojo a volver desde muy lejos en cada renglón.
+*/
+.prose-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 0 64px;
+}
+
+.prose-page .display-lg {
+  margin: 0 0 32px;
+}
+
+/*
+  Cuatro tarjetas en 2×2, apiladas a 390.
+
+  `auto-fit` con mínimo de 260 da dos columnas en 720 y una sola cuando no
+  entran — sin una consulta de medios que haya que mantener de acuerdo con el
+  ancho de arriba.
+*/
+.privacy-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 0 0 32px;
+  padding: 0;
+  list-style: none;
+}
+
+/* Mismo fondo y borde que las filas del ranking: la página es parte del sitio. */
+.privacy-card {
+  padding: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.privacy-card__icon {
+  display: block;
+  margin-bottom: 16px;
+  color: var(--accent);
+}
+
+.privacy-card__title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.privacy-card__body {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.privacy-close {
+  margin: 0 0 32px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+
+
+/* El enlace del pie: minúsculas, alineado con el contenido, sin aire de rótulo. */
+.footnote-links {
+  margin: 0;
+}
+
+.footnote-links a {
+  color: var(--text-dim);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.footnote-links a:hover {
+  color: var(--text);
+  text-decoration: underline;
 }

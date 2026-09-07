@@ -175,10 +175,21 @@ are unchanged in kind and only in value. `ink` on each podium wash: 14.18, 14.28
 all PASS. A new colour enters this system
 only with its measured ratio in this table; `design-tokens.test.ts` recomputes every row.
 
-### Una sola tabla de color por cadena — 2026-09-06
+### Dos tablas de color por cadena — 2026-09-06
 
-Las columnas del ranking, los badges y las tarjetas del paso de chain leen **la
-misma** tabla, en `:root`:
+Reemplaza a «una sola tabla», de este mismo día y unas horas antes. **Las dos
+tablas y el hex de cada una viven en `docs/colores.md`, con la fuente oficial al
+lado de cada valor de marca.**
+
+**`marca`** — donde el nombre de la cadena aparece *como nombre*: el paso de
+chain del conector, y los badges que llevan el nombre escrito. Es el color que la
+cadena usa para sí misma, verificado contra su brand kit: Solana el degradado
+`#9945FF → #14F195`, Ethereum `#627EEA`, BNB `#F0B90B`, Base `#0000FF`,
+Robinhood `#CCFF00` (el único sin hex publicado; muestreado de su propio sitio, y
+anotado como tal).
+
+**`ranking`** — las columnas de la clasificación y los montos por cadena, copiadas
+del molde:
 
 | Cadena | Color | |
 |---|---|---|
@@ -187,15 +198,25 @@ misma** tabla, en `:root`:
 | BNB | amarillo | `rgb(250 204 21)` |
 | Robinhood | teal | `rgb(45 212 191)` |
 
-**Robinhood tiene color propio** aunque comparta la columna del ranking con ETH:
-comparten *unidad*, no cadena. En cualquier superficie que hable de cadenas —el
-paso de chain, un badge del perfil— son dos cosas distintas y se ven distintas.
-Contraste del teal: 9,59:1 sobre `--surface-1`, 10,46:1 sobre el fondo.
+**El motivo, que es lo que faltaba la primera vez.** Las dos tablas tienen
+trabajos distintos. La de ranking existe para que ocho columnas de números se
+distingan entre sí sobre fondo oscuro y pasen AA; no tiene que parecerse a nada,
+y de hecho no puede: `#0000FF` sobre `#0B0D0F` es ilegible, y el morado de Solana
+al lado del azul de Ethereum se confunde en una fila de cifras. La de marca
+existe para que, cuando alguien lee «Solana», el color sea el de Solana —
+cualquier otro se lee como un error.
 
-**Esto reemplaza una decisión de horas antes** que pintaba Solana de violeta en
-el paso de chain mientras su columna seguía verde. Un color por cadena, no un
-color por pantalla: era el mismo dato con dos respuestas según dónde se mirara.
-La regla, entonces: **una cadena tiene un color, y vive acá.**
+**Robinhood tiene color propio** aunque comparta la columna del ranking con ETH:
+comparten *unidad*, no cadena. Contraste del teal: 9,59:1 sobre `--surface-1`,
+10,46:1 sobre el fondo.
+
+**Lo que la versión anterior tenía bien, y se conserva.** Decía: «un color por
+cadena, no un color por pantalla», porque el mismo dato daba dos respuestas según
+dónde se mirara. Sigue prohibido. La diferencia es que el reparto ahora no es por
+pantalla sino **por papel**: el nombre de una marca y una columna de un ranking
+son dos cosas distintas, y lo son en cualquier pantalla donde aparezcan. Una
+tabla sola tenía que fallar en uno de los dos trabajos, y estaba fallando en el
+de marca.
 
 ## Typography
 

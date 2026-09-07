@@ -62,12 +62,19 @@ export function AlmostDone({
   // Agregar otra wallet reemplaza el contenido del panel, no abre otro encima.
   if (picking !== null) {
     return (
-      <div className="connect-step">
-        <button type="button" className="connect-back" onClick={onCancelPick}>
-          ← Volver
-        </button>
-        <WalletStep chains={chains} busy={busy} error={error} onPick={onPickAnother} />
-      </div>
+      /*
+        El chevron lo dibuja `WalletStep`, no esta pantalla. Acá había un
+        `← Volver` propio que se superponía con el del paso de chain cuando la
+        wallet elegida firmaba en más de una cadena: dos controles de volver en
+        el mismo píxel, cada uno volviendo a un lugar distinto.
+      */
+      <WalletStep
+        chains={chains}
+        busy={busy}
+        error={error}
+        onPick={onPickAnother}
+        onBack={onCancelPick}
+      />
     );
   }
 

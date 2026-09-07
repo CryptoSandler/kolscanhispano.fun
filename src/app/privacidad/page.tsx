@@ -1,52 +1,113 @@
 /**
- * `/privacidad` — cómo protegemos las wallets, en una página propia.
+ * `/privacidad` — qué pasa con las wallets de un KOL, para quien no escribe
+ * código.
  *
- * **Vivía en `/trade`**, que se eliminó el 2026-09-06 hasta que haya terminal
- * socio (`DECISIONES.md`). El contenido no cambió: cada línea corresponde a un
- * mecanismo que existe y a un test que lo sostiene, y ninguna es una promesa a
- * futuro. Se mudó entera en vez de reescribirse, porque lo que decía era cierto
- * y sigue siéndolo.
+ * **Estaba escrita para nosotros.** Decía `is_public`, "índice ciego" e
+ * "importar una API que arme o envíe una transacción": tres cosas ciertas que
+ * un lector no puede evaluar, en la única página del sitio cuyo trabajo es que
+ * confíe. Un lector que no entiende la garantía no la recibe, por precisa que
+ * sea.
  *
- * Se llega desde el enlace `Privacidad` del pie, que es donde alguien la busca.
+ * Ahora son cuatro tarjetas de dos líneas, y **el texto técnico no se tiró**:
+ * está entero, palabra por palabra, en el desplegable del final. La versión
+ * larga sigue siendo la que un revisor puede verificar; la corta es la que
+ * alguien lee.
  */
 export const metadata = {
   title: "Privacidad",
-  description: "Qué hacemos con tus wallets, y qué test lo sostiene.",
+  description: "Qué hacemos con tus wallets, en cuatro puntos.",
 };
+
+/** Íconos de trazo, dibujados acá: son cuatro formas y no justifican un paquete. */
+function Icon({ name }: { name: "ojo" | "recorte" | "candado" | "firma" }) {
+  const common = {
+    viewBox: "0 0 24 24",
+    width: 28,
+    height: 28,
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.6,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+    focusable: "false" as const,
+  };
+  if (name === "ojo") {
+    return (
+      <svg {...common}>
+        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
+        <circle cx="12" cy="12" r="2.5" />
+        <path d="M4 20L20 4" />
+      </svg>
+    );
+  }
+  if (name === "recorte") {
+    return (
+      <svg {...common}>
+        <path d="M4 8h6M14 8h6M4 16h3M11 16h9" />
+        <path d="M12 3v18" strokeDasharray="2 3" />
+      </svg>
+    );
+  }
+  if (name === "candado") {
+    return (
+      <svg {...common}>
+        <rect x="4" y="10" width="16" height="10" rx="2" />
+        <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <path d="M3 17c3-1 5-9 8-9s2 6 4 6 3-2 6-3" />
+      <path d="M3 21h18" />
+    </svg>
+  );
+}
+
+const CARDS = [
+  {
+    icon: "ojo" as const,
+    title: "Nadie ve tus wallets",
+    body: "Salvo que elijas mostrar alguna. Por defecto están ocultas.",
+  },
+  {
+    icon: "recorte" as const,
+    title: "Ni un pedacito",
+    body: "No aparecen ni recortadas ni escondidas en la página.",
+  },
+  {
+    icon: "candado" as const,
+    title: "Guardadas cifradas",
+    body: "En nuestra base no están en texto claro.",
+  },
+  {
+    icon: "firma" as const,
+    title: "Solo firmas, nunca pagas",
+    body: "El sitio no mueve fondos ni arma transacciones.",
+  },
+];
 
 export default function PrivacidadPage() {
   return (
-    <>
-      <div className="page-head">
-        <h1 className="display-lg">Cómo protegemos tus wallets</h1>
-        <p className="page-subtitle">
-          Lo que efectivamente hacemos, no lo que nos gustaría. Cada punto tiene un mecanismo
-          detrás y un test que falla si deja de ser cierto.
-        </p>
-      </div>
+    <div className="prose-page">
+      <h1 className="display-lg">Cómo protegemos tus wallets</h1>
 
-      <ul className="privacy-list">
-        <li>
-          <strong>Privadas por defecto.</strong> Una wallet se publica sólo si su
-          dueño la marca como pública, wallet por wallet. `is_public` es esa
-          elección y es lo único que la habilita.
-        </li>
-        <li>
-          <strong>Ni truncadas.</strong> De una wallet que no elegiste mostrar no
-          aparece nada en la página: ni la dirección, ni sus primeros caracteres.
-          Hay un test que lee el HTML que servimos y falla si aparece.
-        </li>
-        <li>
-          <strong>Cifradas en la base.</strong> Cada dirección se guarda cifrada y
-          atada a su propia fila, y se busca por un índice ciego — un resumen con
-          clave que permite encontrarla sin guardarla en claro.
-        </li>
-        <li>
-          <strong>Firmas un mensaje, nunca una transacción.</strong> Este sitio no
-          custodia fondos ni construye operaciones. Un test falla si el código de
-          la aplicación pudiera siquiera importar una API que arme o envíe una.
-        </li>
+      <ul className="privacy-cards">
+        {CARDS.map((card) => (
+          <li key={card.title} className="privacy-card">
+            <span className="privacy-card__icon">
+              <Icon name={card.icon} />
+            </span>
+            <h2 className="privacy-card__title">{card.title}</h2>
+            <p className="privacy-card__body">{card.body}</p>
+          </li>
+        ))}
       </ul>
-    </>
+
+      <p className="privacy-close">
+        Si quieres saber qué hacemos con tus datos: nada más que esto.
+      </p>
+    </div>
   );
 }

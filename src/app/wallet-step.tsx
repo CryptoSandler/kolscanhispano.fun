@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Chain } from "@/lib/chain";
+import { isChain, type Chain } from "@/lib/chain";
 import { CONNECT_LEAD } from "./connect-wallet";
-import { supportedChains } from "@/lib/wallet-support";
+import { supportedChains, WALLET_SUPPORT } from "@/lib/wallet-support";
 import {
   discoverChoices,
   groupChoices,
@@ -36,6 +36,7 @@ const CHAIN_LABEL: Record<string, string> = {
   robinhood: "Robinhood",
   bnb: "BNB",
   ethereum: "ETH",
+  base: "Base",
 };
 
 type Listed = { name: string; slug: string; url: string };
@@ -90,16 +91,80 @@ function offerable(option: WalletOption, active: readonly Chain[]): Chain[] {
   return supported.filter((chain) => announced.has(chain));
 }
 
+/**
+ * El orden de las filas es **fijo y del producto**, no el de la tabla ni el que
+ * anunció la wallet: quien vuelve a este paso encuentra Solana siempre arriba.
+ * `base` no es un `Chain` —este sitio no lo indexa— y por eso vive acá como
+ * string suelto: es una fila que se muestra y no se puede elegir.
+ */
+const CHAIN_ROWS = ["solana", "robinhood", "bnb", "ethereum", "base"] as const;
+
+/**
+ * Las que la tabla dice que la wallet soporta y este sitio **todavía no indexa**.
+ *
+ * Se muestran deshabilitadas con «pronto» en vez de esconderlas, porque la
+ * pregunta que alguien se hace mirando dos filas es "¿y mi chain?", y una lista
+ * que la omite contesta "no la soportamos" cuando la respuesta es "todavía no".
+ *
+ * Una cadena que sí indexamos pero que la wallet no anunció en este navegador
+ * **no** entra acá: no está por llegar, está ausente, y decir «pronto» sería
+ * mentira. Ésa sigue sin aparecer, como antes.
+ */
+function comingSoon(option: WalletOption, offered: readonly string[]): string[] {
+  const known = WALLET_SUPPORT[option.name];
+  if (known === undefined) return [];
+  return CHAIN_ROWS.filter(
+    (chain) => known.includes(chain) && !offered.includes(chain) && !isChain(chain),
+  );
+}
+
+/**
+ * El chevron de volver: **uno solo, siempre en la misma esquina**.
+ *
+ * Vive acá y no en cada pantalla porque el 2026-09-06 llegó a haber dos a la
+ * vez —el de `almost-done.tsx`, que cancela «conectar otra wallet», y el del
+ * paso de chain— superpuestos en el mismo punto. Quién lo dibuja no se decide
+ * por pantalla: lo dibuja este componente, y quien lo envuelve le pasa a dónde
+ * volver cuando todavía no se eligió wallet.
+ */
+function BackChevron({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="connect-back-icon"
+      onClick={onClick}
+      aria-label="Volver"
+    >
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" focusable="false">
+        <path
+          d="M12.5 4.5 7 10l5.5 5.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
 export function WalletStep({
   chains,
   busy,
   error,
   onPick,
+  onBack,
 }: {
   chains: readonly Chain[];
   busy: boolean;
   error: string | null;
   onPick: (choice: Choice) => void;
+  /**
+   * A dónde vuelve el chevron **mientras no se eligió wallet**. Sin esto no hay
+   * chevron en la lista: es la primera pantalla del diálogo y no hay atrás.
+   */
+  onBack?: () => void;
 }) {
   const [installed, setInstalled] = useState<WalletOption[]>([]);
   const [chosen, setChosen] = useState<WalletOption | null>(null);
@@ -160,46 +225,45 @@ export function WalletStep({
   // Paso 2: la cadena, sólo si la wallet elegida firma en más de una.
   if (chosen !== null) {
     const options = offerable(chosen, chains);
+    const soon = comingSoon(chosen, options);
+    const rows = CHAIN_ROWS.filter(
+      (chain) => options.includes(chain as Chain) || soon.includes(chain),
+    );
     return (
       <div className="connect-step">
-        {/*
-          `← Volver` va **en la fila del título**, no suelto arriba: suelto
-          empujaba el encabezado hacia abajo y el paso quedaba más alto que la
-          lista, que es lo que el dueño marcó en el gate.
-        */}
-        <div className="connect-step-head">
-          <button type="button" className="connect-back" onClick={() => setChosen(null)}>
-            ← Volver
-          </button>
-          <h3 className="connect-step-title">¿Con qué chain firmas con {chosen.name}?</h3>
-        </div>
+        <BackChevron onClick={() => setChosen(null)} />
 
         {/*
-          Tarjetas iguales en grilla. Cada una lleva el color de su cadena —el
-          mismo vocabulario de color que las columnas del ranking— como fondo
-          tenue, y ese color pasa al borde en hover y foco.
+          Filas, no tarjetas. Una lista vertical se lee de un vistazo y no pide
+          decidir entre columnas; el color de la cadena va en el texto y en un
+          borde izquierdo de 3 px, que es todo el adorno que hace falta.
 
-          La grilla **estira** para llenar el alto de la lista: el panel no
-          cambia de tamaño entre pasos, así que dos o tres opciones ocupan lo
-          que ocupaban las tres filas de wallets en vez de dejar un hueco.
+          Las que todavía no indexamos van deshabilitadas con «pronto» en gris.
+          `disabled` de verdad, no una clase: un botón que parece apagado pero
+          responde al Enter es peor que uno que no está.
         */}
-        <div className="chain-choices">
-          {options.map((chain) => (
-            <button
-              key={chain}
-              type="button"
-              className={`chain-choice is-chain-${chain}`}
-              disabled={busy}
-              onClick={() => {
-                const choice = chosen.choices.find((c) => c.chain === chain) ?? chosen.choices[0];
-                onPick(choice);
-              }}
-            >
-              <span className="chain-choice-dot" aria-hidden="true" />
-              <span className="chain-choice-name">{CHAIN_LABEL[chain] ?? chain}</span>
-            </button>
-          ))}
-        </div>
+        <ul className="chain-rows">
+          {rows.map((chain) => {
+            const pending = soon.includes(chain);
+            return (
+              <li key={chain}>
+                <button
+                  type="button"
+                  className={`chain-row is-chain-${chain}`}
+                  disabled={busy || pending}
+                  onClick={() => {
+                    const choice =
+                      chosen.choices.find((c) => c.chain === chain) ?? chosen.choices[0];
+                    onPick(choice);
+                  }}
+                >
+                  <span className="chain-row-name">{CHAIN_LABEL[chain] ?? chain}</span>
+                  {pending && <span className="chain-row-soon">pronto</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
 
         {error !== null && (
           <p className="label state-error" role="alert">
@@ -277,6 +341,8 @@ export function WalletStep({
 
   return (
     <div className="connect-step">
+      {onBack !== undefined && <BackChevron onClick={onBack} />}
+
       {/*
         La línea de privacidad se dice **una vez, en la lista**. Vivía en el
         diálogo, así que se repetía en el paso de chain y en `Casi listo` — y
