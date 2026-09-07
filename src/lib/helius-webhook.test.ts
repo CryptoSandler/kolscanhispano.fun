@@ -34,15 +34,27 @@ type Call = { url: string; method: string; body: Record<string, unknown> };
  *
  * `holds` is what that read-back reports, and it defaults to "whatever the last
  * write sent". Overriding it is how the silent-partial-write case is staged.
+ *
+ * `foreign` stages the case that cost us the ingest: the webhook belongs to
+ * **another account**, so the listado de esta clave viene vacío mientras el
+ * detalle sigue contestando 200 — que es exactamente lo que hizo Helius el
+ * 2026-09-06 al rotar la clave a la cuenta de CryptoSandler.
  */
 function fakeHelius(
   calls: Call[],
-  options: { status?: number; holds?: number | null; gone?: boolean } = {},
+  options: { status?: number; holds?: number | null; gone?: boolean; foreign?: boolean } = {},
 ): typeof globalThis.fetch {
   const status = options.status ?? 200;
   let lastSent = 0;
   return (async (url: string, init: RequestInit = {}) => {
     const method = init.method ?? "GET";
+    // El listado es por cuenta; el detalle no. Los separa el path: `/v0/webhooks`
+    // contra `/v0/webhooks/<id>`.
+    const isList = !/\/webhooks\/[^?]+/.test(url);
+    if (method === "GET" && isList) {
+      const ours = options.gone === true || options.foreign === true ? [] : [{ webhookID: WEBHOOK_ID }];
+      return { ok: true, status: 200, json: async () => ours } as Response;
+    }
     if (method === "GET") {
       // `gone` stages a webhook Helius has forgotten: every read of it 404s,
       // which is what a deletion from the dashboard looks like from here.
@@ -56,6 +68,7 @@ function fakeHelius(
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     lastSent = (body.accountAddresses as string[]).length;
     options.gone = false; // a write brings it back into existence
+    options.foreign = false; // y lo trae a esta cuenta
     calls.push({ url, method, body });
     return {
       ok: status >= 200 && status < 300,
@@ -321,6 +334,36 @@ describe("syncHeliusWebhook", () => {
     expect(result).toMatchObject({ ok: true, changed: true, created: true });
     expect(calls).toHaveLength(1);
     expect(calls[0].method).toBe("POST");
+  });
+
+  /**
+   * **Cuenta nueva, hash viejo.**
+   *
+   * El 2026-09-06 se rotó `HELIUS_API_KEY` a la cuenta de CryptoSandler porque
+   * la anterior era personal. El webhook había quedado en la cuenta vieja, y el
+   * `webhook_state` de la base seguía guardando su id y el hash de un conjunto
+   * de direcciones que no había cambiado. El sync dijo `already in sync;
+   * 3 address(es)` — con la ingesta a punto de morir en cuanto la cuenta vieja
+   * se revocara, que es lo que pasó ese mismo día.
+   *
+   * La causa: preguntaba por el detalle, y Helius contesta 200 al detalle de un
+   * id que no es de esta cuenta. Ahora pregunta por el **listado**, que sí es
+   * por cuenta, y un webhook ajeno se recrea acá.
+   */
+  it("recreates the webhook when the key now belongs to another account", async () => {
+    await approvedKolWithWallet("uno");
+    await syncHeliusWebhook(fakeHelius([]));
+    const before = await readWebhookState();
+
+    const calls: Call[] = [];
+    const result = await syncHeliusWebhook(fakeHelius(calls, { foreign: true }));
+
+    expect(result).toMatchObject({ ok: true, changed: true, created: true });
+    expect(calls).toHaveLength(1);
+    // POST, no PUT: el id viejo no es nuestro para editar.
+    expect(calls[0].method).toBe("POST");
+    // Y el hash no alcanza para nada por sí solo: el conjunto no se movió.
+    expect(await readWebhookState()).toMatchObject({ hash: before?.hash });
   });
 
   it("refuses to sync without the key or the secret, and calls nothing", async () => {

@@ -150,8 +150,24 @@ export async function syncHeliusWebhook(
     The credit is spent on roster mutations, a handful a week, and not on a
     schedule.
   */
-  const exists =
-    state !== null && (await confirmAddressCount(fetcher, apiKey, state.webhookId)) !== null;
+  /*
+    **Existir quiere decir estar en la lista de *esta* cuenta, y activo.**
+
+    Hasta el 2026-09-07 esto preguntaba por el detalle (`GET /v0/webhooks/<id>`)
+    y aceptaba cualquier 200. El comentario de arriba ya avisaba que el detalle
+    y el listado no coinciden; lo que faltaba saber es que **el detalle responde
+    200 para un id de otra cuenta**.
+
+    Se vio al rotar la clave a la cuenta de CryptoSandler: el webhook vivía en la
+    cuenta personal, el listado de la cuenta nueva devolvía cero, y esta función
+    igual dijo "unchanged" — con la ingesta a punto de morir en cuanto se
+    revocara la cuenta vieja. Un id que sobrevive a la cuenta que lo creó no es
+    evidencia de nada.
+
+    El listado sí es por cuenta. Cuesta una llamada más y es la única que
+    responde la pregunta que importa: *¿este webhook es nuestro y está vivo?*
+  */
+  const exists = state !== null && (await webhookIsInAccount(fetcher, apiKey, state.webhookId));
 
   if (state !== null && exists && state.hash === hash) {
     return { ok: true, changed: false, addresses: addresses.length, reason: "unchanged" };
@@ -257,6 +273,37 @@ export async function syncHeliusWebhook(
  * summary with no `accountAddresses`, verified 2026-09-02 against a webhook
  * that demonstrably had three.
  */
+/**
+ * ¿El webhook está en la cuenta de esta clave, y activo?
+ *
+ * Por el **listado**, que es por cuenta, y no por el detalle, que contesta 200
+ * para ids ajenos. Ante un error de red devuelve `false`: recrear un webhook que
+ * existía cuesta una llamada y deja un duplicado que `storeRawTxBatch` deduplica
+ * por firma; darlo por vivo cuando no lo está cuesta la ingesta entera.
+ */
+async function webhookIsInAccount(
+  fetcher: typeof globalThis.fetch,
+  apiKey: string,
+  webhookId: string,
+): Promise<boolean> {
+  try {
+    const response = await fetcher(`${HELIUS_API}?api-key=${encodeURIComponent(apiKey)}`, {
+      method: "GET",
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as unknown;
+    if (!Array.isArray(body)) return false;
+    return body.some(
+      (hook) =>
+        typeof hook === "object" &&
+        hook !== null &&
+        (hook as { webhookID?: string }).webhookID === webhookId,
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function confirmAddressCount(
   fetcher: typeof globalThis.fetch,
   apiKey: string,
