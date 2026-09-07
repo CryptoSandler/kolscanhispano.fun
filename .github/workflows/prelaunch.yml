@@ -1,0 +1,72 @@
+name: Prelaunch
+
+# Diario, y a mano cuando alguien quiera preguntarle al sistema si está vivo.
+#
+# **Existe por un caso concreto.** El 2026-09-07 el cron de `parse-pending`
+# informó `success` durante días mientras todas sus llamadas a Helius devolvían
+# 401: la credencial de CI estaba vencida y ningún tilde verde lo decía. Un
+# check que corre solo, todos los días, y que **abre un issue** cuando falla es
+# lo que convierte ese silencio en algo que alguien ve.
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  prelaunch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run the checks
+        id: run
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          ALCHEMY_AUTH_TOKEN: ${{ secrets.ALCHEMY_AUTH_TOKEN }}
+          WALLET_ENC_KEY: ${{ secrets.WALLET_ENC_KEY }}
+          WALLET_HMAC_KEY: ${{ secrets.WALLET_HMAC_KEY }}
+          # El día del lanzamiento esto pasa a `1` y el check de `noindex`
+          # invierte su expectativa, en vez de borrarse.
+          PRELAUNCH_INDEXABLE: ${{ vars.PRELAUNCH_INDEXABLE }}
+        run: |
+          set -o pipefail
+          npm run prelaunch 2>&1 | tee prelaunch.log
+
+      # Sólo cuando falla, y con el log adentro: un issue que dice "falló" y
+      # obliga a abrir Actions para saber qué es medio issue.
+      - name: Open an issue when something is red
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const log = fs.existsSync("prelaunch.log")
+              ? fs.readFileSync("prelaunch.log", "utf8").slice(-4000)
+              : "(sin log)";
+            const today = new Date().toISOString().slice(0, 10);
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `prelaunch en rojo — ${today}`,
+              labels: ["prelaunch"],
+              body:
+                "El chequeo diario encontró algo apagado. Cada línea es una llamada real, " +
+                "no una lectura de configuración.\n\n```\n" + log + "\n```\n\n" +
+                `[La corrida](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                `/actions/runs/${context.runId})`,
+            });
