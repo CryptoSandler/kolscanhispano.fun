@@ -82,7 +82,7 @@ for (const { name, viewport } of SIZES) {
 
     /** The two surfaces built on 2026-09-02: `docs/clone-map.md` §6 and §7. */
     test("los cabals, con el podio de tres", async ({ page }) => {
-      await page.goto("/cabals");
+      await page.goto("/daos");
       await expect(page.locator(".podium-card").first()).toBeVisible({ timeout: 30_000 });
       await page.screenshot({ path: `${OUT}/cabals-${name}.png`, fullPage: true });
     });

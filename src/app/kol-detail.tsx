@@ -123,7 +123,9 @@ export function KolDetail({
               𝕏
             </a>
             {detail.kol.cabalTag && (
-              <span className={cabalChipClass(detail.kol.cabalTag)}>{detail.kol.cabalTag}</span>
+              <span className={cabalChipClass(detail.kol.cabalTag)}>
+                DAO: {detail.kol.cabalTag}
+              </span>
             )}
           </div>
 

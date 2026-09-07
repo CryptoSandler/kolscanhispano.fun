@@ -50,8 +50,8 @@ const FORMS: {
 }[] = [
   {
     action: "crear cabal",
-    title: "Crear un cabal",
-    hint: "Quedas como líder. La sigla es tuya mientras el cabal exista.",
+    title: "Crear una DAO",
+    hint: "Quedas como líder. La sigla es tuya mientras la DAO exista.",
     label: "Sigla",
     placeholder: "ARG",
   },
@@ -59,7 +59,7 @@ const FORMS: {
     action: "pedir entrar al cabal",
     title: "Pedir entrar",
     hint: "El líder recibe tu pedido y lo acepta o lo rechaza.",
-    label: "Sigla del cabal",
+    label: "Sigla de la DAO",
     placeholder: "ARG",
   },
   {
@@ -85,22 +85,22 @@ const FORMS: {
   },
   {
     action: "transferir el cabal",
-    title: "Transferir el cabal",
-    hint: "Solo el líder, y solo a alguien que ya sea miembro. Sigues en el cabal.",
+    title: "Transferir la DAO",
+    hint: "Solo el líder, y solo a alguien que ya sea miembro. Sigues en la DAO.",
     label: "Usuario de X",
     placeholder: "@usuario",
   },
   {
     action: "nombrar co-líder",
     title: "Nombrar co-líder",
-    hint: "Solo el líder. Como máximo dos por cabal.",
+    hint: "Solo el líder. Como máximo dos por DAO.",
     label: "Usuario de X",
     placeholder: "@usuario",
   },
   {
     action: "revocar co-líder",
     title: "Revocar co-líder",
-    hint: "Solo el líder. La persona sigue en el cabal.",
+    hint: "Solo el líder. La persona sigue en la DAO.",
     label: "Usuario de X",
     placeholder: "@usuario",
   },
@@ -108,28 +108,28 @@ const FORMS: {
     action: "ver solicitudes",
     title: "Ver solicitudes",
     hint: "Solo el líder y los co-líderes. La cola no es pública.",
-    label: "Sigla de tu cabal",
+    label: "Sigla de tu DAO",
     placeholder: "ARG",
   },
   {
     action: "ver mi solicitud",
     title: "Ver mi solicitud",
     hint: "El estado de la tuya. No muestra quién más pidió entrar.",
-    label: "Sigla del cabal",
+    label: "Sigla de la DAO",
     placeholder: "ARG",
   },
   {
     action: "disolver cabal",
-    title: "Disolver el cabal",
+    title: "Disolver la DAO",
     hint: "Solo el líder. No se puede deshacer. La sigla queda reservada 30 días.",
-    label: "Sigla de tu cabal",
+    label: "Sigla de tu DAO",
     placeholder: "ARG",
   },
   {
     action: "reclamar cabal",
     title: "Reclamar un cabal",
     hint: "Solo si un admin te nominó para un cabal huérfano. La nominación dura 7 días.",
-    label: "Sigla del cabal",
+    label: "Sigla de la DAO",
     placeholder: "ARG",
   },
 ];
@@ -420,7 +420,7 @@ export function CabalPanel({ chains }: { chains: readonly Chain[] }) {
       )}
 
       <header className="page-head">
-        <h1 className="page-title">Mi cabal</h1>
+        <h1 className="page-title">Mi DAO</h1>
         <p className="brand-subtitle">
           Cada acción se firma con tu wallet. No hay sesión: la firma vale para esa acción y para
           ninguna otra.

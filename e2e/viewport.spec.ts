@@ -277,7 +277,7 @@ for (const { name, viewport } of SIZES) {
       //
       // `/trade` salió de esta lista el 2026-09-06 con la página: es un 308 a
       // la home, así que medirla acá sería medir la home con otro nombre.
-      ["/cabals", ".podium-card"],
+      ["/daos", ".podium-card"],
       ["/privacidad", ".privacy-list"],
     ] as const) {
       test(`never scrolls the document sideways on ${path}`, async ({ page }) => {
@@ -530,7 +530,7 @@ async function openFirstKol(page: import("@playwright/test").Page) {
  * Esto mira la respuesta real.
  */
 test.describe("cabeceras de seguridad", () => {
-  for (const path of ["/", "/cabals", "/privacidad"]) {
+  for (const path of ["/", "/daos", "/privacidad"]) {
     test(`serves CSP, HSTS and the rest on ${path}`, async ({ request }) => {
       const response = await request.get(path);
       expect(response.status()).toBe(200);

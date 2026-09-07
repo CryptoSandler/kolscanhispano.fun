@@ -375,3 +375,15 @@ puede pertenecer a un KOL (única por índice ciego, y si ya está tomada el
 mensaje lo dice y va a la cola de admin), las agregadas sin firma llevan
 `verified = false` interno y el admin las ve marcadas, y la visibilidad sigue
 siendo por wallet.
+
+## §12 `Cabals` es `DAOs` acá — 2026-09-07
+
+El molde llama `Cabals` a los grupos, en el nav y en su página. **Este sitio los
+llama `DAOs`**, por decisión del dueño, y es la única etiqueta donde el clon se
+aparta del molde a propósito.
+
+Lo que se mantiene del molde: la sigla de tres letras en la fila, el chip con su
+color, la página con el mismo podio y la misma grilla. Lo que cambia es la
+palabra — y adentro del código sigue siendo `cabal`, porque renombrar tablas y
+acciones firmadas por una etiqueta costaría una migración y la invalidación de
+cada firma emitida (`docs/copy.md`).

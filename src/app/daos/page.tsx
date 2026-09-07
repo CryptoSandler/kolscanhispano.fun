@@ -12,8 +12,8 @@ import { CabalsBoard } from "./board";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Cabals",
-  description: "Grupos de traders hispanohablantes en Solana, por PnL realizado del período.",
+  title: "DAOs",
+  description: "Las DAOs del padrón, por PnL realizado del período.",
 };
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -78,7 +78,7 @@ export default async function CabalsPage({
     <>
       <div className="page-head is-row">
         <div>
-          <h1 className="display-lg">Cabals</h1>
+          <h1 className="display-lg">DAOs</h1>
           <p className="page-subtitle">Grupos de traders compitiendo por ganancias</p>
           <Link className="panel-link" href="/">
             ← Volver a la clasificación
@@ -89,7 +89,7 @@ export default async function CabalsPage({
               links to is an orphan, so it is linked from the page about the
               thing it administers. */}
           <Link className="panel-link" href="/mi-cabal">
-            Mi cabal →
+            Mi DAO →
           </Link>
         </div>
         {/*
@@ -105,7 +105,7 @@ export default async function CabalsPage({
         <LeaderboardControls
           windows={LEADERBOARD_WINDOWS}
           fiats={LEADERBOARD_FIATS}
-          basePath="/cabals"
+          basePath="/daos"
         />
       </div>
 

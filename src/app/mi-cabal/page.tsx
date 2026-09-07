@@ -3,8 +3,8 @@ import { activeChains } from "@/lib/chain";
 import { CabalPanel } from "./cabal-panel";
 
 export const metadata: Metadata = {
-  title: "Mi cabal",
-  description: "Crea tu cabal, pide entrar a uno y administra el tuyo firmando con tu wallet.",
+  title: "Mi DAO",
+  description: "Crea tu DAO, pide entrar a una y administra la tuya firmando con tu wallet.",
 };
 
 /**

@@ -112,8 +112,10 @@ describe("the header", () => {
     expect(html).not.toMatch(/<img[^>]+src="https?:/);
   });
 
+  // La clase sigue diciendo `cabal` a propósito: el rótulo público pasó a "DAO"
+  // el 2026-09-06, los identificadores no. Ver docs/copy.md.
   it("tints the cabal chip from the tag", () => {
-    expect(render()).toMatch(/class="chip-cabal chip-cabal-[abcd]">ORB/);
+    expect(render()).toMatch(/class="chip-cabal chip-cabal-[abcd]">DAO: ORB/);
   });
 });
 

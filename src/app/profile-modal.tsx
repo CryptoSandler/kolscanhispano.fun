@@ -118,7 +118,7 @@ export function ProfileModal({
             <p className="profile-handle">
               @{profile.handle}
               <VerifiedTick verified={profile.handleVerified} />
-              {profile.cabalTag !== null && <span className="cabal-chip">{profile.cabalTag}</span>}
+              {profile.cabalTag !== null && <span className="cabal-chip">DAO: {profile.cabalTag}</span>}
             </p>
           </div>
         </header>

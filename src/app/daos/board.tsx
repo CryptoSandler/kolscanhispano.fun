@@ -66,7 +66,7 @@ export function CabalsBoard({
       <Podium entries={entries.slice(0, 3)} />
       {entries.length > 3 && (
         <>
-          <h2 className="label section-label">Otros cabals</h2>
+          <h2 className="label section-label">Otras DAOs</h2>
           <ul className="board">
             {entries.slice(3).map((entry) => (
               <li key={entry.tag} className="row-cabal">

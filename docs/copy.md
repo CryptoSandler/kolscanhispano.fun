@@ -177,3 +177,26 @@ en la regla: cualquier otro `el ranking` en cualquier archivo sigue fallando la
 suite. Lo que se paga es que la lista vuelve a tener un segundo nombre, en un
 botón; lo que la regla evitaba era tener tres a la vez, en la prosa, el título y
 el nav, que es lo que efectivamente pasó y por lo que la regla existe.
+
+
+## El grupo se llama **DAO**, no cabal — 2026-09-07
+
+Decisión del dueño. En **toda superficie pública** el grupo es una **DAO**:
+el nav dice `DAOs`, la página es `/daos`, la del líder es `Mi DAO`, y la sigla
+en el modal y en la PnL Card se presenta como `DAO: XYZ`.
+
+**El molde dice `Cabals`, y acá se dice distinto a propósito.** Es el único
+lugar donde nos apartamos de kolscanbrasil en una etiqueta a sabiendas —
+`docs/clone-map.md` lo anota del lado del molde.
+
+**Género femenino: `la DAO`.** "Sigla de la DAO", "sigues en la DAO", "mientras
+la DAO exista".
+
+**Adentro sigue diciendo `cabal`, y eso no es una inconsistencia que haya que
+arreglar.** Las tablas (`cabal`, `cabal_co_leader`), las columnas (`cabal_id`,
+`cabal_tag`), los identificadores y **las acciones firmadas** (`crear cabal`,
+`transferir el cabal`) no cambian: renombrarlas costaría una migración y, peor,
+cambiar `PROOF_ACTIONS` invalidaría cada firma ya emitida. Un nombre visible no
+justifica ninguna de las dos cosas.
+
+La sigla de tres letras no cambia: `EJE`, `LAT`, `IBE` siguen siendo eso.

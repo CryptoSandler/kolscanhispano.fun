@@ -95,7 +95,7 @@ export async function GET(request: Request): Promise<Response> {
                     padding: "4px 12px",
                   }}
                 >
-                  {profile.cabalTag}
+                  DAO: {profile.cabalTag}
                 </span>
               )}
             </div>

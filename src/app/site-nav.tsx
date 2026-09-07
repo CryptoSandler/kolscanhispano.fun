@@ -66,7 +66,14 @@ import { usePathname } from "next/navigation";
   adorno a un lugar donde no significa nada. Vuelven los dos cuando vuelva la
   página.
 */
-const LINKS = [{ href: "/cabals", label: "Cabals", live: false }] as const;
+/*
+  **`DAOs`, no `Cabals`, desde el 2026-09-07.**
+
+  El molde dice `Cabals` y acá se llama distinto a propósito: decisión del
+  dueño, anotada en `docs/copy.md` y en `docs/clone-map.md`. Es la única
+  etiqueta del nav donde nos apartamos del molde a sabiendas.
+*/
+const LINKS = [{ href: "/daos", label: "DAOs", live: false }] as const;
 
 export function SiteNav() {
   const pathname = usePathname();

@@ -24,7 +24,7 @@ import type { PublicKolDetail, PublicLeaderboardEntry } from "@/lib/serialize";
 import type { ChainPnl } from "@/lib/chain-pnl";
 import type { PublicWallet } from "@/lib/public-wallets";
 import type { LeaderboardWindow } from "@/lib/windows";
-import { CabalsBoard } from "./cabals/board";
+import { CabalsBoard } from "./daos/board";
 import { FeedLive } from "./feed-live";
 import { KolDetail } from "./kol-detail";
 import { LoadFailureState, loadFailure } from "./kol-modal-host";
