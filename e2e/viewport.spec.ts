@@ -519,3 +519,38 @@ async function openFirstKol(page: import("@playwright/test").Page) {
   await expect(dialog.locator(".modal-head")).toBeVisible({ timeout: 30_000 });
   return dialog;
 }
+
+/**
+ * **Las cabeceras de seguridad, verificadas donde se sirven y no donde se
+ * escriben.**
+ *
+ * `next.config.ts` las declara desde hace tiempo, pero declararlas y servirlas
+ * son dos cosas: un `matcher` mal escrito, un `headers()` que no corre en una
+ * ruta, o un middleware que responde antes las dejan afuera sin que nada falle.
+ * Esto mira la respuesta real.
+ */
+test.describe("cabeceras de seguridad", () => {
+  for (const path of ["/", "/cabals", "/privacidad"]) {
+    test(`serves CSP, HSTS and the rest on ${path}`, async ({ request }) => {
+      const response = await request.get(path);
+      expect(response.status()).toBe(200);
+      const headers = response.headers();
+
+      // CSP: presente, y con las dos directivas que more importan.
+      expect(headers["content-security-policy"]).toBeTruthy();
+      expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+      expect(headers["content-security-policy"]).toContain("default-src");
+
+      /*
+        HSTS no viaja en `http://localhost` —el navegador la ignoraría y Next no
+        la manda— así que acá se afirma sobre las que sí son verificables en
+        local, y la de producción la mira `npm run prelaunch`.
+      */
+      expect(headers["x-content-type-options"]).toBe("nosniff");
+      expect(headers["x-frame-options"]).toBe("DENY");
+      expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+      expect(headers["permissions-policy"]).toContain("camera=()");
+      expect(headers["cross-origin-opener-policy"]).toBe("same-origin");
+    });
+  }
+});

@@ -387,3 +387,45 @@ describe("scripts/refresh-token-metadata.ts: end-to-end wiring", () => {
     20_000,
   );
 });
+
+/**
+ * **Una credencial rechazada rompe el paso.**
+ *
+ * El 2026-09-07 el cron informó `refreshed 29 of 29 selected mint(s)` mientras
+ * las 29 llamadas a Helius devolvían 401: la clave de CI llevaba días vencida
+ * detrás de un tilde verde. `written` cuenta filas escritas —DexScreener
+ * responde igual— así que ningún número del mensaje podía delatarlo.
+ */
+describe("la credencial rechazada", () => {
+  it("counts a 401 as a credential rejection and not as an unknown token", async () => {
+    const { heliusCredentialRejections, tokenMetadata } = await import("@/lib/prices");
+    const before = heliusCredentialRejections();
+
+    process.env.HELIUS_API_KEY = "clave-que-no-sirve";
+    const fetchImpl = (async (url: string) =>
+      String(url).includes("helius")
+        ? new Response("unauthorized", { status: 401 })
+        : new Response(JSON.stringify({ pairs: [] }), { status: 200 })) as unknown as typeof fetch;
+
+    await tokenMetadata([inventAddress()], fetchImpl);
+
+    expect(heliusCredentialRejections()).toBeGreaterThan(before);
+  });
+
+  it("does not count a 404 as one: that is a token Helius does not know", async () => {
+    const { heliusCredentialRejections, tokenMetadata } = await import("@/lib/prices");
+    const before = heliusCredentialRejections();
+
+    process.env.HELIUS_API_KEY = "clave-que-sirve";
+    const fetchImpl = (async (url: string) =>
+      String(url).includes("helius")
+        ? new Response("not found", { status: 404 })
+        : new Response(JSON.stringify({ pairs: [] }), { status: 200 })) as unknown as typeof fetch;
+
+    await tokenMetadata([inventAddress()], fetchImpl);
+
+    // La distinción es el punto: un token desconocido es normal, una credencial
+    // rechazada no.
+    expect(heliusCredentialRejections()).toBe(before);
+  });
+});

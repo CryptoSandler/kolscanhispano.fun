@@ -19,14 +19,26 @@ export const runtime = "nodejs";
  * in a form is not enforced.
  */
 export async function POST(request: Request): Promise<Response> {
+  /*
+    **El límite va antes del token, y con bucket propio.**
+
+    Dos correcciones del 2026-09-07, las dos encontradas por
+    `admin-limits.test.ts`:
+
+    - Usaba `cabal-action`, que es el bucket **público** del panel de cabales.
+      Compartirlo significa que quien barra la ruta pública deja sin cupo al
+      admin — la forma más silenciosa de negarle el servicio a la persona que
+      administra el sitio.
+    - Corría después de `isAdmin`, así que un 401 no costaba nada y se podía
+      intentar adivinar el token todo el día. En una ruta pública ese orden es
+      el correcto; acá lo que hay que encarecer **es** el 401.
+  */
+  const limited = await rateLimited(request, "admin-write");
+  if (limited) return limited;
+
   if (!isAdmin(request.headers.get("authorization"))) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
-  // Rate-limited even behind the token: it is the one write that moves a group
-  // between people, and a loop against it is worth bounding whoever holds the
-  // token.
-  const limited = await rateLimited(request, "cabal-action");
-  if (limited) return limited;
 
   let body: { cabalId?: unknown; handle?: unknown; reason?: unknown; confirmed?: unknown };
   try {

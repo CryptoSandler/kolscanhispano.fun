@@ -179,6 +179,29 @@ export const PUBLIC_LIMITS = {
    */
   "cabal-nonce": 12,
   "cabal-action": 6,
+  /**
+   * **Las rutas de `/admin`, desde el 2026-09-07.**
+   *
+   * Estaban fuera de la tabla porque piden `ADMIN_TOKEN` y "no son públicas".
+   * Eso confunde dos cosas: **cualquiera puede llamarlas**, y lo que el token
+   * decide es si contestan 401 o hacen algo. Sin límite, un desconocido puede
+   * pedirle a esta app que compare tokens todo el día — y ése es exactamente el
+   * bucle con el que se adivina uno.
+   *
+   * **El guard corre antes que el límite en las rutas públicas y después acá**,
+   * y la diferencia es a quién protege cada orden: allá, un 401 no debe costar
+   * una consulta; acá, lo que hay que encarecer **es** el 401, porque el 401 es
+   * el resultado de un intento de adivinar.
+   *
+   * - **`admin-read` — 60.** Listados del panel. Una persona que trabaja mira
+   *   seguido; sesenta por minuto es holgado para una y ridículo para un
+   *   barrido.
+   * - **`admin-write` — 20.** Aprobar, dar de alta, nominar. Cada una escribe y
+   *   deja una entrada de auditoría; veinte por minuto es más de lo que un
+   *   admin hace en una hora.
+   */
+  "admin-read": 60,
+  "admin-write": 20,
 } as const;
 
 export type PublicBucket = keyof typeof PUBLIC_LIMITS;

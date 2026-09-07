@@ -82,7 +82,7 @@ loadEnvLocal();
 import { query } from "../src/lib/db";
 import { announceDatabaseTarget } from "../src/lib/db";
 import { withLock } from "../src/lib/lock";
-import { DEXSCREENER_BATCH_LIMIT, tokenMetadata } from "../src/lib/prices";
+import { DEXSCREENER_BATCH_LIMIT, heliusCredentialRejections, tokenMetadata } from "../src/lib/prices";
 
 /**
  * How many mints one run resolves. One DexScreener request's worth, and
@@ -208,6 +208,28 @@ export async function main(): Promise<number> {
       `refresh-token-metadata: refreshed ${result.written} of ${result.selected} selected mint(s); ` +
         `${result.remaining} still lack a symbol`,
     );
+
+    /*
+      **Una credencial rechazada rompe el paso, aunque haya escrito filas.**
+
+      El 2026-09-07 este paso informó `refreshed 29 of 29` mientras las 29
+      llamadas a Helius devolvían 401: la clave de CI llevaba días vencida
+      detrás de un tilde verde. `written` cuenta filas escritas —DexScreener
+      responde igual— así que nunca lo iba a ver.
+
+      Un 401 no es un token que Helius no conoce: es Helius no conociéndonos a
+      nosotros, y eso no se arregla solo. Falla ruidoso, que es lo que un cron
+      tiene que hacer cuando su credencial dejó de servir.
+    */
+    const rejected = heliusCredentialRejections();
+    if (rejected > 0) {
+      console.error(
+        `refresh-token-metadata: Helius rechazó la credencial ${rejected} vez/veces (401/403). ` +
+          "La clave de este entorno no sirve; rotala antes de confiar en el símbolo de un token.",
+      );
+      return 1;
+    }
+
     return 0;
   } catch (error) {
     console.error(`refresh-token-metadata: failed -- ${error instanceof Error ? error.message : String(error)}`);

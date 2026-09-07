@@ -1,0 +1,47 @@
+name: Dependency audit
+
+# Corre en cada push y una vez por día. Lo segundo es lo que importa: una
+# vulnerabilidad publicada mañana afecta al lockfile de hoy sin que nadie toque
+# el repositorio, y un audit que sólo corre en push la encuentra cuando alguien
+# se acuerda de pushear.
+on:
+  push:
+    branches: ["**"]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # `npm ci` y no `npm install`: instala exactamente el lockfile y falla si
+      # el lockfile y el `package.json` discrepan, que es la mitad de lo que
+      # "lockfile pinneado" quiere decir.
+      - name: Install from the lockfile, exactly
+        run: npm ci --ignore-scripts
+
+      # `--audit-level=high`: `moderate` en este árbol es ruido de dependencias
+      # de desarrollo y un check que grita siempre es uno que se ignora. Alta y
+      # crítica rompen el build.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      # Las de desarrollo se informan pero no rompen: no llegan al bundle ni al
+      # servidor, y bloquear un push por una advertencia en una herramienta de
+      # test es cómo se aprende a saltear el check.
+      - name: Audit dev dependencies, without failing
+        continue-on-error: true
+        run: npm audit --audit-level=high

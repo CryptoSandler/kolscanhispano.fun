@@ -984,6 +984,20 @@ export function parseHeliusAsset(json: unknown): HeliusMetadata | null {
  * rejection's `message` or `cause` can carry the request URL, and the URL
  * carries the API key.
  */
+/**
+ * Cuántas veces Helius rechazó **la credencial** en este proceso.
+ *
+ * Un contador de módulo y no un valor devuelto: `tokenMetadata` chunkea adentro
+ * y hacer subir el dato por tres capas para un caso de error habría cambiado
+ * tres firmas. Se lee una vez por corrida, al final, que es cuando importa.
+ */
+let heliusRejections = 0;
+
+/** Los rechazos de credencial desde que arrancó el proceso. */
+export function heliusCredentialRejections(): number {
+  return heliusRejections;
+}
+
 async function heliusAssetMetadata(mint: string, fetchImpl: typeof fetch): Promise<HeliusMetadata | null> {
   const apiKey = process.env.HELIUS_API_KEY?.trim();
   if (!apiKey) return null;
@@ -1000,6 +1014,19 @@ async function heliusAssetMetadata(mint: string, fetchImpl: typeof fetch): Promi
     return null;
   }
   if (!response.ok) {
+    /*
+      **Un 401 no es "este mint no existe": es "la clave no sirve".**
+
+      Se contaban igual, y el resultado fue que el paso del cron informó
+      `refreshed 29 of 29` mientras las 29 llamadas devolvían 401 — la clave de
+      CI llevaba días vencida detrás de un tilde verde (2026-09-07). `written`
+      cuenta filas escritas, no respuestas de Helius, así que no podía verlo.
+
+      Se separa el fallo de autenticación del resto para que el llamador pueda
+      distinguir "Helius no conoce este token" de "Helius no nos conoce a
+      nosotros".
+    */
+    if (response.status === 401 || response.status === 403) heliusRejections += 1;
     console.warn(`heliusAssetMetadata: non-OK response (${response.status})`);
     return null;
   }

@@ -999,3 +999,56 @@ La imagen de Open Graph se genera con `ImageResponse` en vez de guardarse: no ha
 un PNG que mantener sincronizado con el wordmark cuando el wordmark cambie. Va
 sin bandera — a 1200×630 lo que se lee es el nombre, y la bandera compite con él
 sin agregar nada.
+
+## 2026-09-07 — Hardening: tres capas ahora, el envelope después
+
+**Alcance acordado con el dueño** después de la ronda
+(`docs/round-hardening-wallets.md`), que recomendaba tres de las siete capas
+propuestas y postergar la más cara.
+
+**Lo que se construyó:**
+
+1. **Escáner de acceso a la clave** (`key-access.test.ts`). Falla si un módulo
+   que no está en la lista importa `decrypt` o `encrypt` de `crypto.ts`. Cada
+   entrada lleva **su motivo**, y hay un caso que falla si un módulo anotado
+   dejó de descifrar — una lista que envejece hacia el otro lado ensancha el
+   permiso sin que nadie lo note.
+
+   **Encontró un error en su primera corrida**, que es la mejor defensa de que
+   sirve: tenía a `raw-tx.ts` y `roster.ts` como "sólo índice" y las dos cifran.
+   Escribir un ciphertext y leer uno son capacidades distintas —`encrypt` no
+   puede sacar una dirección ya guardada— así que ahora hay dos listas y seis
+   módulos tienen permiso de lectura en vez de ocho.
+
+2. **CSP/HSTS verificados donde se sirven**, no donde se escriben:
+   `next.config.ts` las declara desde hace tiempo, y declarar no es servir — un
+   `matcher` mal escrito las deja afuera sin que nada falle. Hay un caso por
+   ruta sobre la respuesta real. Más `npm audit` en CI, diario además de por
+   push: una vulnerabilidad publicada mañana afecta al lockfile de hoy sin que
+   nadie toque el repositorio.
+
+3. **Rate limit en `/api/admin/*`**, con buckets propios y un test que falla si
+   aparece una ruta admin sin uno.
+
+   **Dos hallazgos, los dos del test:** `nominate` usaba `cabal-action`, el
+   bucket **público** del panel — compartirlo deja sin cupo al admin cuando
+   alguien barre la ruta pública. Y comprobaba el token **antes** del límite, así
+   que un 401 no costaba nada: en una ruta pública ese orden es el correcto,
+   pero acá lo que hay que encarecer **es** el 401, porque el 401 es el
+   resultado de un intento de adivinar el token.
+
+**Lo que se pospuso, y por qué:** el envelope encryption con DEK por fila espera
+a que exista la expiración de credenciales sobre `kol_session`. `ADMIN_TOKEN`
+necesita el mismo mecanismo, y hacer la migración de cifrado antes significa
+migrarla dos veces — con **tres wallets** en producción, esperar no cuesta casi
+nada. Anotado también en la ronda.
+
+**Dos correcciones del dueño sobre el pedido original:**
+
+- **El admin ve direcciones truncadas por defecto**, y completas sólo por una
+  acción auditada. "Ninguna ruta admin devuelve direcciones" habría roto el
+  trabajo del admin: aprueba wallets, da de baja las anotadas sin firma,
+  resuelve duplicados.
+- **El backup va con clave propia**, distinta de la maestra. Uno cifrado con la
+  misma clave que la base no sobrevive a perder esa clave, que es justo el modo
+  de fallo contra el que un backup existe.

@@ -1,3 +1,4 @@
+import { rateLimited } from "@/lib/rate-limit";
 import { audit, isAdmin } from "@/lib/admin";
 import { syncWebhookAfterRosterChange } from "@/lib/helius-webhook";
 import { query } from "@/lib/db";
@@ -16,6 +17,16 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  /*
+    **El límite va antes del token**, al revés que en las rutas públicas.
+
+    Allá el guard corre primero para que un 401 no cueste una consulta. Acá lo
+    que hay que encarecer **es** el 401: es el resultado de un intento de
+    adivinar el token, y sin límite se puede intentar todo el día.
+  */
+  const limited = await rateLimited(request, "admin-write");
+  if (limited) return limited;
+
   if (!isAdmin(request.headers.get("authorization"))) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
