@@ -273,9 +273,12 @@ for (const { name, viewport } of SIZES) {
       ["/leaderboard", ".row-leaderboard"],
       ["/leaderboard?unit=ars", ".row-leaderboard"],
       // Built 2026-09-02. `/cabals` carries the widest thing on the site after
-      // the ranking — three podium cards side by side — and `/trade` four.
+      // the ranking: tres tarjetas de podio una al lado de la otra.
+      //
+      // `/trade` salió de esta lista el 2026-09-06 con la página: es un 308 a
+      // la home, así que medirla acá sería medir la home con otro nombre.
       ["/cabals", ".podium-card"],
-      ["/trade", ".step"],
+      ["/privacidad", ".privacy-list"],
     ] as const) {
       test(`never scrolls the document sideways on ${path}`, async ({ page }) => {
         await page.goto(path);

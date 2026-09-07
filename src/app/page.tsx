@@ -11,7 +11,14 @@ import { LeaderboardTable, USD_CAVEAT } from "./leaderboard-table";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "kolscanhispano.fun · Clasificación de traders hispanos",
+  /*
+    **`absolute`, para que el `template` del layout no lo envuelva.**
+
+    La home ya dice el nombre entero; con el template quedaría
+    `KOLScan Hispano – KOLScan Hispano – …`. Las demás páginas ponen sólo lo
+    suyo y dejan que el layout agregue el nombre.
+  */
+  title: { absolute: "KOLScan Hispano – Clasificación de traders hispanos" },
   description: "PnL realizado de KOLs hispanohablantes en Solana, por día, semana y mes UTC.",
 };
 

@@ -99,8 +99,55 @@ function BrandBlock({ href }: { href: string }) {
 }
 
 export const metadata: Metadata = {
-  title: "kolscanhispano.fun",
-  description: "Operaciones en vivo de KOLs hispanohablantes en Solana.",
+  /*
+    **La pestaña: bandera y nombre, como el molde.**
+
+    `template` es lo que hace que cada página herede el nombre del sitio sin
+    repetirlo a mano: la home usa `default` y las demás ponen sólo lo suyo —
+    `Cabals` se vuelve `KOLScan Hispano – Cabals`. Un título que cada página
+    escribe entero es un título que en alguna página va a decir otra cosa.
+  */
+  title: {
+    default: "KOLScan Hispano – Clasificación de traders hispanos",
+    template: "KOLScan Hispano – %s",
+  },
+  description: "Clasificación de traders hispanohablantes por PnL realizado.",
+  metadataBase: new URL("https://kolscanhispano.fun"),
+
+  /*
+    **El ícono es la bandera, la misma imagen que el wordmark.**
+
+    Así la pestaña y el encabezado son lo mismo y no dos representaciones de la
+    misma idea — y es literalmente la misma: las cuatro medidas se generaron de
+    `public/marca/espana.png`, que ya usaba el encabezado. Comprobado por
+    checksum contra `survives.fun` (`app/public/flags/spain.png`): los tres
+    archivos son byte por byte el mismo, así que no hay una segunda copia que
+    pueda divergir. Escaladas y centradas sobre el fondo del sitio para que el
+    mosaico sea cuadrado — una bandera 3:2 en una pestaña se ve como una franja.
+
+    **Origen y licencia: sin documentar.** `survives.fun` no dice de dónde salió
+    ese archivo ni bajo qué licencia; lo verifiqué buscando en sus documentos y
+    lo único que menciona "flags" son banderas booleanas del torneo. El diseño
+    de la bandera española es un símbolo oficial y no una obra con autor, pero
+    **este archivo concreto** tiene procedencia desconocida y conviene decirlo
+    antes de que alguien lo tome por verificado.
+  */
+  icons: {
+    icon: [
+      { url: "/brand/flag-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/flag-16.png", sizes: "16x16", type: "image/png" },
+    ],
+    apple: [{ url: "/brand/flag-180.png", sizes: "180x180", type: "image/png" }],
+  },
+  manifest: "/manifest.webmanifest",
+
+  openGraph: {
+    title: "KOLScan Hispano – Clasificación de traders hispanos",
+    description: "Clasificación de traders hispanohablantes por PnL realizado.",
+    siteName: "KOLScan Hispano",
+    locale: "es_ES",
+    type: "website",
+  },
 
   /**
    * Closed to search engines until launch, on purpose and by hand.
@@ -279,13 +326,22 @@ export default function RootLayout({
               <span className="built-by__handle">@CryptoSandlerr</span>
             </a>
             {/*
-              **El disclaimer se mudó a `/trade` el 2026-09-06.**
+              El enlace a `/privacidad`, que es donde alguien lo busca: al pie,
+              en una línea, sin competir con nada. La página misma se mudó de
+              `/trade` cuando esa ruta se eliminó (`DECISIONES.md`).
+            */}
+            <p className="footnote">
+              <Link className="panel-link" href="/privacidad">
+                Privacidad
+              </Link>
+            </p>
+
+            {/*
+              **El disclaimer no vive acá desde el 2026-09-06.**
 
               Estaba en el layout, o sea en todas las páginas, y debajo de un
-              ranking se convertía en mobiliario: el lector que lo necesita es el
-              que está por operar, y ése es el único que llega a `/trade`. Un
-              aviso que aparece en todos lados es uno que no se lee en ninguno,
-              incluido el lugar donde importa.
+              ranking era mobiliario. Se mudó a `/trade`; cuando `/trade` se
+              eliminó, al pie de `/cabals`, que es el único lugar donde queda.
             */}
           </div>
         </ConnectWalletProvider>

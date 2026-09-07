@@ -170,14 +170,14 @@ function ConnectWalletDialog({
         </h2>
 
         {/*
-          **Un solo texto, dos líneas.** Había dos párrafos que decían lo mismo
-          con distintas palabras —éste y uno de `RegistroForm`— uno debajo del
-          otro. Las dos promesas las verifica un test: `no-money-path.test.ts`
-          la firma sin transacción, `address-invariant.test.ts` que ninguna
-          dirección no pública salga a una superficie pública.
-        */}
-        <p className="connect-lead">{CONNECT_LEAD}</p>
+          **La línea la dice la lista, no este diálogo.** Acá se repetía en cada
+          paso —chain, `Casi listo`— y para entonces el lector ya la leyó. Vive
+          en `wallet-step.tsx`, que es el paso donde todavía no decidió nada.
 
+          Las dos promesas las verifica un test: `no-money-path.test.ts` la firma
+          sin transacción, `address-invariant.test.ts` que ninguna dirección no
+          pública llegue a una superficie pública.
+        */}
         <RegistroForm chains={chains} />
       </div>
     </dialog>

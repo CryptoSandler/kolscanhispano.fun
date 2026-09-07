@@ -57,10 +57,16 @@ import { usePathname } from "next/navigation";
  * 2026-09-03; the exception now applies to the item they put it on rather than
  * to the one we had.
  */
-const LINKS = [
-  { href: "/trade", label: "Trade", live: true },
-  { href: "/cabals", label: "Cabals", live: false },
-] as const;
+/*
+  **`Trade` salió del nav el 2026-09-06**, con la página: se elimina hasta que
+  haya terminal socio (`DECISIONES.md`), y `/trade` es un 308 a la home.
+
+  Queda un solo ítem. El molde tiene dos y el punto verde vivía en `Trade`; con
+  la página afuera, el punto se va con ella — ponerlo en `Cabals` sería mover un
+  adorno a un lugar donde no significa nada. Vuelven los dos cuando vuelva la
+  página.
+*/
+const LINKS = [{ href: "/cabals", label: "Cabals", live: false }] as const;
 
 export function SiteNav() {
   const pathname = usePathname();

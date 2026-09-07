@@ -175,6 +175,28 @@ are unchanged in kind and only in value. `ink` on each podium wash: 14.18, 14.28
 all PASS. A new colour enters this system
 only with its measured ratio in this table; `design-tokens.test.ts` recomputes every row.
 
+### Una sola tabla de color por cadena — 2026-09-06
+
+Las columnas del ranking, los badges y las tarjetas del paso de chain leen **la
+misma** tabla, en `:root`:
+
+| Cadena | Color | |
+|---|---|---|
+| Solana | verde | `rgb(74 222 128)` |
+| Ethereum | azul | `rgb(96 165 250)` |
+| BNB | amarillo | `rgb(250 204 21)` |
+| Robinhood | teal | `rgb(45 212 191)` |
+
+**Robinhood tiene color propio** aunque comparta la columna del ranking con ETH:
+comparten *unidad*, no cadena. En cualquier superficie que hable de cadenas —el
+paso de chain, un badge del perfil— son dos cosas distintas y se ven distintas.
+Contraste del teal: 9,59:1 sobre `--surface-1`, 10,46:1 sobre el fondo.
+
+**Esto reemplaza una decisión de horas antes** que pintaba Solana de violeta en
+el paso de chain mientras su columna seguía verde. Un color por cadena, no un
+color por pantalla: era el mismo dato con dos respuestas según dónde se mirara.
+La regla, entonces: **una cadena tiene un color, y vive acá.**
+
 ## Typography
 
 **Inter** for all text and **JetBrains Mono** for all figures. Both are SIL Open Font

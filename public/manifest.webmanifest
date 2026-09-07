@@ -1,0 +1,13 @@
+{
+  "name": "KOLScan Hispano",
+  "short_name": "KOLScan",
+  "description": "Clasificación de traders hispanohablantes por PnL realizado.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0D0F",
+  "theme_color": "#0B0D0F",
+  "icons": [
+    { "src": "/brand/flag-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/brand/flag-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

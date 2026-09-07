@@ -73,9 +73,11 @@ export function AlmostDone({
 
   return (
     <div className="connect-step">
-      {/* Sin signos de admiración: `docs/copy.md`. */}
-      <p className="connect-step-title">Casi listo</p>
-
+      {/*
+        **Sin subtítulo.** Decía `Casi listo` debajo de `Conecta tu wallet`, y
+        dos títulos encima del mismo formulario son dos nombres para el mismo
+        paso. El título del modal alcanza.
+      */}
       <ul className="almost-wallets">
         {wallets.map((wallet) => {
           const isPublic = publicIds.has(wallet.id);
@@ -124,6 +126,16 @@ export function AlmostDone({
         </p>
       )}
 
+      {/*
+        **Agregar otra wallet va acá**, pegado a la tarjeta de la primera y
+        antes del campo de X: es una acción sobre las wallets, y abajo de todo
+        quedaba lejos de lo que modifica. Con forma propia —fondo tenue y borde
+        punteado— para que se lea como un control y no como un enlace suelto.
+      */}
+      <button type="button" className="add-another" onClick={onAddAnother} disabled={busy}>
+        <span aria-hidden="true">+</span> Conectar otra wallet
+      </button>
+
       <label className="almost-field">
         <span className="label">Tu usuario de X</span>
         <input
@@ -153,9 +165,6 @@ export function AlmostDone({
         Entrar al ranking
       </button>
 
-      <button type="button" className="connect-secondary" onClick={onAddAnother} disabled={busy}>
-        + conectar otra wallet
-      </button>
     </div>
   );
 }

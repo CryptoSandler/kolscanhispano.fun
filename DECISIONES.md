@@ -928,3 +928,74 @@ una forma de entrar sin firmar, y hay un test de que un rechazo no deja cookie.
 
 `SameSite=Strict` cuesta que un enlace externo llegue sin sesión y haya que
 entrar de nuevo; es el precio de no necesitar un token CSRF aparte.
+
+## 2026-09-06 — `/trade` se elimina hasta que haya terminal socio
+
+**Tomada por el dueño.** La página explicaba cómo empezar a operar on-chain y no
+ofrecía dónde: el slot de socio estaba vacío. Una pantalla entera que enseña a
+hacer algo que el sitio no permite hacer es la última prohibición de `DESIGN.md`
+—*"no muestres un control que no funciona"*— aplicada a una página completa.
+
+**Vuelve cuando haya socio.** No es una eliminación definitiva: el contenido
+sigue en el historial y la ruta sigue existiendo como 308, así que reponerla es
+volver a escribir la página, no reconstruir el camino hacia ella.
+
+**Qué pasó con cada cosa que había adentro:**
+
+- `● Trade` sale del nav, que queda con un solo ítem. El punto verde vivía en
+  `Trade` y se va con él: moverlo a `Cabals` sería mudar un adorno a un lugar
+  donde no significa nada.
+- `/trade` responde **308 a la home**, como `/leaderboard` y `/en-vivo`. La ruta
+  estuvo en el nav y pudo quedar en un marcador; un enlace que fue correcto no
+  se contesta con un error.
+- El **disclaimer legal** pasa al pie de `/cabals`, en una línea chica, y ése es
+  el único lugar donde queda. Ya había estado en el layout —todas las páginas— y
+  ahí era mobiliario.
+- **`Cómo protegemos tus wallets`** se muda entera a `/privacidad`, enlazada
+  desde el pie. El contenido no se reescribió: cada línea corresponde a un
+  mecanismo que existe y a un test que lo sostiene, y eso sigue siendo cierto.
+
+## 2026-09-06 — Una sola tabla de color por cadena
+
+**Tomada por el dueño**, y corrige una decisión suya de horas antes. La tarjeta
+de Solana en el paso de chain era violeta mientras su columna en el ranking era
+verde: dos colores para una cadena en dos pantallas del mismo producto.
+
+La tabla única vive en `:root` y la leen las columnas, los badges y las tarjetas:
+
+    Solana      verde    rgb(74 222 128)
+    Ethereum    azul     rgb(96 165 250)
+    BNB         amarillo rgb(250 204 21)
+    Robinhood   teal     rgb(45 212 191)
+
+**Robinhood tiene color propio** aunque hoy comparta la columna del ranking con
+ETH: comparten **unidad**, no cadena, y en cualquier superficie que hable de
+cadenas son dos cosas distintas. Contraste del teal: 9,59:1 sobre `--surface-1`
+y 10,46:1 sobre el fondo de la página.
+
+## 2026-09-06 — La pestaña: bandera y nombre, como el molde
+
+`<title>` con plantilla: la home dice
+`KOLScan Hispano – Clasificación de traders hispanos` y el resto sólo pone lo
+suyo (`Cabals`, `Privacidad`), que el layout envuelve. Un título que cada página
+escribe entero es un título que en alguna página va a decir otra cosa.
+
+**El ícono es la bandera, y es la misma imagen que el encabezado.** Las cuatro
+medidas —16, 32, 180 y 512, más 192 para el manifest— se generaron de
+`public/marca/espana.png`, que ya usaba el wordmark. Verificado por checksum:
+ese archivo, el de `survives.fun` (`app/public/flags/spain.png`) y la copia que
+traje son **byte por byte el mismo**, así que no hay una segunda fuente que
+pueda divergir. Se centran sobre el fondo del sitio para que el mosaico sea
+cuadrado; una bandera 3:2 en una pestaña se ve como una franja.
+
+**Origen y licencia del archivo: sin documentar, y hay que decirlo.**
+`survives.fun` no registra de dónde salió ni bajo qué licencia — lo busqué en sus
+documentos y lo único que menciona "flags" son banderas booleanas del torneo. El
+diseño de la bandera española es un símbolo oficial y no una obra con autor,
+pero **este archivo concreto** tiene procedencia desconocida. Queda anotado para
+que nadie lo tome por verificado.
+
+La imagen de Open Graph se genera con `ImageResponse` en vez de guardarse: no hay
+un PNG que mantener sincronizado con el wordmark cuando el wordmark cambie. Va
+sin bandera — a 1200×630 lo que se lee es el nombre, y la bandera compite con él
+sin agregar nada.

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Chain } from "@/lib/chain";
+import { CONNECT_LEAD } from "./connect-wallet";
 import { supportedChains } from "@/lib/wallet-support";
 import {
   discoverChoices,
@@ -161,34 +162,45 @@ export function WalletStep({
     const options = offerable(chosen, chains);
     return (
       <div className="connect-step">
-        <button
-          type="button"
-          className="connect-back"
-          onClick={() => setChosen(null)}
-        >
-          ← Volver
-        </button>
-        <p className="connect-step-title">
-          ¿En qué cadena firmas con {chosen.name}?
-        </p>
+        {/*
+          `← Volver` va **en la fila del título**, no suelto arriba: suelto
+          empujaba el encabezado hacia abajo y el paso quedaba más alto que la
+          lista, que es lo que el dueño marcó en el gate.
+        */}
+        <div className="connect-step-head">
+          <button type="button" className="connect-back" onClick={() => setChosen(null)}>
+            ← Volver
+          </button>
+          <h3 className="connect-step-title">¿Con qué chain firmas con {chosen.name}?</h3>
+        </div>
+
+        {/*
+          Tarjetas iguales en grilla. Cada una lleva el color de su cadena —el
+          mismo vocabulario de color que las columnas del ranking— como fondo
+          tenue, y ese color pasa al borde en hover y foco.
+
+          La grilla **estira** para llenar el alto de la lista: el panel no
+          cambia de tamaño entre pasos, así que dos o tres opciones ocupan lo
+          que ocupaban las tres filas de wallets en vez de dejar un hueco.
+        */}
         <div className="chain-choices">
           {options.map((chain) => (
             <button
               key={chain}
               type="button"
-              className="chain-choice"
+              className={`chain-choice is-chain-${chain}`}
               disabled={busy}
               onClick={() => {
-                const choice =
-                  chosen.choices.find((c) => c.chain === chain) ??
-                  chosen.choices[0];
+                const choice = chosen.choices.find((c) => c.chain === chain) ?? chosen.choices[0];
                 onPick(choice);
               }}
             >
-              {CHAIN_LABEL[chain] ?? chain}
+              <span className="chain-choice-dot" aria-hidden="true" />
+              <span className="chain-choice-name">{CHAIN_LABEL[chain] ?? chain}</span>
             </button>
           ))}
         </div>
+
         {error !== null && (
           <p className="label state-error" role="alert">
             {error}
@@ -265,6 +277,13 @@ export function WalletStep({
 
   return (
     <div className="connect-step">
+      {/*
+        La línea de privacidad se dice **una vez, en la lista**. Vivía en el
+        diálogo, así que se repetía en el paso de chain y en `Casi listo` — y
+        para entonces el lector ya la leyó.
+      */}
+      <p className="connect-lead">{CONNECT_LEAD}</p>
+
       {busy && (
         <p className="connect-working" role="status">
           <span className="spinner" aria-hidden="true" />

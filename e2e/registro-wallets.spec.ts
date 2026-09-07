@@ -83,7 +83,9 @@ test.describe("el selector de wallets en /registro", () => {
 
     // Mismo panel: no se abrió nada encima ni se navegó.
     await expect(panel).toBeVisible();
-    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+    // El paso final se reconoce por su contenido: el subtítulo `Casi listo` se
+    // eliminó el 2026-09-06, porque el título del modal ya nombra el paso.
+    await expect(page.locator(".almost-wallet")).toBeVisible({ timeout: 30_000 });
   });
 
   test("clicking a wallet that is not installed says so, after the click", async ({ page }) => {
@@ -121,7 +123,7 @@ test.describe("el selector de wallets en /registro", () => {
     await page.keyboard.press("Escape");
 
     await expect(page.locator(PANEL)).toHaveCount(0);
-    await expect(page.getByText("Casi listo")).toHaveCount(0);
+    await expect(page.locator(".almost-wallet")).toHaveCount(0);
   });
 
   /**
@@ -135,7 +137,9 @@ test.describe("el selector de wallets en /registro", () => {
     await installWallets(page, 2);
     await page.goto("/registro");
     await page.locator(PANEL).getByRole("button", { name: "Phantom" }).click();
-    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+    // El paso final se reconoce por su contenido: el subtítulo `Casi listo` se
+    // eliminó el 2026-09-06, porque el título del modal ya nombra el paso.
+    await expect(page.locator(".almost-wallet")).toBeVisible({ timeout: 30_000 });
 
     const panel = page.locator(PANEL);
     await expect(panel.locator(".almost-wallet")).toHaveCount(1);
@@ -143,14 +147,17 @@ test.describe("el selector de wallets en /registro", () => {
     await expect(panel.getByPlaceholder("@usuario")).toBeVisible();
     await expect(panel.locator(".connect-cta")).toHaveCount(1);
     await expect(panel.getByRole("button", { name: "Entrar al ranking" })).toBeVisible();
-    await expect(panel.getByText("¡Casi listo!")).toHaveCount(0);
+    // Ni el subtítulo viejo ni el nuevo: el título del modal alcanza.
+    await expect(panel.getByText("Casi listo")).toHaveCount(0);
   });
 
   test("the visibility toggle starts private and says so", async ({ page }) => {
     await installWallets(page, 2);
     await page.goto("/registro");
     await page.locator(PANEL).getByRole("button", { name: "Phantom" }).click();
-    await expect(page.getByText("Casi listo")).toBeVisible({ timeout: 30_000 });
+    // El paso final se reconoce por su contenido: el subtítulo `Casi listo` se
+    // eliminó el 2026-09-06, porque el título del modal ya nombra el paso.
+    await expect(page.locator(".almost-wallet")).toBeVisible({ timeout: 30_000 });
 
     const toggle = page.locator(PANEL).getByRole("button", { name: "Privada" });
     await expect(toggle).toHaveAttribute("aria-pressed", "false");

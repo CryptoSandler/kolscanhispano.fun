@@ -3006,9 +3006,29 @@ a.cta {
   red whatever chain it happened on. Taken from their rendered pixels rather
   than from a brand guide, which is what "se vea tal cual así" asks for.
 */
-.chain-amount.is-chain-eth { color: rgb(96 165 250); }
-.chain-amount.is-chain-bnb { color: rgb(250 204 21); }
-.chain-amount.is-chain-sol { color: rgb(74 222 128); }
+/*
+  **Una sola tabla de color por cadena, para todo el sitio.**
+
+  Decisión del dueño, 2026-09-06. Las columnas del ranking, los badges y las
+  tarjetas del paso de chain leen de acá y no de una lista propia: hasta hoy la
+  tarjeta de Solana era violeta y su columna verde, o sea dos colores para una
+  cadena en dos pantallas del mismo producto.
+
+  **Robinhood tiene color propio** —teal— aunque hoy comparta la columna del
+  ranking con ETH: comparten *unidad*, no cadena, y en cualquier superficie que
+  hable de cadenas son dos cosas. Contraste del teal: 9,59:1 sobre `--surface-1`
+  y 10,46:1 sobre el fondo de la página.
+*/
+:root {
+  --chain-solana: rgb(74 222 128);
+  --chain-ethereum: rgb(96 165 250);
+  --chain-bnb: rgb(250 204 21);
+  --chain-robinhood: rgb(45 212 191);
+}
+
+.chain-amount.is-chain-eth { color: var(--chain-ethereum); }
+.chain-amount.is-chain-bnb { color: var(--chain-bnb); }
+.chain-amount.is-chain-sol { color: var(--chain-solana); }
 .chain-amount.is-loss { color: rgb(248 113 113); }
 
 /* The idle slot. Present in their DOM as `---` and rendered far back. */
@@ -3848,8 +3868,31 @@ a.cta {
   margin: 0 0 12px;
 }
 
+/*
+  **El panel no cambia de alto entre pasos.**
+
+  La lista cerrada mide tres filas de 56 más `Mostrar más`. El paso de chain
+  tenía dos o tres opciones en una fila de chips y quedaba mucho más bajo, así
+  que el diálogo se encogía y volvía a crecer al volver — un salto que el dueño
+  marcó en el gate. Con este piso, y con la grilla estirando, los dos pasos
+  ocupan lo mismo y no queda hueco abajo.
+*/
+.connect-step {
+  display: flex;
+  flex-direction: column;
+  min-height: 232px;
+}
+
+/* `← Volver` va en la fila del título, no suelto encima. */
+.connect-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .connect-back {
-  margin-bottom: 12px;
+  flex: none;
   border: 0;
   background: transparent;
   color: var(--text-dim);
@@ -3857,33 +3900,74 @@ a.cta {
   cursor: pointer;
 }
 
+.connect-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .connect-step-title {
-  margin: 0 0 16px;
-  font-size: 20px;
+  margin: 0;
+  font-size: 18px;
   font-weight: 600;
 }
 
-/* Paso 2: chips grandes de cadena. */
+/*
+  Paso 2: tarjetas iguales en grilla de dos o tres columnas.
+
+  `auto-fit` con un mínimo de 120px da dos columnas a 390 y tres en el panel de
+  400 cuando hay tres opciones. `flex: 1` sobre la grilla es lo que la hace
+  estirar hasta llenar el alto que la lista dejaba.
+*/
 .chain-choices {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
+  flex: 1 1 auto;
+  align-content: stretch;
 }
 
+/*
+  Cada tarjeta lleva el color de su cadena: fondo tenue siempre, borde del mismo
+  color en hover y foco. Los colores salen de la tabla única de `:root`, así que
+  una cadena se ve igual acá que en su columna del ranking.
+*/
 .chain-choice {
-  padding: 12px 20px;
-  border: 1px solid var(--hairline);
+  --chain-tint: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--chain-tint) 24%, transparent);
   border-radius: 12px;
-  background: transparent;
+  background: color-mix(in srgb, var(--chain-tint) 10%, transparent);
   color: var(--text);
   font-size: 16px;
   font-weight: 600;
+  text-align: left;
   cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
-.chain-choice:hover:not(:disabled) {
-  background: rgb(255 255 255 / 0.06);
+.chain-choice:hover:not(:disabled),
+.chain-choice:focus-visible {
+  border-color: var(--chain-tint);
+  background: color-mix(in srgb, var(--chain-tint) 18%, transparent);
+  outline: none;
 }
+
+.chain-choice-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--chain-tint);
+}
+
+.chain-choice.is-chain-solana { --chain-tint: var(--chain-solana); }
+.chain-choice.is-chain-robinhood { --chain-tint: var(--chain-robinhood); }
+.chain-choice.is-chain-bnb { --chain-tint: var(--chain-bnb); }
+.chain-choice.is-chain-ethereum { --chain-tint: var(--chain-ethereum); }
 
 /* `Casi listo`: tres controles y un botón. */
 .almost-wallets {
@@ -4327,4 +4411,62 @@ a.cta {
   .profile-actions {
     flex-direction: column;
   }
+}
+
+
+/*
+  `+ Conectar otra wallet`: un control con forma, debajo de la tarjeta de la
+  primera wallet.
+
+  Era un enlace suelto al final del paso — lejos de las wallets que modifica y
+  compitiendo por el final de la pantalla con el CTA. Borde punteado para que se
+  lea como "agregar" y no como la acción principal, que es la verde.
+*/
+.add-another {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.03);
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.add-another:hover:not(:disabled) {
+  border-color: var(--text-dim);
+  background: rgb(255 255 255 / 0.06);
+  color: var(--text);
+}
+
+.add-another:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+  **El CTA de este paso es verde, no violeta.**
+
+  El violeta es `Connect Wallet`: conectar. Este botón hace otra cosa —cierra el
+  alta— y con el mismo color los dos leían como el mismo paso repetido. El verde
+  es el de los montos positivos, que en este sitio ya significa "salió bien".
+
+  Contraste `#111315` sobre `#4ADE80`: 10,69:1 en reposo y 9,20:1 en hover —
+  los dos por encima de AAA, no sólo de AA.
+*/
+.modal-connect .connect-cta {
+  background: #4ade80;
+  color: #111315;
+  border: 0;
+}
+
+.modal-connect .connect-cta:hover:not(:disabled) {
+  background: #3ecf72;
 }

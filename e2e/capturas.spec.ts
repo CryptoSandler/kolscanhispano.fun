@@ -87,10 +87,16 @@ for (const { name, viewport } of SIZES) {
       await page.screenshot({ path: `${OUT}/cabals-${name}.png`, fullPage: true });
     });
 
-    test("la página de operar, sin socio", async ({ page }) => {
-      await page.goto("/trade");
-      await expect(page.locator(".step").first()).toBeVisible({ timeout: 30_000 });
-      await page.screenshot({ path: `${OUT}/trade-${name}.png`, fullPage: true });
+    /*
+      La captura de `/trade` se borró el 2026-09-06 con la página: la ruta es un
+      308 a la home hasta que haya terminal socio (`DECISIONES.md`). Lo que
+      vivía adentro y sigue existiendo —cómo protegemos las wallets— se
+      fotografía en `/privacidad`.
+    */
+    test("privacidad, la página que salió de operar", async ({ page }) => {
+      await page.goto("/privacidad");
+      await expect(page.locator(".privacy-list")).toBeVisible({ timeout: 30_000 });
+      await page.screenshot({ path: `${OUT}/privacidad-${name}.png`, fullPage: true });
     });
 
     test("¡Casi listo!, con varias wallets", async ({ page }) => {

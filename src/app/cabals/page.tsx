@@ -12,7 +12,7 @@ import { CabalsBoard } from "./board";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Cabals · kolscanhispano.fun",
+  title: "Cabals",
   description: "Grupos de traders hispanohablantes en Solana, por PnL realizado del período.",
 };
 
@@ -116,6 +116,19 @@ export default async function CabalsPage({
         </p>
 
         <CabalsBoard entries={ranking.entries} fiat={fiat} rate={rate} />
+
+        {/*
+          **El disclaimer legal, y éste es el único lugar donde queda.**
+
+          Vivía en `/trade`, que se eliminó el 2026-09-06. Estuvo antes en el
+          layout —o sea en todas las páginas— y ahí era mobiliario que nadie
+          lee. Acá abajo, en una línea chica, es lo que la ley pide sin fingir
+          que alguien lo va a leer dos veces.
+        */}
+        <p className="footnote">
+          Datos on-chain públicos. Esto no es asesoramiento financiero y los resultados pasados no
+          garantizan nada.
+        </p>
       </section>
     </>
   );
